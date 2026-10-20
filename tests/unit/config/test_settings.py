@@ -175,3 +175,28 @@ def test_roster_header_row_zero_is_rejected(tmp_path: Path) -> None:
 def test_roster_blank_header_text_is_rejected(tmp_path: Path) -> None:
     with pytest.raises(ConfigurationError, match=r"roster\.columns\.name"):
         _load(tmp_path, "roster:\n  columns:\n    name: '  '\n")
+
+
+def test_git_defaults_apply(tmp_path: Path) -> None:
+    git = _load(tmp_path, "").git
+
+    assert git.executable == "git"
+    assert git.timeout_seconds == 120
+    assert git.commit_author_name == "HW Checker"
+    assert git.commit_author_email == "hw-checker@example.invalid"
+
+
+def test_git_values_load_from_yaml(tmp_path: Path) -> None:
+    git = _load(tmp_path, "git:\n  executable: C:/Git/bin/git.exe\n  timeout_seconds: 30\n").git
+
+    assert (git.executable, git.timeout_seconds) == ("C:/Git/bin/git.exe", 30)
+
+
+def test_git_timeout_below_one_is_rejected(tmp_path: Path) -> None:
+    with pytest.raises(ConfigurationError, match=r"git\.timeout_seconds"):
+        _load(tmp_path, "git:\n  timeout_seconds: 0\n")
+
+
+def test_git_blank_author_is_rejected(tmp_path: Path) -> None:
+    with pytest.raises(ConfigurationError, match=r"git\.commit_author_name"):
+        _load(tmp_path, "git:\n  commit_author_name: ' '\n")

@@ -26,3 +26,13 @@ roster:
     name: Name
     partner_name: Partner
     github_url: GitHub
+
+git:
+  # Git executable; a full path if git is not on PATH.
+  executable: git
+  # Maximum seconds for one git command (clone included) before it is aborted.
+  timeout_seconds: 120
+  # Author of fix commits that students will see.
+  # PLACEHOLDERS: replace once it is decided who fix commits come from.
+  commit_author_name: HW Checker
+  commit_author_email: hw-checker@example.invalid
