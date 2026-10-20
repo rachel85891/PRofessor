@@ -53,9 +53,113 @@ markers = [
 [dependency-groups]
 dev = [
     "detect-secrets>=1.5.0",
+    "import-linter>=2.15",
     "mypy>=2.4.0",
     "pre-commit>=4.7.0",
     "pytest>=9.1.1",
     "ruff>=0.17.1",
     "types-pyyaml>=6.0.12.20260906",
 ]
+
+[tool.importlinter]
+root_package = "hw_checker"
+include_external_packages = true
+
+[[tool.importlinter.contracts]]
+name = "Layers depend inward only: ui -> graph -> services | checks | judge | reporting -> ports -> domain"
+type = "layers"
+containers = ["hw_checker"]
+layers = [
+    "ui",
+    "graph",
+    "services | checks | judge | reporting",
+    "ports",
+    "domain",
+]
+
+[[tool.importlinter.contracts]]
+name = "graph uses only services and domain (no ports, checks, judge, reporting, adapters or bootstrap)"
+type = "forbidden"
+source_modules = ["hw_checker.graph"]
+forbidden_modules = [
+    "hw_checker.ports",
+    "hw_checker.checks",
+    "hw_checker.judge",
+    "hw_checker.reporting",
+    "hw_checker.adapters",
+    "hw_checker.bootstrap",
+]
+allow_indirect_imports = true
+
+[[tool.importlinter.contracts]]
+name = "services, checks, judge and reporting use only domain and ports (no graph, ui, adapters or bootstrap)"
+type = "forbidden"
+source_modules = [
+    "hw_checker.services",
+    "hw_checker.checks",
+    "hw_checker.judge",
+    "hw_checker.reporting",
+]
+forbidden_modules = [
+    "hw_checker.graph",
+    "hw_checker.ui",
+    "hw_checker.adapters",
+    "hw_checker.bootstrap",
+]
+
+[[tool.importlinter.contracts]]
+name = "Only bootstrap imports adapters"
+type = "forbidden"
+source_modules = [
+    "hw_checker.domain",
+    "hw_checker.ports",
+    "hw_checker.services",
+    "hw_checker.checks",
+    "hw_checker.judge",
+    "hw_checker.reporting",
+    "hw_checker.graph",
+    "hw_checker.config",
+    "hw_checker.ui",
+]
+forbidden_modules = ["hw_checker.adapters"]
+allow_indirect_imports = true
+
+[[tool.importlinter.contracts]]
+name = "domain imports only stdlib and pydantic (no other layer, no config, no listed third-party library)"
+type = "forbidden"
+source_modules = ["hw_checker.domain"]
+forbidden_modules = [
+    "hw_checker.ports",
+    "hw_checker.services",
+    "hw_checker.checks",
+    "hw_checker.judge",
+    "hw_checker.reporting",
+    "hw_checker.graph",
+    "hw_checker.adapters",
+    "hw_checker.config",
+    "hw_checker.ui",
+    "hw_checker.bootstrap",
+    "pydantic_settings",
+    "yaml",
+    "langgraph",
+    "langchain",
+    "langchain_core",
+    "sqlalchemy",
+    "alembic",
+    "docker",
+    "github",
+    "openpyxl",
+    "jinja2",
+    "streamlit",
+]
+
+[[tool.importlinter.contracts]]
+name = "ui does not import graph, adapters or ports directly (it goes through bootstrap and services)"
+type = "forbidden"
+source_modules = ["hw_checker.ui"]
+forbidden_modules = [
+    "hw_checker.graph",
+    "hw_checker.adapters",
+    "hw_checker.ports",
+]
+allow_indirect_imports = true
