@@ -11,6 +11,13 @@ from hw_checker.domain.assignment import (
     RequirementKind,
     Severity,
 )
+from hw_checker.domain.findings import (
+    Evidence,
+    Finding,
+    FindingSource,
+    JudgedFinding,
+    Verdict,
+)
 from hw_checker.domain.roster import (
     Pair,
     RepoTarget,
@@ -22,8 +29,12 @@ from hw_checker.domain.roster import (
 
 __all__ = [
     "Assignment",
+    "Evidence",
+    "Finding",
+    "FindingSource",
     "HttpMethod",
     "HttpProbe",
+    "JudgedFinding",
     "Pair",
     "RepoTarget",
     "Requirement",
@@ -33,4 +44,5 @@ __all__ = [
     "RosterWarningKind",
     "Severity",
     "Student",
+    "Verdict",
 ]

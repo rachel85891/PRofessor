@@ -3,6 +3,9 @@
 from typing import Any
 
 from hw_checker.domain import (
+    Evidence,
+    Finding,
+    FindingSource,
     HttpMethod,
     HttpProbe,
     RepoTarget,
@@ -47,3 +50,28 @@ def requirement(**overrides: Any) -> Requirement:
         "kind": RequirementKind.CODE,
     }
     return Requirement.model_validate(values | overrides)
+
+
+def evidence(**overrides: Any) -> Evidence:
+    values: dict[str, Any] = {
+        "file_path": "Controllers/ProductsController.cs",
+        "line_start": 12,
+        "line_end": 14,
+        "quote": "return Ok(product);",
+    }
+    return Evidence.model_validate(values | overrides)
+
+
+def finding(**overrides: Any) -> Finding:
+    values: dict[str, Any] = {
+        "id": "f-1",
+        "requirement_id": "hw03-r2",
+        "assignment_id": "hw03",
+        "severity": Severity.MAJOR,
+        "message_he": "הפעולה מחזירה 200 עם null",
+        "message_en": "The action returns 200 with null.",
+        "evidence": evidence(),
+        "source": FindingSource.LLM,
+        "confidence": 0.8,
+    }
+    return Finding.model_validate(values | overrides)
