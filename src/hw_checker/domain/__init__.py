@@ -32,12 +32,15 @@ from hw_checker.domain.proposal import (
     ReviewOutcome,
 )
 from hw_checker.domain.roster import (
+    GitHubRepo,
     Pair,
     RepoTarget,
+    RosterResult,
     RosterRow,
     RosterWarning,
     RosterWarningKind,
     Student,
+    parse_github_url,
 )
 from hw_checker.domain.run import (
     AssignmentResult,
@@ -58,6 +61,7 @@ __all__ = [
     "Finding",
     "FindingSource",
     "FixProposal",
+    "GitHubRepo",
     "HttpMethod",
     "HttpProbe",
     "JudgedFinding",
@@ -73,6 +77,7 @@ __all__ = [
     "RequirementKind",
     "ReviewDecision",
     "ReviewOutcome",
+    "RosterResult",
     "RosterRow",
     "RosterWarning",
     "RosterWarningKind",
@@ -82,4 +87,5 @@ __all__ = [
     "StepStatus",
     "Student",
     "Verdict",
+    "parse_github_url",
 ]
