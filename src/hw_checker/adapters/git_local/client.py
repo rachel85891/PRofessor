@@ -11,7 +11,12 @@ from pathlib import Path
 from hw_checker.adapters.git_local.log_format import LOG_FORMAT, parse_log_output
 from hw_checker.adapters.git_local.runner import CommandRunner, GitRunner, run_subprocess
 from hw_checker.domain import CommitInfo
-from hw_checker.domain.errors import HwCheckerError, RepoUnavailableError
+from hw_checker.domain.errors import (
+    GitOperationError,
+    HwCheckerError,
+    PublishError,
+    RepoUnavailableError,
+)
 
 _SHA_PATTERN = re.compile(r"^[0-9a-f]{40}(?:[0-9a-f]{24})?$")
 _REMOTE_HEAD_PREFIX = "origin/"
@@ -84,6 +89,96 @@ class LocalGitClient:
             return parse_log_output(output)
         except ValueError as error:
             raise RepoUnavailableError(f"{repo_dir}: cannot parse git log: {error}") from error
+
+    def create_branch(self, repo_dir: Path, branch_name: str, start_point: str) -> None:
+        """Create and check out `branch_name` at the commit `start_point`; never overwrite.
+
+        Raises:
+            GitOperationError: the name is invalid, the branch already exists, the start
+                point is not a commit, or the checkout failed.
+            ExecutionEnvironmentError: the git executable is not available.
+        """
+        self._validate_branch_name(repo_dir, branch_name, GitOperationError)
+        _reject_option_like(start_point, "start point", GitOperationError)
+        exists = self._git.probe(
+            ["show-ref", "--verify", "--quiet", f"refs/heads/{branch_name}"],
+            repo_dir,
+            GitOperationError,
+        )
+        if exists.returncode == 0:
+            raise GitOperationError(f"branch '{branch_name}' already exists in {repo_dir}")
+        commit = self._git.probe(
+            ["rev-parse", "--verify", "--quiet", f"{start_point}^{{commit}}"],
+            repo_dir,
+            GitOperationError,
+        )
+        if commit.returncode != 0:
+            raise GitOperationError(f"start point {start_point!r} is not a commit in {repo_dir}")
+        self._git.run(
+            ["switch", "--no-track", "--create", branch_name, commit.stdout.strip()],
+            repo_dir,
+            GitOperationError,
+        )
+
+    def commit(self, repo_dir: Path, message: str, paths: tuple[str, ...]) -> str:
+        """Stage the repo-relative `paths`, commit them with `message`, and return the new sha.
+
+        Only `paths` are committed, as the configured author; nothing is written to the repo
+        config.
+
+        Raises:
+            GitOperationError: no paths were given, there is nothing to commit, or staging
+                or committing failed.
+            ExecutionEnvironmentError: the git executable is not available.
+        """
+        if not paths:
+            raise GitOperationError(f"nothing to commit in {repo_dir}: no paths given")
+        self._git.run(["add", "--", *paths], repo_dir, GitOperationError)
+        staged = self._git.probe(
+            ["diff", "--cached", "--quiet", "--", *paths], repo_dir, GitOperationError
+        )
+        if staged.returncode == 0:
+            raise GitOperationError(f"nothing to commit in {repo_dir} for {', '.join(paths)}")
+        self._git.run(
+            [
+                "-c",
+                f"user.name={self._author_name}",
+                "-c",
+                f"user.email={self._author_email}",
+                "commit",
+                "--quiet",
+                "-m",
+                message,
+                "--only",
+                "--",
+                *paths,
+            ],
+            repo_dir,
+            GitOperationError,
+        )
+        return self._git.run(["rev-parse", "HEAD"], repo_dir, GitOperationError).strip()
+
+    def push(self, repo_dir: Path, branch_name: str, remote_url: str) -> None:
+        """Push `branch_name` to the same name at `remote_url`. Never force-pushes.
+
+        Raises:
+            PublishError: the name or URL is invalid, or the push was rejected or failed.
+            ExecutionEnvironmentError: the git executable is not available.
+        """
+        self._validate_branch_name(repo_dir, branch_name, PublishError)
+        _reject_option_like(remote_url, "remote URL", PublishError)
+        ref = f"refs/heads/{branch_name}"
+        # No '+' in the refspec and no --force: a non-fast-forward push is rejected.
+        self._git.run(["push", "--", remote_url, f"{ref}:{ref}"], repo_dir, PublishError)
+
+    def _validate_branch_name(
+        self, repo_dir: Path, branch_name: str, error: type[HwCheckerError]
+    ) -> None:
+        _reject_option_like(branch_name, "branch name", error)
+        result = self._git.probe(["check-ref-format", "--branch", branch_name], repo_dir, error)
+        # `--branch` expands shorthands such as `@{-1}`; only literal names are accepted.
+        if result.returncode != 0 or result.stdout.strip() != branch_name:
+            raise error(f"invalid branch name: {branch_name!r}")
 
     def _clone(self, url: str, destination: Path) -> None:
         parent = destination.parent

@@ -12,8 +12,8 @@ AUTHOR_NAME = "HW Checker Test"
 AUTHOR_EMAIL = "hw-checker-test@example.invalid"
 
 
-def git(*args: str, cwd: Path) -> str:
-    """Run real git for test setup; fail the test on error."""
+def git(*args: str, cwd: Path, check: bool = True) -> str:
+    """Run real git for test setup; with `check`, fail the test on a non-zero exit."""
     result = subprocess.run(
         ["git", *args],
         cwd=cwd,
@@ -22,7 +22,15 @@ def git(*args: str, cwd: Path) -> str:
         encoding="utf-8",
         check=False,
     )
-    assert result.returncode == 0, f"git {' '.join(args)} failed: {result.stderr}"
+    if check:
+        assert result.returncode == 0, f"git {' '.join(args)} failed: {result.stderr}"
+    return result.stdout
+
+
+def git_bytes(*args: str, cwd: Path) -> bytes:
+    """Run real git and return its raw stdout, with no newline translation."""
+    result = subprocess.run(["git", *args], cwd=cwd, capture_output=True, check=False)
+    assert result.returncode == 0, f"git {' '.join(args)} failed: {result.stderr!r}"
     return result.stdout
 
 

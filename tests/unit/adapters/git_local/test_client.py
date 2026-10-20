@@ -5,7 +5,13 @@ from pathlib import Path
 import pytest
 
 from hw_checker.adapters.git_local import LocalGitClient
-from hw_checker.domain.errors import ExecutionEnvironmentError, RepoUnavailableError
+from hw_checker.adapters.git_local.runner import BASE_CONFIG
+from hw_checker.domain.errors import (
+    ExecutionEnvironmentError,
+    GitOperationError,
+    PublishError,
+    RepoUnavailableError,
+)
 
 Responder = Callable[[list[str]], subprocess.CompletedProcess[str]]
 
@@ -26,10 +32,8 @@ class FakeCommandRunner:
 
 
 def _strip_base_config(args: list[str]) -> list[str]:
-    rest = args[1:]
-    while rest[:1] == ["-c"] and not rest[1].startswith("i18n."):
-        rest = rest[2:]
-    return rest
+    assert args[1 : 1 + len(BASE_CONFIG)] == list(BASE_CONFIG)
+    return args[1 + len(BASE_CONFIG) :]
 
 
 def ok(stdout: str = "") -> subprocess.CompletedProcess[str]:
@@ -117,3 +121,75 @@ def test_missing_executable_maps_to_execution_environment_error(tmp_path: Path) 
 
     with pytest.raises(ExecutionEnvironmentError):
         client(FakeCommandRunner(respond)).head_sha(tmp_path)
+
+
+def test_option_like_branch_name_is_rejected_before_running_git(tmp_path: Path) -> None:
+    runner = FakeCommandRunner(lambda args: ok())
+
+    with pytest.raises(GitOperationError, match="invalid branch name"):
+        client(runner).create_branch(tmp_path, "--force", "HEAD")
+
+    assert runner.commands == []
+
+
+def test_commit_without_paths_is_rejected(tmp_path: Path) -> None:
+    runner = FakeCommandRunner(lambda args: ok())
+
+    with pytest.raises(GitOperationError, match="no paths given"):
+        client(runner).commit(tmp_path, "fix", ())
+
+    assert runner.commands == []
+
+
+def test_commit_uses_configured_author_per_command(tmp_path: Path) -> None:
+    def respond(args: list[str]) -> subprocess.CompletedProcess[str]:
+        if args[:2] == ["diff", "--cached"]:
+            return subprocess.CompletedProcess([], 1, "", "")
+        return ok("c" * 40 + "\n")
+
+    runner = FakeCommandRunner(respond)
+
+    sha = client(runner).commit(tmp_path, "fix: hw03-r2", ("a.cs",))
+
+    commit = next(command for command in runner.commands if "commit" in command)
+    assert "user.name=HW Checker" in commit
+    assert "user.email=hw@example.invalid" in commit
+    assert commit[-2:] == ["--", "a.cs"]
+    assert sha == "c" * 40
+
+
+def test_push_never_forces(tmp_path: Path) -> None:
+    def respond(args: list[str]) -> subprocess.CompletedProcess[str]:
+        if args[0] == "check-ref-format":
+            return ok("hw-review/hw03\n")
+        return ok()
+
+    runner = FakeCommandRunner(respond)
+
+    client(runner).push(tmp_path, "hw-review/hw03", "https://github.com/a/b")
+
+    push = runner.commands[-1]
+    assert push == [
+        "push",
+        "--",
+        "https://github.com/a/b",
+        "refs/heads/hw-review/hw03:refs/heads/hw-review/hw03",
+    ]
+    assert not any(arg.startswith("+") or arg in {"--force", "-f"} for arg in push)
+
+
+def test_push_failure_maps_to_publish_error(tmp_path: Path) -> None:
+    def respond(args: list[str]) -> subprocess.CompletedProcess[str]:
+        if args[0] == "check-ref-format":
+            return ok("fix\n")
+        return failed("! [rejected] fix -> fix (non-fast-forward)")
+
+    with pytest.raises(PublishError, match="non-fast-forward"):
+        client(FakeCommandRunner(respond)).push(tmp_path, "fix", "https://github.com/a/b")
+
+
+def test_branch_shorthand_is_not_accepted_as_a_name(tmp_path: Path) -> None:
+    runner = FakeCommandRunner(lambda args: ok("main\n"))
+
+    with pytest.raises(GitOperationError, match="invalid branch name"):
+        client(runner).create_branch(tmp_path, "@{-1}", "HEAD")
