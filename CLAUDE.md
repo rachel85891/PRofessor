@@ -55,7 +55,7 @@ Dependencies point inward only:
 - Tests touching Docker, real Git or a real LLM are marked `@pytest.mark.integration`.
 - The LLM is always faked in unit tests.
 - Before reporting, run and make sure all of these pass:
-  `uv run ruff check` · `uv run ruff format --check` · `uv run mypy` · `uv run pytest -m "not integration"`
+  `uv run ruff check` · `uv run ruff format --check` · `uv run mypy` · `uv run lint-imports` · `uv run pytest -m "not integration"`
   (plus `uv run pytest -m integration` when the stage touches Docker or Git).
 
 ## Git

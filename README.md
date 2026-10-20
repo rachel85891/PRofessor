@@ -28,10 +28,13 @@ Fill in the secrets in `.env`. Non-secret settings live in `config.yaml`. Any se
 uv run ruff check
 uv run ruff format --check
 uv run mypy
+uv run lint-imports                  # layer contracts (see [tool.importlinter] in pyproject.toml)
 uv run pytest -m "not integration"   # unit tests
 uv run pytest -m integration         # Docker / Git / LLM tests, run locally on demand
 uv run pre-commit run --all-files
 ```
+
+If console-script launchers hang on your machine, run the Python tools as modules instead, for example `uv run python -m mypy` or `uv run python -m pytest`. import-linter has no module entry point; use `uv run python -c "from importlinter.cli import lint_imports_command; lint_imports_command()"`.
 
 ## Folder layout
 
