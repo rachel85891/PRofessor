@@ -30,6 +30,13 @@ repos:
         language: system
         types_or: [python, pyi]
         pass_filenames: false
+      - id: import-linter
+        name: import-linter (layer contracts)
+        # import-linter has no `python -m` entry point, so call its CLI function directly.
+        entry: uv run python -c "from importlinter.cli import lint_imports_command; lint_imports_command()"
+        language: system
+        files: ^(src/.*\.py|pyproject\.toml)$
+        pass_filenames: false
       - id: detect-secrets
         name: detect-secrets
         entry: uv run python -m detect_secrets.pre_commit_hook --baseline .secrets.baseline
