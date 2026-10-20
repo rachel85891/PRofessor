@@ -1,7 +1,7 @@
 """Application settings: secrets from the environment or `.env`, the rest from `config.yaml`."""
 
 from pathlib import Path
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, SecretStr, ValidationError
@@ -25,6 +25,29 @@ class LoggingSettings(BaseModel):
     log_dir: Path = Path("logs")
 
 
+HeaderText = Annotated[str, Field(pattern=r"\S")]
+
+
+class RosterColumnsSettings(BaseModel):
+    """Header texts of the roster columns. The defaults are placeholders for the real file."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    name: HeaderText = "Name"
+    partner_name: HeaderText = "Partner"
+    github_url: HeaderText = "GitHub"
+
+
+class RosterSettings(BaseModel):
+    """Where the roster data sits in the Excel file."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    sheet_name: str | None = None
+    header_row: int = Field(default=1, ge=1)
+    columns: RosterColumnsSettings = RosterColumnsSettings()
+
+
 class Settings(BaseSettings):
     """All runtime settings.
 
@@ -45,6 +68,7 @@ class Settings(BaseSettings):
     workspace_dir: Path = Path("workspace")
     max_parallel_repos: int = Field(default=3, ge=1)
     logging: LoggingSettings = LoggingSettings()
+    roster: RosterSettings = RosterSettings()
     github_token: SecretStr | None = None
 
     @classmethod
