@@ -65,7 +65,7 @@ The arrows show dependency direction: each layer on the left depends only on the
 
 | Layer | Responsibility | May depend on |
 | --- | --- | --- |
-| domain | Pure models and business rules (repo, pair, requirement, finding) | Nothing |
+| domain | Pure models and business rules (repo, pair, requirement, finding) | stdlib and Pydantic only |
 | ports | Interfaces (Protocol/ABC) for every external capability | domain |
 | services | The logic: ingestion, checking, judging, reporting, publishing | domain, ports |
 | checks, judge | Checks and judge; registered in a registry | domain, ports |
