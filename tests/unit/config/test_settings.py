@@ -140,3 +140,38 @@ def test_non_mapping_yaml_raises_naming_the_file(tmp_path: Path) -> None:
 
     with pytest.raises(ConfigurationError, match=r"list\.yaml"):
         load_settings(config_path=config_path, env_path=tmp_path / ".env")
+
+
+def test_roster_defaults_apply(tmp_path: Path) -> None:
+    roster = _load(tmp_path, "").roster
+
+    assert roster.sheet_name is None
+    assert roster.header_row == 1
+    assert (roster.columns.name, roster.columns.partner_name, roster.columns.github_url) == (
+        "Name",
+        "Partner",
+        "GitHub",
+    )
+
+
+def test_roster_values_load_from_yaml(tmp_path: Path) -> None:
+    roster = _load(
+        tmp_path,
+        "roster:\n  sheet_name: Students\n  header_row: 3\n"
+        "  columns:\n    name: Full name\n    partner_name: Partner name\n    github_url: Repo\n",
+    ).roster
+
+    assert roster.sheet_name == "Students"
+    assert roster.header_row == 3
+    assert roster.columns.github_url == "Repo"
+    assert roster.columns.partner_name == "Partner name"
+
+
+def test_roster_header_row_zero_is_rejected(tmp_path: Path) -> None:
+    with pytest.raises(ConfigurationError, match=r"roster\.header_row"):
+        _load(tmp_path, "roster:\n  header_row: 0\n")
+
+
+def test_roster_blank_header_text_is_rejected(tmp_path: Path) -> None:
+    with pytest.raises(ConfigurationError, match=r"roster\.columns\.name"):
+        _load(tmp_path, "roster:\n  columns:\n    name: '  '\n")

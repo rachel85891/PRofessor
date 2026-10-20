@@ -14,3 +14,15 @@ logging:
   level: INFO
   # Directory for the JSON-lines log file.
   log_dir: logs
+
+roster:
+  # Sheet holding the roster; leave empty (null) to use the first sheet.
+  sheet_name: null
+  # Row number (1-based) of the header row; data starts on the row below.
+  header_row: 1
+  # Header text of each column, matched ignoring case and surrounding spaces.
+  # PLACEHOLDERS: replace with the headers of the lecturer's real roster file.
+  columns:
+    name: Name
+    partner_name: Partner
+    github_url: GitHub
