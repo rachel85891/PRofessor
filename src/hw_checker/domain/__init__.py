@@ -11,12 +11,25 @@ from hw_checker.domain.assignment import (
     RequirementKind,
     Severity,
 )
+from hw_checker.domain.execution import (
+    ExecutionResult,
+    FailureKind,
+    ProbeResult,
+    StepStatus,
+)
 from hw_checker.domain.findings import (
     Evidence,
     Finding,
     FindingSource,
     JudgedFinding,
     Verdict,
+)
+from hw_checker.domain.proposal import (
+    FixProposal,
+    Patch,
+    ProposalStatus,
+    ReviewDecision,
+    ReviewOutcome,
 )
 from hw_checker.domain.roster import (
     Pair,
@@ -26,23 +39,44 @@ from hw_checker.domain.roster import (
     RosterWarningKind,
     Student,
 )
+from hw_checker.domain.run import (
+    AssignmentResult,
+    RepoRunResult,
+    RepoRunStatus,
+    Run,
+    RunStatus,
+)
 
 __all__ = [
     "Assignment",
+    "AssignmentResult",
     "Evidence",
+    "ExecutionResult",
+    "FailureKind",
     "Finding",
     "FindingSource",
+    "FixProposal",
     "HttpMethod",
     "HttpProbe",
     "JudgedFinding",
     "Pair",
+    "Patch",
+    "ProbeResult",
+    "ProposalStatus",
+    "RepoRunResult",
+    "RepoRunStatus",
     "RepoTarget",
     "Requirement",
     "RequirementKind",
+    "ReviewDecision",
+    "ReviewOutcome",
     "RosterRow",
     "RosterWarning",
     "RosterWarningKind",
+    "Run",
+    "RunStatus",
     "Severity",
+    "StepStatus",
     "Student",
     "Verdict",
 ]

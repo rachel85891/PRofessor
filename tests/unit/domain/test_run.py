@@ -1,0 +1,129 @@
+from datetime import UTC, datetime, timedelta, timezone
+from typing import Any
+
+import pytest
+from pydantic import ValidationError
+
+from hw_checker.domain import (
+    AssignmentResult,
+    RepoRunResult,
+    RepoRunStatus,
+    Run,
+    RunStatus,
+)
+from tests.unit.domain import builders
+
+STARTED_AT = datetime(2026, 10, 20, 9, 0, tzinfo=UTC)
+
+
+def repo_run(**overrides: Any) -> RepoRunResult:
+    values: dict[str, Any] = {
+        "repo_run_id": "run-1/dana-api",
+        "repo": builders.repo_target(),
+        "commit_sha": "0f6db0d",
+        "status": RepoRunStatus.DONE,
+    }
+    return RepoRunResult.model_validate(values | overrides)
+
+
+def test_repo_run_result_builds_with_assignment_results() -> None:
+    result = repo_run(
+        assignment_results=(
+            AssignmentResult(assignment_id="hw01"),
+            AssignmentResult(assignment_id="hw02", findings=(builders.finding(),)),
+        ),
+        score=87.5,
+    )
+
+    assert len(result.assignment_results) == 2
+
+
+def test_failed_repo_run_without_commit_records_errors() -> None:
+    result = repo_run(commit_sha=None, status=RepoRunStatus.FAILED, errors=("Clone failed",))
+
+    assert result.errors == ("Clone failed",)
+
+
+def test_repo_run_result_rejects_duplicate_assignment_results() -> None:
+    with pytest.raises(ValidationError, match="one entry per assignment_id"):
+        repo_run(
+            assignment_results=(
+                AssignmentResult(assignment_id="hw01"),
+                AssignmentResult(assignment_id="hw01"),
+            )
+        )
+
+
+def test_repo_run_result_rejects_negative_score() -> None:
+    with pytest.raises(ValidationError):
+        repo_run(score=-1)
+
+
+def test_repo_run_result_rejects_empty_commit_sha() -> None:
+    with pytest.raises(ValidationError):
+        repo_run(commit_sha="")
+
+
+def test_repo_run_statuses() -> None:
+    assert {status.value for status in RepoRunStatus} == {"queued", "running", "done", "failed"}
+
+
+def test_run_builds() -> None:
+    run = Run(
+        run_id="run-1",
+        assignment_id="hw03",
+        started_at=STARTED_AT,
+        status=RunStatus.RUNNING,
+        repo_runs=(repo_run(),),
+    )
+
+    assert run.repo_runs[0].repo.repo_id == "dana-api"
+
+
+def test_run_accepts_non_utc_aware_datetime() -> None:
+    israel = timezone(timedelta(hours=3))
+    started_at = datetime(2026, 10, 20, 12, 0, tzinfo=israel)
+
+    run = Run(run_id="run-1", assignment_id="hw03", started_at=started_at, status=RunStatus.RUNNING)
+
+    assert run.started_at == STARTED_AT
+
+
+def test_run_rejects_naive_datetime() -> None:
+    with pytest.raises(ValidationError):
+        Run(
+            run_id="run-1",
+            assignment_id="hw03",
+            started_at=datetime(2026, 10, 20, 9, 0),
+            status=RunStatus.RUNNING,
+        )
+
+
+def test_run_rejects_naive_iso_string() -> None:
+    with pytest.raises(ValidationError):
+        Run.model_validate(
+            {
+                "run_id": "run-1",
+                "assignment_id": "hw03",
+                "started_at": "2026-10-20T09:00:00",
+                "status": "running",
+            }
+        )
+
+
+def test_run_rejects_duplicate_repos() -> None:
+    with pytest.raises(ValidationError, match="unique"):
+        Run(
+            run_id="run-1",
+            assignment_id="hw03",
+            started_at=STARTED_AT,
+            status=RunStatus.COMPLETED,
+            repo_runs=(repo_run(), repo_run(repo_run_id="run-1/other")),
+        )
+
+
+def test_run_is_frozen() -> None:
+    run = Run(run_id="run-1", assignment_id="hw03", started_at=STARTED_AT, status=RunStatus.RUNNING)
+
+    with pytest.raises(ValidationError):
+        run.status = RunStatus.COMPLETED  # type: ignore[misc]
