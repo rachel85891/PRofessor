@@ -7,21 +7,17 @@ built from an explicit collection of marked functions, so two registries never s
 import types
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Union, get_args, get_origin
 
-from pydantic import BaseModel, ConfigDict, ValidationError
+from pydantic import BaseModel, ValidationError
 from pydantic.fields import FieldInfo
 from pydantic_core import ErrorDetails
 
 from hw_checker.domain import (
-    Assignment,
     CheckDescription,
     CheckParamDescription,
-    ExecutionResult,
     Finding,
     ParamValue,
-    Requirement,
 )
 from hw_checker.domain.errors import CheckRegistrationError, NotFoundError
 
@@ -30,25 +26,8 @@ _SPEC_ATTRIBUTE = "__hw_checker_check__"
 _TYPE_NAMES: dict[object, str] = {str: "text", int: "integer", float: "number", bool: "true/false"}
 
 
-class CheckInput(BaseModel):
-    """What a check receives. Provisional: stage 8 finalizes it.
-
-    Structure checks run without an execution result, so `execution` is optional.
-    """
-
-    model_config = ConfigDict(frozen=True, extra="forbid")
-
-    repo_dir: Path
-    assignment: Assignment
-    requirement: Requirement
-    execution: ExecutionResult | None = None
-
-
 CheckFunction = Callable[..., tuple[Finding, ...]]
-"""A check: called with a `CheckInput` and its validated params model, returns findings.
-
-Provisional: stage 8 finalizes the signature.
-"""
+"""A check: called with a `CheckInput` and its validated params model, returns findings."""
 
 
 @dataclass(frozen=True)

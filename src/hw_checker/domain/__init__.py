@@ -12,7 +12,7 @@ from hw_checker.domain.assignment import (
     RequirementKind,
     Severity,
 )
-from hw_checker.domain.checks import CheckDescription, CheckParamDescription
+from hw_checker.domain.checks import CheckDescription, CheckInput, CheckParamDescription
 from hw_checker.domain.execution import (
     ExecutionRequest,
     ExecutionResult,
@@ -48,6 +48,8 @@ from hw_checker.domain.roster import (
 from hw_checker.domain.run import (
     AssignmentResult,
     AssignmentVersion,
+    NotEvaluated,
+    NotEvaluatedReason,
     RepoRunResult,
     RepoRunStatus,
     Run,
@@ -60,6 +62,7 @@ __all__ = [
     "AssignmentResult",
     "AssignmentVersion",
     "CheckDescription",
+    "CheckInput",
     "CheckParamDescription",
     "CommitInfo",
     "Evidence",
@@ -73,6 +76,8 @@ __all__ = [
     "HttpMethod",
     "HttpProbe",
     "JudgedFinding",
+    "NotEvaluated",
+    "NotEvaluatedReason",
     "Pair",
     "ParamValue",
     "Patch",
