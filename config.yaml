@@ -75,3 +75,8 @@ runner:
   max_file_mb: 50
   # Full build and run logs, per run and repo; relative to workspace_dir.
   logs_root: logs
+
+storage:
+  # SQLAlchemy database URL. SQLite now; PostgreSQL later by changing only this (ADR 0007).
+  # A relative SQLite path is relative to the folder the program runs in.
+  database_url: sqlite:///workspace/hw_checker.db

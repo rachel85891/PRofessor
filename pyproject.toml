@@ -4,11 +4,13 @@ version = "0.1.0"
 description = "LangGraph agent that checks homework for a .NET 9 Web API course."
 requires-python = ">=3.12,<3.13"
 dependencies = [
+    "alembic>=1.20.0",
     "docker>=7.2.0",
     "openpyxl>=3.1.5",
     "pydantic>=2.14.1",
     "pydantic-settings>=2.16.1",
     "pyyaml>=6.0.3",
+    "sqlalchemy>=2.1.5",
 ]
 
 [build-system]
@@ -39,12 +41,6 @@ files = ["src", "tests"]
 mypy_path = "src"
 plugins = ["pydantic.mypy"]
 
-[[tool.mypy.overrides]]
-# The Docker SDK ships no type information; its untyped surface stays inside
-# hw_checker.adapters.docker_runner.engine behind narrow typed wrappers.
-module = ["docker", "docker.*"]
-ignore_missing_imports = true
-
 [tool.pydantic-mypy]
 init_forbid_extra = true
 init_typed = true
@@ -66,6 +62,7 @@ dev = [
     "pre-commit>=4.7.0",
     "pytest>=9.1.1",
     "ruff>=0.17.1",
+    "types-docker>=7.2.0.20261006",
     "types-openpyxl>=3.1.5.20261017",
     "types-pyyaml>=6.0.12.20260906",
 ]

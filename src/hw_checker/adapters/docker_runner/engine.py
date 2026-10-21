@@ -1,7 +1,7 @@
 """A narrow, typed wrapper around the Docker SDK for the runner.
 
-The Docker SDK has no type stubs. Everything untyped stays in `SdkDockerEngine`, and every
-SDK or transport exception is turned into `EngineError`, so nothing from the SDK leaks out.
+Only `SdkDockerEngine` touches the SDK (typed through `types-docker`), and every SDK or
+transport exception is turned into `EngineError`, so nothing from the SDK leaks out.
 The `DockerEngine` protocol lets the pipeline be tested with an in-memory fake.
 """
 
@@ -229,8 +229,11 @@ class SdkDockerEngine:
     def exec(self, container: str, command: tuple[str, ...]) -> ExecResult:
         with _engine_errors(f"cannot run a command in {container}"):
             result = self._client.containers.get(container).exec_run(list(command))
-            output = bytes(result.output or b"").decode("utf-8", errors="replace")
-            return ExecResult(int(result.exit_code), output)
+            raw = result.output or b""
+            # Without stream=True the output is bytes; the stubs also allow an iterator.
+            data = raw if isinstance(raw, bytes) else b"".join(raw)
+            exit_code = -1 if result.exit_code is None else int(result.exit_code)
+            return ExecResult(exit_code, data.decode("utf-8", errors="replace"))
 
     def remove_container(self, container: str) -> None:
         with _engine_errors(f"cannot remove container {container}"):
@@ -241,7 +244,7 @@ class SdkDockerEngine:
 
     def list_labelled(self, label: str) -> tuple[Resource, ...]:
         with _engine_errors(f"cannot list resources labelled {label}"):
-            selector = {"label": label}
+            selector: dict[str, str | list[str] | bool] = {"label": label}
             containers = [
                 Resource("container", str(item.name), dict(item.labels or {}))
                 for item in self._client.containers.list(all=True, filters=selector)

@@ -123,6 +123,14 @@ class RunnerSettings(BaseModel):
         return value
 
 
+class StorageSettings(BaseModel):
+    """Where rounds, findings and proposals are stored (ADR 0007)."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    database_url: NonBlankText = "sqlite:///workspace/hw_checker.db"
+
+
 class Settings(BaseSettings):
     """All runtime settings.
 
@@ -147,6 +155,7 @@ class Settings(BaseSettings):
     roster: RosterSettings = RosterSettings()
     git: GitSettings = GitSettings()
     runner: RunnerSettings = RunnerSettings()
+    storage: StorageSettings = StorageSettings()
     github_token: SecretStr | None = None
 
     @classmethod

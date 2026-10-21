@@ -6,6 +6,7 @@ from pydantic import ValidationError
 
 from hw_checker.domain import (
     AssignmentResult,
+    AssignmentVersion,
     RepoRunResult,
     RepoRunStatus,
     Run,
@@ -127,3 +128,50 @@ def test_run_is_frozen() -> None:
 
     with pytest.raises(ValidationError):
         run.status = RunStatus.COMPLETED  # type: ignore[misc]
+
+
+HASH_A = "a" * 64
+HASH_B = "b" * 64
+
+
+def test_run_records_assignment_versions() -> None:
+    versions = (
+        AssignmentVersion(assignment_id="_general", source_hash=HASH_A),
+        AssignmentVersion(assignment_id="hw01", source_hash=HASH_B),
+    )
+
+    run = Run(
+        run_id="run-1",
+        assignment_id="hw01",
+        started_at=STARTED_AT,
+        status=RunStatus.RUNNING,
+        assignment_versions=versions,
+    )
+
+    assert run.assignment_versions == versions
+
+
+def test_assignment_versions_default_to_empty() -> None:
+    run = Run(run_id="run-1", assignment_id="hw01", started_at=STARTED_AT, status=RunStatus.RUNNING)
+
+    assert run.assignment_versions == ()
+
+
+def test_assignment_versions_must_have_unique_ids() -> None:
+    with pytest.raises(ValidationError, match="one entry per assignment_id"):
+        Run(
+            run_id="run-1",
+            assignment_id="hw01",
+            started_at=STARTED_AT,
+            status=RunStatus.RUNNING,
+            assignment_versions=(
+                AssignmentVersion(assignment_id="hw01", source_hash=HASH_A),
+                AssignmentVersion(assignment_id="hw01", source_hash=HASH_B),
+            ),
+        )
+
+
+@pytest.mark.parametrize("source_hash", ["", "abc", "A" * 64, "g" * 64, "a" * 63])
+def test_assignment_version_hash_must_be_sha256_hex(source_hash: str) -> None:
+    with pytest.raises(ValidationError):
+        AssignmentVersion(assignment_id="hw01", source_hash=source_hash)
