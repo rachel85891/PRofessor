@@ -77,39 +77,46 @@ Image digests, limits, timeouts and the parallelism are configuration. Full buil
 
 ```python
 # domain/execution.py
-class StepStatus(StrEnum): ...              # unchanged: succeeded, failed, skipped
-
-class FailureKind(StrEnum):                 # add one value
+class FailureKind(StrEnum):
     ...
-    PROJECT_NOT_FOUND = "project_not_found"  # no .csproj, or no single Web project (prepare step)
+    # New: no .csproj, or no single Web project (found in the prepare step).
+    PROJECT_NOT_FOUND = "project_not_found"
+
 
 class ExecutionResult(DomainModel):
-    prepare_status: StepStatus = StepStatus.SUCCEEDED   # new: project discovery and copy-in
-    build_status: StepStatus                             # restore + publish
+    # New: project discovery and copy-in. The failure_kind invariant covers all three steps.
+    prepare_status: StepStatus = StepStatus.SUCCEEDED
+    build_status: StepStatus  # restore + publish
     run_status: StepStatus
-    failure_kind: FailureKind | None = None              # invariant now covers all three steps
+    failure_kind: FailureKind | None = None
     logs_excerpt: str = ""
     logs_path: Path | None = None
     probe_results: tuple[ProbeResult, ...] = ()
 
-class ExecutionRequest(DomainModel):                     # new
+
+class ExecutionRequest(DomainModel):  # new
     run_id: Identifier
     repo_id: Identifier
     working_copy: Path
     probes: tuple[HttpProbe, ...]
-    environment: tuple[tuple[str, str], ...] = ()        # e.g. connection strings later
+    environment: tuple[tuple[str, str], ...] = ()  # e.g. connection strings later
     logs_dir: Path
+
 
 # ports/execution.py
 class CodeRunner(Protocol):
-    def check_environment(self) -> None: ...             # ExecutionEnvironmentError if the engine
-                                                         # doesn't answer or an image is missing
-    def execute(self, request: ExecutionRequest) -> ExecutionResult: ...
-                                                         # prepare, restore, build, run, probe,
-                                                         # always clean up
-    def sweep_leftovers(self) -> int: ...                # remove labelled resources from crashed runs
+    def check_environment(self) -> None:
+        """Raise ExecutionEnvironmentError if the engine doesn't answer or an image is missing."""
 
-class DatabaseProvisioner(Protocol): ...                 # unchanged and still provisional (no database yet)
+    def execute(self, request: ExecutionRequest) -> ExecutionResult:
+        """Prepare, restore, build, run and probe one repo; always clean up."""
+
+    def sweep_leftovers(self) -> int:
+        """Remove labelled resources left by crashed runs; return how many."""
+
+
+# Unchanged and still provisional (no database in the course yet).
+class DatabaseProvisioner(Protocol): ...
 ```
 
 Whether `PROJECT_NOT_FOUND` counts as a student issue (`is_student_issue`) is a decision for the developer.
