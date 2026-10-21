@@ -55,6 +55,7 @@ class GitSettings(BaseModel):
 
     executable: NonBlankText = "git"
     timeout_seconds: int = Field(default=120, ge=1)
+    ssl_backend: Literal["openssl", "schannel"] | None = None
     commit_author_name: NonBlankText = "HW Checker"
     commit_author_email: NonBlankText = "hw-checker@example.invalid"
 

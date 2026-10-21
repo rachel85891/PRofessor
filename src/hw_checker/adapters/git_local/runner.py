@@ -72,11 +72,18 @@ class GitRunner:
     """Runs git with the configured executable and timeout, mapping failures to domain errors."""
 
     def __init__(
-        self, executable: str, timeout_seconds: float, runner: CommandRunner = run_subprocess
+        self,
+        executable: str,
+        timeout_seconds: float,
+        runner: CommandRunner = run_subprocess,
+        ssl_backend: str | None = None,
     ) -> None:
         self._executable = executable
         self._timeout = timeout_seconds
         self._runner = runner
+        # None leaves the TLS backend to the machine's git config.
+        tls_config = () if ssl_backend is None else ("-c", f"http.sslBackend={ssl_backend}")
+        self._config = (*BASE_CONFIG, *tls_config)
 
     def run(self, args: Sequence[str], cwd: Path, error: type[HwCheckerError]) -> str:
         """Run `git <args>` in `cwd` and return stdout; raise `error` on a non-zero exit.
@@ -112,7 +119,7 @@ class GitRunner:
         logger.debug("git %s", command, extra={"cwd": str(cwd)})
         try:
             return self._runner(
-                [self._executable, *BASE_CONFIG, *args],
+                [self._executable, *self._config, *args],
                 cwd=cwd,
                 timeout=self._timeout,
                 env={**os.environ, **PROMPT_FREE_ENVIRONMENT},

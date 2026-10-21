@@ -25,7 +25,8 @@ _REMOTE_HEAD_PREFIX = "origin/"
 class LocalGitClient:
     """Clones and works with local copies of repos through the `git` executable.
 
-    Working copies always hold the repo's exact bytes (`core.autocrlf=false`).
+    Working copies always hold the repo's exact bytes (`core.autocrlf=false`). When
+    `ssl_backend` is set, every command uses that TLS backend (`http.sslBackend`).
     """
 
     def __init__(
@@ -35,8 +36,9 @@ class LocalGitClient:
         commit_author_name: str,
         commit_author_email: str,
         runner: CommandRunner = run_subprocess,
+        ssl_backend: str | None = None,
     ) -> None:
-        self._git = GitRunner(executable, timeout_seconds, runner)
+        self._git = GitRunner(executable, timeout_seconds, runner, ssl_backend)
         self._author_name = commit_author_name
         self._author_email = commit_author_email
 

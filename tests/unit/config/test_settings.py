@@ -200,3 +200,16 @@ def test_git_timeout_below_one_is_rejected(tmp_path: Path) -> None:
 def test_git_blank_author_is_rejected(tmp_path: Path) -> None:
     with pytest.raises(ConfigurationError, match=r"git\.commit_author_name"):
         _load(tmp_path, "git:\n  commit_author_name: ' '\n")
+
+
+def test_git_ssl_backend_defaults_to_none(tmp_path: Path) -> None:
+    assert _load(tmp_path, "").git.ssl_backend is None
+
+
+def test_git_ssl_backend_loads_from_yaml(tmp_path: Path) -> None:
+    assert _load(tmp_path, "git:\n  ssl_backend: schannel\n").git.ssl_backend == "schannel"
+
+
+def test_git_unknown_ssl_backend_is_rejected(tmp_path: Path) -> None:
+    with pytest.raises(ConfigurationError, match=r"git\.ssl_backend"):
+        _load(tmp_path, "git:\n  ssl_backend: gnutls\n")

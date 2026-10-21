@@ -32,6 +32,10 @@ git:
   executable: git
   # Maximum seconds for one git command (clone included) before it is aborted.
   timeout_seconds: 120
+  # TLS backend for HTTPS remotes (openssl, schannel, or null for the machine's git config).
+  # schannel because on this Windows machine the OpenSSL backend hangs during the TLS
+  # handshake with GitHub.
+  ssl_backend: schannel
   # Author of fix commits that students will see.
   # PLACEHOLDERS: replace once it is decided who fix commits come from.
   commit_author_name: HW Checker
