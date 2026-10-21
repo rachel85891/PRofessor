@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from hw_checker.adapters.docker_runner.archive import build_work_archive
+from hw_checker.adapters.docker_runner.archive import ArchiveTooLargeError, build_work_archive
 
 UID = GID = 1654
 
@@ -101,3 +101,24 @@ def test_member_names_never_escape_the_archive_root(repo: Path) -> None:
         assert not name.startswith("/")
         assert ".." not in Path(name).parts
         assert name.split("/")[0] in {"src", "out"}
+
+
+def test_size_guard_rejects_a_large_file_without_reading_it(repo: Path) -> None:
+    (repo / "big.bin").write_bytes(b"\0" * 5_000)
+
+    with pytest.raises(ArchiveTooLargeError, match=r"big\.bin is 5,000 bytes"):
+        build_work_archive(repo, UID, GID, max_file_bytes=1_000)
+
+
+def test_size_guard_rejects_a_large_total(repo: Path) -> None:
+    for index in range(5):
+        (repo / f"part{index}.bin").write_bytes(b"\0" * 400)
+
+    with pytest.raises(ArchiveTooLargeError, match="larger than the 1,000-byte limit"):
+        build_work_archive(repo, UID, GID, max_total_bytes=1_000)
+
+
+def test_excluded_folders_do_not_count_towards_the_size_limit(repo: Path) -> None:
+    (repo / "bin" / "huge.dll").write_bytes(b"\0" * 50_000)
+
+    assert build_work_archive(repo, UID, GID, max_total_bytes=10_000, max_file_bytes=10_000)

@@ -306,3 +306,11 @@ def test_limits_and_timeouts_must_be_positive(tmp_path: Path, runner_line: str, 
 def test_runner_logs_root_must_stay_inside_workspace(tmp_path: Path, logs_root: str) -> None:
     with pytest.raises(ConfigurationError, match=r"runner\.logs_root"):
         _load(tmp_path, f"runner:\n  logs_root: '{logs_root}'\n")
+
+
+def test_runner_archive_limits_default_and_must_be_positive(tmp_path: Path) -> None:
+    runner = _load(tmp_path, "").runner
+    assert (runner.max_archive_mb, runner.max_file_mb) == (200, 50)
+
+    with pytest.raises(ConfigurationError, match=r"runner\.max_file_mb"):
+        _load(tmp_path, "runner:\n  max_file_mb: 0\n")
