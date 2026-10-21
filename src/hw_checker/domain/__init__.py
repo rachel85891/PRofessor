@@ -7,10 +7,12 @@ from hw_checker.domain.assignment import (
     Assignment,
     HttpMethod,
     HttpProbe,
+    ParamValue,
     Requirement,
     RequirementKind,
     Severity,
 )
+from hw_checker.domain.checks import CheckDescription, CheckParamDescription
 from hw_checker.domain.execution import (
     ExecutionResult,
     FailureKind,
@@ -54,6 +56,8 @@ from hw_checker.domain.vcs import CommitInfo, PullRequestRef
 __all__ = [
     "Assignment",
     "AssignmentResult",
+    "CheckDescription",
+    "CheckParamDescription",
     "CommitInfo",
     "Evidence",
     "ExecutionResult",
@@ -66,6 +70,7 @@ __all__ = [
     "HttpProbe",
     "JudgedFinding",
     "Pair",
+    "ParamValue",
     "Patch",
     "ProbeResult",
     "ProposalStatus",

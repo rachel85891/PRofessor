@@ -47,3 +47,7 @@ class StorageError(HwCheckerError):
 
 class NotFoundError(HwCheckerError):
     """A requested entity (run, proposal, assignment) does not exist."""
+
+
+class CheckRegistrationError(HwCheckerError):
+    """The set of registered checks is inconsistent (duplicate name, unmarked function)."""
