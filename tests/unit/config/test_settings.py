@@ -314,3 +314,14 @@ def test_runner_archive_limits_default_and_must_be_positive(tmp_path: Path) -> N
 
     with pytest.raises(ConfigurationError, match=r"runner\.max_file_mb"):
         _load(tmp_path, "runner:\n  max_file_mb: 0\n")
+
+
+def test_storage_database_url_default_and_override(tmp_path: Path) -> None:
+    assert _load(tmp_path, "").storage.database_url == "sqlite:///workspace/hw_checker.db"
+    url = "postgresql://hw@localhost/hw_checker"
+    assert _load(tmp_path, f"storage:\n  database_url: {url}\n").storage.database_url == url
+
+
+def test_storage_blank_database_url_is_rejected(tmp_path: Path) -> None:
+    with pytest.raises(ConfigurationError, match=r"storage\.database_url"):
+        _load(tmp_path, "storage:\n  database_url: ' '\n")
