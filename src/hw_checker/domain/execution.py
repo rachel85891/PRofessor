@@ -7,7 +7,7 @@ from typing import Self
 from pydantic import Field, model_validator
 
 from hw_checker.domain.assignment import HttpProbe
-from hw_checker.domain.base import DomainModel, HttpStatusCode
+from hw_checker.domain.base import DomainModel, HttpStatusCode, Identifier, NonBlankStr
 
 MAX_LOGS_EXCERPT_CHARS = 8000
 """Upper bound for a log excerpt kept in state and reports; full logs stay on disk (§7)."""
@@ -25,6 +25,8 @@ class FailureKind(StrEnum):
     HARDCODED_CONNECTION_UNRESOLVED = "hardcoded_connection_unresolved"
     TIMEOUT = "timeout"
     ENVIRONMENT_ERROR = "environment_error"
+    PROJECT_NOT_FOUND = "project_not_found"
+    """No .csproj, or not exactly one Web project; flagged for manual review."""
 
     @property
     def is_student_issue(self) -> bool:
@@ -33,7 +35,7 @@ class FailureKind(StrEnum):
 
 
 class StepStatus(StrEnum):
-    """Outcome of one execution step (build or run)."""
+    """Outcome of one execution step (prepare, build or run)."""
 
     SUCCEEDED = "succeeded"
     FAILED = "failed"
@@ -70,8 +72,13 @@ class ProbeResult(DomainModel):
 
 
 class ExecutionResult(DomainModel):
-    """Build and run outcome for one repo, with probe results and a bounded log excerpt."""
+    """Prepare, build and run outcome for one repo, with probe results and a log excerpt.
 
+    `prepare` is project discovery and copying the code in; `build` is restore and publish.
+    The steps run in that order, and the steps after a failed step are skipped.
+    """
+
+    prepare_status: StepStatus = StepStatus.SUCCEEDED
     build_status: StepStatus
     run_status: StepStatus
     failure_kind: FailureKind | None = None
@@ -79,17 +86,54 @@ class ExecutionResult(DomainModel):
     logs_path: Path | None = None
     probe_results: tuple[ProbeResult, ...] = ()
 
+    @property
+    def steps(self) -> tuple[StepStatus, StepStatus, StepStatus]:
+        """The step statuses in execution order: prepare, build, run."""
+        return (self.prepare_status, self.build_status, self.run_status)
+
     @model_validator(mode="after")
     def _failure_kind_matches_steps(self) -> Self:
-        failed = StepStatus.FAILED in (self.build_status, self.run_status)
+        failed = StepStatus.FAILED in self.steps
         if failed and self.failure_kind is None:
             raise ValueError("a failed step needs a failure_kind")
         if not failed and self.failure_kind is not None:
             raise ValueError("failure_kind is only allowed when a step failed")
+        if (
+            self.failure_kind is FailureKind.PROJECT_NOT_FOUND
+            and self.prepare_status is not StepStatus.FAILED
+        ):
+            raise ValueError("project_not_found requires a failed prepare step")
+        return self
+
+    @model_validator(mode="after")
+    def _steps_after_a_failure_are_skipped(self) -> Self:
+        if StepStatus.FAILED in self.steps:
+            first_failed = self.steps.index(StepStatus.FAILED)
+            if any(step is not StepStatus.SKIPPED for step in self.steps[first_failed + 1 :]):
+                raise ValueError("steps after a failed step must be skipped")
         return self
 
     @model_validator(mode="after")
     def _probes_only_after_successful_run(self) -> Self:
         if self.probe_results and self.run_status is not StepStatus.SUCCEEDED:
             raise ValueError("probe_results require a successful run")
+        return self
+
+
+class ExecutionRequest(DomainModel):
+    """Everything the runner needs to prepare, build, run and probe one repo."""
+
+    run_id: Identifier
+    repo_id: Identifier
+    working_copy: Path
+    probes: tuple[HttpProbe, ...] = ()
+    environment: tuple[tuple[NonBlankStr, str], ...] = ()
+    """Extra environment variables for the running app (for example connection strings)."""
+    logs_dir: Path
+
+    @model_validator(mode="after")
+    def _environment_keys_are_unique(self) -> Self:
+        keys = [key for key, _ in self.environment]
+        if len(set(keys)) != len(keys):
+            raise ValueError("environment keys must be unique")
         return self
