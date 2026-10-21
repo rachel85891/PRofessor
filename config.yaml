@@ -6,6 +6,9 @@
 # Directory for clones and run artifacts (relative to the working directory).
 workspace_dir: workspace
 
+# Directory holding one folder per assignment with its requirements.yaml (see its README.md).
+assignments_dir: assignments
+
 # Maximum number of repos checked in parallel (at least 1).
 max_parallel_repos: 3
 

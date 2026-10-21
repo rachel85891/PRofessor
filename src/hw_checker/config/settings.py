@@ -78,6 +78,7 @@ class Settings(BaseSettings):
     )
 
     workspace_dir: Path = Path("workspace")
+    assignments_dir: Path = Path("assignments")
     max_parallel_repos: int = Field(default=3, ge=1)
     logging: LoggingSettings = LoggingSettings()
     roster: RosterSettings = RosterSettings()
