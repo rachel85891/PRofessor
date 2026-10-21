@@ -14,6 +14,7 @@ from hw_checker.domain.assignment import (
 )
 from hw_checker.domain.checks import CheckDescription, CheckParamDescription
 from hw_checker.domain.execution import (
+    ExecutionRequest,
     ExecutionResult,
     FailureKind,
     ProbeResult,
@@ -60,6 +61,7 @@ __all__ = [
     "CheckParamDescription",
     "CommitInfo",
     "Evidence",
+    "ExecutionRequest",
     "ExecutionResult",
     "FailureKind",
     "Finding",

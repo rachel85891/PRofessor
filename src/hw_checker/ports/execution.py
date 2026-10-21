@@ -1,33 +1,44 @@
 """Ports for building and running student code and for its database.
 
-Both ports are provisional: the Docker spike (stage 5a) may revise them.
+`CodeRunner` follows ADR 0015. `DatabaseProvisioner` stays provisional until the course
+reaches a database.
 """
 
-from collections.abc import Mapping
-from pathlib import Path
 from typing import Protocol
 
-from hw_checker.domain import ExecutionResult, HttpProbe
+from hw_checker.domain import ExecutionRequest, ExecutionResult
 
 
 class CodeRunner(Protocol):
-    """Builds and runs a project in isolation and probes it over HTTP. Provisional."""
+    """Prepares, builds, runs and probes one repo in isolation, and cleans up after it."""
 
-    def execute(
-        self,
-        project_dir: Path,
-        probes: tuple[HttpProbe, ...],
-        environment: Mapping[str, str],
-        logs_dir: Path,
-    ) -> ExecutionResult:
-        """Build and run the project in `project_dir`, run `probes` in order, then clean up.
-
-        `environment` is passed to the running app (for example connection string overrides).
-        Full build and run logs are written under `logs_dir`. Student build or startup
-        failures are reported in the result, not raised. Cleanup always runs.
+    def check_environment(self) -> None:
+        """Check that the execution engine answers and the configured images are present.
 
         Raises:
-            ExecutionEnvironmentError: the execution environment itself is unavailable.
+            ExecutionEnvironmentError: the engine doesn't answer or an image is missing.
+        """
+        ...
+
+    def execute(self, request: ExecutionRequest) -> ExecutionResult:
+        """Prepare, restore, build, run and probe one repo, and always clean up after it.
+
+        Student failures and failures inside a step (including engine errors during a step)
+        are reported in the result as a `FailureKind`, not raised. Full logs are written
+        under `request.logs_dir`.
+
+        Raises:
+            ExecutionEnvironmentError: the engine cannot be reached, so no step could start.
+        """
+        ...
+
+    def sweep_leftovers(self) -> int:
+        """Remove resources left by crashed runs (found by label); return how many.
+
+        Shared resources such as the package cache are kept.
+
+        Raises:
+            ExecutionEnvironmentError: the engine cannot be reached.
         """
         ...
 

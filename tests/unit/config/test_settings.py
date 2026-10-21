@@ -242,3 +242,67 @@ def test_git_empty_commit_author_in_env_file_counts_as_unset(tmp_path: Path) -> 
 def test_assignments_dir_default_and_override(tmp_path: Path) -> None:
     assert _load(tmp_path, "").assignments_dir == Path("assignments")
     assert _load(tmp_path, "assignments_dir: data/hw\n").assignments_dir == Path("data/hw")
+
+
+def test_runner_defaults_load_from_the_repo_config(tmp_path: Path) -> None:
+    from hw_checker.config.settings import DEFAULT_CONFIG_PATH
+
+    runner = load_settings(config_path=DEFAULT_CONFIG_PATH, env_path=tmp_path / ".env").runner
+
+    assert runner.sdk_image.startswith("mcr.microsoft.com/dotnet/sdk:9.0@sha256:")
+    assert runner.runtime_image.startswith("mcr.microsoft.com/dotnet/aspnet:9.0@sha256:")
+    assert "@sha256:" in runner.probe_image
+    assert runner.run_limits.memory_mb == 512
+    assert runner.readiness_timeout_seconds == 30
+    assert runner.app_port == 8080
+    assert runner.logs_root == Path("logs")
+
+
+def test_runner_defaults_apply_without_config(tmp_path: Path) -> None:
+    runner = _load(tmp_path, "").runner
+
+    assert runner.build_limits.cpus == 2
+    assert runner.label_prefix == "hw-checker"
+
+
+@pytest.mark.parametrize(
+    "image",
+    [
+        "mcr.microsoft.com/dotnet/sdk:9.0",
+        "mcr.microsoft.com/dotnet/sdk:latest",
+        "mcr.microsoft.com/dotnet/sdk@sha256:abc",
+        "mcr.microsoft.com/dotnet/sdk:9.0@sha256:" + "Z" * 64,
+    ],
+)
+def test_unpinned_image_is_rejected_naming_the_field(tmp_path: Path, image: str) -> None:
+    with pytest.raises(ConfigurationError, match=r"runner\.sdk_image"):
+        _load(tmp_path, f"runner:\n  sdk_image: '{image}'\n")
+
+
+def test_image_pinned_without_tag_is_accepted(tmp_path: Path) -> None:
+    image = "mcr.microsoft.com/dotnet/aspnet@sha256:" + "a" * 64
+
+    assert _load(tmp_path, f"runner:\n  runtime_image: '{image}'\n").runner.runtime_image == image
+
+
+LIMIT_CASES = [
+    ("run_limits: {memory_mb: 0, cpus: 1, pids: 10}", r"runner\.run_limits\.memory_mb"),
+    ("build_limits: {memory_mb: 512, cpus: 0, pids: 10}", r"runner\.build_limits\.cpus"),
+    ("probe_limits: {memory_mb: 64, cpus: 1, pids: 0}", r"runner\.probe_limits\.pids"),
+    ("readiness_timeout_seconds: 0", r"runner\.readiness_timeout_seconds"),
+    ("restore_timeout_seconds: -5", r"runner\.restore_timeout_seconds"),
+    ("readiness_poll_seconds: 0", r"runner\.readiness_poll_seconds"),
+    ("app_port: 70000", r"runner\.app_port"),
+]
+
+
+@pytest.mark.parametrize(("runner_line", "field"), LIMIT_CASES)
+def test_limits_and_timeouts_must_be_positive(tmp_path: Path, runner_line: str, field: str) -> None:
+    with pytest.raises(ConfigurationError, match=field):
+        _load(tmp_path, f"runner:\n  {runner_line}\n")
+
+
+@pytest.mark.parametrize("logs_root", ["../logs", "/var/logs", "C:/logs", "logs/../../x"])
+def test_runner_logs_root_must_stay_inside_workspace(tmp_path: Path, logs_root: str) -> None:
+    with pytest.raises(ConfigurationError, match=r"runner\.logs_root"):
+        _load(tmp_path, f"runner:\n  logs_root: '{logs_root}'\n")
