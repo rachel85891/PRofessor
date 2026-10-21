@@ -14,6 +14,7 @@ class GitClient(Protocol):
 
         Raises:
             RepoUnavailableError: the repo cannot be cloned or fetched.
+            ExecutionEnvironmentError: the git executable is not available.
         """
         ...
 
@@ -22,6 +23,7 @@ class GitClient(Protocol):
 
         Raises:
             RepoUnavailableError: `repo_dir` is not a readable Git working copy.
+            ExecutionEnvironmentError: the git executable is not available.
         """
         ...
 
@@ -30,6 +32,7 @@ class GitClient(Protocol):
 
         Raises:
             RepoUnavailableError: `repo_dir` is not a readable Git working copy.
+            ExecutionEnvironmentError: the git executable is not available.
         """
         ...
 
@@ -38,6 +41,7 @@ class GitClient(Protocol):
 
         Raises:
             GitOperationError: the branch cannot be created or checked out.
+            ExecutionEnvironmentError: the git executable is not available.
         """
         ...
 
@@ -46,6 +50,7 @@ class GitClient(Protocol):
 
         Raises:
             GitOperationError: staging or committing failed.
+            ExecutionEnvironmentError: the git executable is not available.
         """
         ...
 
@@ -54,5 +59,6 @@ class GitClient(Protocol):
 
         Raises:
             PublishError: the push was rejected or failed.
+            ExecutionEnvironmentError: the git executable is not available.
         """
         ...

@@ -25,7 +25,7 @@ class LoggingSettings(BaseModel):
     log_dir: Path = Path("logs")
 
 
-HeaderText = Annotated[str, Field(pattern=r"\S")]
+NonBlankText = Annotated[str, Field(pattern=r"\S")]
 
 
 class RosterColumnsSettings(BaseModel):
@@ -33,9 +33,9 @@ class RosterColumnsSettings(BaseModel):
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    name: HeaderText = "Name"
-    partner_name: HeaderText = "Partner"
-    github_url: HeaderText = "GitHub"
+    name: NonBlankText = "Name"
+    partner_name: NonBlankText = "Partner"
+    github_url: NonBlankText = "GitHub"
 
 
 class RosterSettings(BaseModel):
@@ -46,6 +46,17 @@ class RosterSettings(BaseModel):
     sheet_name: str | None = None
     header_row: int = Field(default=1, ge=1)
     columns: RosterColumnsSettings = RosterColumnsSettings()
+
+
+class GitSettings(BaseModel):
+    """How the git CLI is run. The commit author values are placeholders until decided."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    executable: NonBlankText = "git"
+    timeout_seconds: int = Field(default=120, ge=1)
+    commit_author_name: NonBlankText = "HW Checker"
+    commit_author_email: NonBlankText = "hw-checker@example.invalid"
 
 
 class Settings(BaseSettings):
@@ -69,6 +80,7 @@ class Settings(BaseSettings):
     max_parallel_repos: int = Field(default=3, ge=1)
     logging: LoggingSettings = LoggingSettings()
     roster: RosterSettings = RosterSettings()
+    git: GitSettings = GitSettings()
     github_token: SecretStr | None = None
 
     @classmethod
