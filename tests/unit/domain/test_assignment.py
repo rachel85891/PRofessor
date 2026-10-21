@@ -123,3 +123,104 @@ def test_assignment_rejects_duplicate_requirement_ids() -> None:
             title="Products controller",
             requirements=(builders.requirement(), builders.requirement()),
         )
+
+
+SOURCE_HASH = "0" * 63 + "a"
+
+
+@pytest.mark.parametrize("kind", [RequirementKind.STRUCTURE, RequirementKind.CUSTOM])
+def test_structure_and_custom_requirements_need_a_check(kind: RequirementKind) -> None:
+    with pytest.raises(ValidationError, match="needs a check"):
+        builders.requirement(kind=kind)
+
+
+@pytest.mark.parametrize("kind", [RequirementKind.STRUCTURE, RequirementKind.CUSTOM])
+def test_structure_and_custom_requirements_with_check_and_params_build(
+    kind: RequirementKind,
+) -> None:
+    requirement = builders.requirement(
+        kind=kind, check="file_exists", params={"glob": "**/Controllers/*.cs", "min": 1}
+    )
+
+    assert requirement.check == "file_exists"
+    assert dict(requirement.params) == {"glob": "**/Controllers/*.cs", "min": 1}
+
+
+@pytest.mark.parametrize("kind", [RequirementKind.CODE, RequirementKind.BUILD])
+def test_code_and_build_requirements_must_not_have_a_check(kind: RequirementKind) -> None:
+    with pytest.raises(ValidationError, match="must not have a check"):
+        builders.requirement(kind=kind, check="file_exists")
+
+
+def test_http_requirement_must_not_have_a_check() -> None:
+    with pytest.raises(ValidationError, match="must not have a check"):
+        builders.requirement(
+            kind=RequirementKind.HTTP, http_probes=(builders.probe(),), check="file_exists"
+        )
+
+
+def test_params_without_check_are_rejected() -> None:
+    with pytest.raises(ValidationError, match="only allowed together with a check"):
+        builders.requirement(params={"glob": "*.cs"})
+
+
+def test_params_default_to_empty() -> None:
+    assert dict(builders.requirement().params) == {}
+
+
+def test_params_are_immutable() -> None:
+    requirement = builders.requirement(
+        kind=RequirementKind.STRUCTURE, check="file_exists", params={"glob": "*.cs"}
+    )
+
+    with pytest.raises(TypeError):
+        requirement.params["glob"] = "other"  # type: ignore[index]
+
+
+def test_params_keep_value_types_and_round_trip() -> None:
+    requirement = builders.requirement(
+        kind=RequirementKind.CUSTOM,
+        check="naming",
+        params={"flag": True, "count": 2, "ratio": 0.5, "names": ["Get", "Post"]},
+    )
+
+    assert requirement.params["flag"] is True
+    assert requirement.params["names"] == ("Get", "Post")
+    assert type(requirement).model_validate_json(requirement.model_dump_json()) == requirement
+
+
+def test_params_reject_nested_mappings() -> None:
+    with pytest.raises(ValidationError):
+        builders.requirement(kind=RequirementKind.CUSTOM, check="x", params={"a": {"b": 1}})
+
+
+def test_source_hash_is_optional_and_validated() -> None:
+    plain = Assignment(id="hw01", order=1, title="Intro", requirements=())
+    hashed = Assignment(id="hw01", order=1, title="Intro", requirements=(), source_hash=SOURCE_HASH)
+
+    assert plain.source_hash is None
+    assert hashed.source_hash == SOURCE_HASH
+    with pytest.raises(ValidationError):
+        Assignment(id="hw01", order=1, title="Intro", requirements=(), source_hash="abc")
+
+
+def test_probe_carries_its_requirement_and_assignment() -> None:
+    probe = builders.probe()
+
+    assert (probe.requirement_id, probe.assignment_id) == ("hw03-r2", "hw03")
+
+
+def test_requirement_rejects_probe_of_another_requirement() -> None:
+    with pytest.raises(ValidationError, match="requirement_id 'hw03-r2'"):
+        builders.requirement(
+            kind=RequirementKind.HTTP, http_probes=(builders.probe(requirement_id="hw03-r9"),)
+        )
+
+
+def test_assignment_rejects_probe_of_another_assignment() -> None:
+    requirement = builders.requirement(
+        kind=RequirementKind.HTTP, http_probes=(builders.probe(assignment_id="hw04"),)
+    )
+
+    with pytest.raises(ValidationError, match="assignment_id 'hw03'"):
+        Assignment(id="hw03", order=3, title="Products", requirements=(requirement,))

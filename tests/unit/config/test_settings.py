@@ -237,3 +237,8 @@ def test_git_empty_commit_author_in_env_file_counts_as_unset(tmp_path: Path) -> 
     ).git
 
     assert (git.commit_author_name, git.commit_author_email) == (None, None)
+
+
+def test_assignments_dir_default_and_override(tmp_path: Path) -> None:
+    assert _load(tmp_path, "").assignments_dir == Path("assignments")
+    assert _load(tmp_path, "assignments_dir: data/hw\n").assignments_dir == Path("data/hw")

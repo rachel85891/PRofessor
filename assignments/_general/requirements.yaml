@@ -1,0 +1,6 @@
+# General requirements, checked in every round together with assignments 1..N.
+# The real requirements are added in stage 3c. See ../README.md for the format.
+id: _general
+order: 0
+title: General requirements
+requirements: []

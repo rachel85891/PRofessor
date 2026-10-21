@@ -106,3 +106,9 @@ def test_logs_excerpt_is_bounded() -> None:
             run_status=StepStatus.SUCCEEDED,
             logs_excerpt="x" * (MAX_LOGS_EXCERPT_CHARS + 1),
         )
+
+
+def test_probe_result_is_traceable_to_requirement_and_assignment() -> None:
+    result = ProbeResult(probe=builders.probe(), actual_status=200, passed=True)
+
+    assert (result.requirement_id, result.assignment_id) == ("hw03-r2", "hw03")
