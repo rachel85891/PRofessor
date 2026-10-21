@@ -399,7 +399,7 @@ The v1 UI is a thin Streamlit app that calls only the service layer; storage is 
 | Start a round | Choose an assignment, upload the Excel file, show ingestion warnings, run button |
 | Round progress | Table of repos with status (queued, running, done, failed), duration, and a link to details; auto-refresh |
 | Review | Per repo: accepted findings, rejected findings (collapsed), build/HTTP results, fix diff, report; approve, reject and note buttons |
-| Assignments | View each assignment's requirements as loaded (read-only in v1) |
+| Assignments | View each assignment's requirements, and create or edit them through a form (method and path, request body, expected statuses, special requirements); the form writes the YAML files |
 
 **UI principles**
 
@@ -469,7 +469,7 @@ The first phase has 17 implementation stages; 15 of them are required for the st
 | 9 | Judge rails | Validators + LLM judge + storing rejected findings | Fake findings are filtered out in tests | Must | 8 |
 | 10 | Graph assembly | RunGraph, RepoGraph, Send, checkpointer, error isolation, partner hints | A round over 2–3 repos runs end to end and is saved | Must | 2–9 |
 | 11 | Reports | Jinja2 templates, score, grades file, English feedback | All three outputs produced from a real round | Must | 10 |
-| 12 | Streamlit UI | The four screens from section 12, background run | A full round runs from the UI without a terminal | Must | 11 |
+| 12 | Streamlit UI | The four screens from section 12, background run, requirements editor | A full round runs from the UI without a terminal | Must | 11 |
 | 13 | PR publishing | PublishService, GitHubCodeHost | A PR opens only for an approved proposal; re-publishing updates it | Should | 6, 11 |
 | 14 | Fixes | fixer, patch application, rebuild, diff in the UI | A fix that breaks the build is dropped automatically | Should | 10 |
 | 15 | First real run | A round over real repos, calibrating requirements and prompts, bug fixes | A full round completes and results are checked manually | Must | 12 |
@@ -519,5 +519,4 @@ The highest risk is running the projects in Docker on Windows against SQL Server
 4. Selective review: only repos flagged as problematic go to manual approval.
 5. FastAPI on top of the service layer, later React and multiple users.
 6. PostgreSQL instead of SQLite.
-7. Editing requirements from the UI.
-8. Checking students' unit tests once the course reaches that stage.
+7. Checking students' unit tests once the course reaches that stage.
