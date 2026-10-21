@@ -8,7 +8,7 @@ import hw_checker.ports
 
 EXPECTED_PORTS = {
     "hw_checker.ports.assignments": ["AssignmentSource"],
-    "hw_checker.ports.checks": ["CheckCatalog"],
+    "hw_checker.ports.checks": ["CheckCatalog", "RequirementChecker"],
     "hw_checker.ports.clock": ["Clock"],
     "hw_checker.ports.code_host": ["CodeHost"],
     "hw_checker.ports.execution": ["CodeRunner", "DatabaseProvisioner"],

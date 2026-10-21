@@ -4,7 +4,7 @@ May depend on: domain.
 """
 
 from hw_checker.ports.assignments import AssignmentSource
-from hw_checker.ports.checks import CheckCatalog
+from hw_checker.ports.checks import CheckCatalog, RequirementChecker
 from hw_checker.ports.clock import Clock
 from hw_checker.ports.code_host import CodeHost
 from hw_checker.ports.execution import CodeRunner, DatabaseProvisioner
@@ -26,6 +26,7 @@ __all__ = [
     "LLMClient",
     "ProposalRepository",
     "ReportWriter",
+    "RequirementChecker",
     "RosterReader",
     "RunRepository",
 ]

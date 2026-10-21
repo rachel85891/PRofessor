@@ -3,7 +3,7 @@
 from collections.abc import Mapping
 from typing import Protocol
 
-from hw_checker.domain import CheckDescription, ParamValue
+from hw_checker.domain import CheckDescription, CheckInput, Finding, NotEvaluatedReason, ParamValue
 
 
 class CheckCatalog(Protocol):
@@ -22,4 +22,19 @@ class CheckCatalog(Protocol):
 
     def describe(self) -> tuple[CheckDescription, ...]:
         """Describe every registered check and its params, ordered by name. Raises nothing."""
+        ...
+
+
+class RequirementChecker(Protocol):
+    """Evaluates one deterministic requirement (structure, custom, build or http)."""
+
+    def check(self, check_input: CheckInput) -> tuple[Finding, ...] | NotEvaluatedReason:
+        """Return the findings for `check_input.requirement`, or why it was not evaluated.
+
+        An empty tuple means the requirement passed. Only reads the working copy.
+
+        Raises:
+            InvalidAssignmentError: the requirement is a `code` requirement, names an unknown
+                check, or gives it invalid params.
+        """
         ...
