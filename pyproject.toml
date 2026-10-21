@@ -4,6 +4,7 @@ version = "0.1.0"
 description = "LangGraph agent that checks homework for a .NET 9 Web API course."
 requires-python = ">=3.12,<3.13"
 dependencies = [
+    "docker>=7.2.0",
     "openpyxl>=3.1.5",
     "pydantic>=2.14.1",
     "pydantic-settings>=2.16.1",
