@@ -22,14 +22,50 @@ class WorkArchive:
     skipped: tuple[str, ...]
 
 
-def build_work_archive(working_copy: Path, uid: int, gid: int) -> WorkArchive:
+class ArchiveTooLargeError(Exception):
+    """The working copy, or one file in it, is larger than the configured limit."""
+
+
+@dataclass
+class _SizeGuard:
+    max_total_bytes: int | None
+    max_file_bytes: int | None
+    total_bytes: int = 0
+
+    def admit(self, path: Path, relative: str) -> None:
+        # Measured from the file system, so an oversized file is never read into memory.
+        size = path.stat().st_size
+        if self.max_file_bytes is not None and size > self.max_file_bytes:
+            raise ArchiveTooLargeError(
+                f"{relative} is {size:,} bytes; the limit for one file is "
+                f"{self.max_file_bytes:,} bytes"
+            )
+        self.total_bytes += size
+        if self.max_total_bytes is not None and self.total_bytes > self.max_total_bytes:
+            raise ArchiveTooLargeError(
+                f"the working copy is larger than the {self.max_total_bytes:,}-byte limit "
+                f"(over {self.total_bytes:,} bytes so far, at {relative})"
+            )
+
+
+def build_work_archive(
+    working_copy: Path,
+    uid: int,
+    gid: int,
+    max_total_bytes: int | None = None,
+    max_file_bytes: int | None = None,
+) -> WorkArchive:
     """Tar `working_copy` under `src/`, plus an empty `out/`, owned by `uid:gid`.
 
     `bin/`, `obj/` and `.git/` are left out. Symlinks, junctions and anything that resolves
     outside the working copy are skipped and listed. Modes are normalized and timestamps
     zeroed, so the same input always gives the same bytes.
+
+    Raises:
+        ArchiveTooLargeError: a file, or all files together, exceed the given limits.
     """
     root = working_copy.resolve()
+    guard = _SizeGuard(max_total_bytes, max_file_bytes)
     buffer = io.BytesIO()
     skipped: list[str] = []
     with tarfile.open(fileobj=buffer, mode="w", format=tarfile.PAX_FORMAT) as archive:
@@ -53,6 +89,7 @@ def build_work_archive(working_copy: Path, uid: int, gid: int) -> WorkArchive:
                 if not _is_safe(path, root):
                     skipped.append(path.relative_to(root).as_posix())
                     continue
+                guard.admit(path, path.relative_to(root).as_posix())
                 _add_file(archive, path, _member_name(path, root), uid, gid)
     return WorkArchive(buffer.getvalue(), tuple(sorted(skipped)))
 

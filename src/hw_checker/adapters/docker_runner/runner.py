@@ -1,0 +1,496 @@
+"""DockerCodeRunner: prepares, builds, runs and probes one student repo in Docker (ADR 0015).
+
+Student code never runs on the host, never has network access during build or run, and
+everything created for a repo is removed in `finally`.
+"""
+
+import dataclasses
+import logging
+import re
+import time
+import uuid
+from collections.abc import Callable
+from dataclasses import dataclass, field
+from pathlib import Path
+
+from hw_checker.adapters.docker_runner.archive import ArchiveTooLargeError, build_work_archive
+from hw_checker.adapters.docker_runner.classification import RunnerStep, StepOutcome, classify
+from hw_checker.adapters.docker_runner.discovery import DiscoveryFailure, discover_web_project
+from hw_checker.adapters.docker_runner.engine import (
+    ContainerSpec,
+    DockerEngine,
+    EngineError,
+    Mount,
+)
+from hw_checker.adapters.docker_runner.excerpt import excerpt_log
+from hw_checker.adapters.docker_runner.runner_config import ContainerLimits, DockerRunnerConfig
+from hw_checker.config.logging_setup import log_context
+from hw_checker.domain import (
+    ExecutionRequest,
+    ExecutionResult,
+    FailureKind,
+    HttpProbe,
+    ProbeResult,
+    StepStatus,
+)
+from hw_checker.domain.errors import ExecutionEnvironmentError
+from hw_checker.domain.execution import MAX_PROBE_ERROR_CHARS
+
+logger = logging.getLogger(__name__)
+
+WORK_MOUNT = "/work"
+CACHE_MOUNT = "/nuget"
+OUTPUT_DIR = "/work/out"
+DOTNET_ENVIRONMENT = {
+    "NUGET_PACKAGES": f"{CACHE_MOUNT}/packages",
+    "DOTNET_CLI_TELEMETRY_OPTOUT": "1",
+    "DOTNET_NOLOGO": "1",
+}
+TMPFS = {"/tmp": "size=64m"}
+CURL_ERRORS = {6: "could not resolve the app", 7: "connection refused", 28: "timed out"}
+_INVALID_NAME_CHARACTERS = re.compile(r"[^a-zA-Z0-9_.-]")
+
+Clock = Callable[[], float]
+Sleep = Callable[[float], None]
+
+
+class DockerCodeRunner:
+    """`CodeRunner` that builds and runs student projects in hardened Docker containers."""
+
+    def __init__(
+        self,
+        config: DockerRunnerConfig,
+        engine: DockerEngine,
+        clock: Clock = time.monotonic,
+        sleep: Sleep = time.sleep,
+    ) -> None:
+        self._config = config
+        self._engine = engine
+        self._clock = clock
+        self._sleep = sleep
+
+    def execute(self, request: ExecutionRequest) -> ExecutionResult:
+        """Prepare, restore, build, run and probe one repo, and always clean up after it.
+
+        Raises:
+            ExecutionEnvironmentError: the engine cannot be reached, a pinned image is
+                missing, or the package cache volume does not exist, so no step could start.
+        """
+        with log_context(run_id=request.run_id, repo_id=request.repo_id):
+            execution = _Execution(self._config, self._engine, request, self._clock, self._sleep)
+            return execution.run()
+
+
+@dataclass
+class _StepRecord:
+    step: RunnerStep
+    outcome: StepOutcome
+    log: str
+
+
+@dataclass
+class _Execution:
+    """One `execute` call: the resources it created and the steps it ran."""
+
+    config: DockerRunnerConfig
+    engine: DockerEngine
+    request: ExecutionRequest
+    clock: Clock
+    sleep: Sleep
+    containers: list[str] = field(default_factory=list)
+    networks: list[str] = field(default_factory=list)
+    volumes: list[str] = field(default_factory=list)
+    suffix: str = field(default_factory=lambda: uuid.uuid4().hex[:8])
+
+    def run(self) -> ExecutionResult:
+        self.request.logs_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            return self._pipeline()
+        finally:
+            self._cleanup()
+
+    # ------------------------------------------------------------------ pipeline
+
+    def _pipeline(self) -> ExecutionResult:
+        discovery = discover_web_project(self.request.working_copy)
+        if isinstance(discovery, DiscoveryFailure):
+            return self._prepare_failed(discovery.message, project_found=False)
+        try:
+            archive = build_work_archive(
+                self.request.working_copy,
+                self.config.app_uid,
+                self.config.app_gid,
+                self.config.max_archive_bytes,
+                self.config.max_file_bytes,
+            )
+        except ArchiveTooLargeError as error:
+            return self._prepare_failed(f"not run, flagged for review: {error}")
+        if archive.skipped:
+            logger.warning(
+                "Skipped unsafe paths in the working copy: %s", ", ".join(archive.skipped)
+            )
+        self._preflight()
+        work_volume = self._name("work")
+        try:
+            self._create_work_volume(work_volume, archive.data)
+        except EngineError as error:
+            return self._prepare_failed(f"cannot copy the code into Docker: {error}", engine=True)
+        self._write_log(RunnerStep.PREPARE, f"Web project: {discovery.path}\n")
+
+        project = f"{WORK_MOUNT}/src/{discovery.path}"
+        restore = self._run_step(
+            RunnerStep.RESTORE,
+            self._step_spec(
+                "restore",
+                self.config.sdk_image,
+                ("dotnet", "restore", project),
+                work_volume,
+                cache_read_only=False,
+                network_mode="bridge",
+                limits=self.config.restore_limits,
+            ),
+            self.config.restore_timeout_seconds,
+        )
+        if (kind := classify(restore.outcome)) is not None:
+            return self._build_failed(kind, restore.log)
+        build = self._run_step(
+            RunnerStep.BUILD,
+            self._step_spec(
+                "build",
+                self.config.sdk_image,
+                ("dotnet", "publish", project, "--no-restore", "-c", "Release", "-o", OUTPUT_DIR),
+                work_volume,
+                cache_read_only=True,
+                network_mode="none",
+                limits=self.config.build_limits,
+            ),
+            self.config.build_timeout_seconds,
+        )
+        if (kind := classify(build.outcome)) is not None:
+            return self._build_failed(kind, build.log)
+        return self._run_and_probe(work_volume, discovery.assembly_name)
+
+    def _preflight(self) -> None:
+        try:
+            self.engine.ping()
+            missing = [image for image in self.config.images if not self.engine.image_exists(image)]
+            cache_exists = self.engine.volume_exists(self.config.nuget_cache_volume)
+        except EngineError as error:
+            raise ExecutionEnvironmentError(f"Docker is not reachable: {error}") from error
+        if missing:
+            raise ExecutionEnvironmentError(
+                f"Docker images are missing: {', '.join(missing)}; run the environment check"
+            )
+        if not cache_exists:
+            raise ExecutionEnvironmentError(
+                f"the package cache volume {self.config.nuget_cache_volume} does not exist; "
+                "run the environment check"
+            )
+
+    def _create_work_volume(self, name: str, data: bytes) -> None:
+        self.engine.create_volume(name, self._labels("work"))
+        self.volumes.append(name)
+        helper = self.engine.create_container(
+            ContainerSpec(
+                name=self._name("copy"),
+                image=self.config.runtime_image,
+                command=("true",),
+                labels=self._labels("copy"),
+                user=self.config.user,
+                memory_mb=self.config.probe_limits.memory_mb,
+                cpus=self.config.probe_limits.cpus,
+                pids=self.config.probe_limits.pids,
+                mounts=(Mount(name, WORK_MOUNT, read_only=False),),
+                network_mode="none",
+            )
+        )
+        self.containers.append(helper)
+        self.engine.put_archive(helper, WORK_MOUNT, data)
+        self._remove_container(helper)
+
+    def _run_and_probe(self, work_volume: str, assembly_name: str) -> ExecutionResult:
+        network = self._name("net")
+        app_name = self._name("app")
+        started = self.clock()
+        logger.info("Step run started")
+        try:
+            self.engine.create_network(network, self._labels("network"), internal=True)
+            self.networks.append(network)
+            app = self._create(self._app_spec(app_name, network, work_volume, assembly_name))
+            sidecar = self._create(self._probe_spec(network))
+            self.engine.start(sidecar)
+            self.engine.start(app)
+            outcome = self._wait_until_ready(
+                app, sidecar, f"http://{app_name}:{self.config.app_port}"
+            )
+            probe_results = (
+                tuple(
+                    self._probe(sidecar, f"http://{app_name}:{self.config.app_port}", probe)
+                    for probe in self.request.probes
+                )
+                if outcome.ready
+                else ()
+            )
+            log = self.engine.logs(app)
+        except EngineError as error:
+            outcome = StepOutcome(RunnerStep.RUN, engine_error=True, log_text=str(error))
+            probe_results, log = (), str(error)
+        self._log_step_end(RunnerStep.RUN, started, outcome)
+        self._write_log(RunnerStep.RUN, log)
+        kind = classify(dataclasses.replace(outcome, log_text=log))
+        if kind is not None:
+            return ExecutionResult(
+                build_status=StepStatus.SUCCEEDED,
+                run_status=StepStatus.FAILED,
+                failure_kind=kind,
+                logs_excerpt=excerpt_log(log),
+                logs_path=self.request.logs_dir,
+            )
+        return ExecutionResult(
+            build_status=StepStatus.SUCCEEDED,
+            run_status=StepStatus.SUCCEEDED,
+            logs_excerpt=excerpt_log(log),
+            logs_path=self.request.logs_dir,
+            probe_results=probe_results,
+        )
+
+    def _wait_until_ready(self, app: str, sidecar: str, base_url: str) -> StepOutcome:
+        deadline = self.clock() + self.config.readiness_timeout_seconds
+        while True:
+            if self._http_status(sidecar, "GET", f"{base_url}/", None)[0] is not None:
+                return StepOutcome(RunnerStep.RUN, ready=True)
+            state = self.engine.state(app)
+            if not state.running:
+                return StepOutcome(
+                    RunnerStep.RUN, exit_code=state.exit_code, oom_killed=state.oom_killed
+                )
+            if self.clock() >= deadline:
+                return StepOutcome(RunnerStep.RUN, timed_out=True)
+            self.sleep(self.config.readiness_poll_seconds)
+
+    def _probe(self, sidecar: str, base_url: str, probe: HttpProbe) -> ProbeResult:
+        status, error = self._http_status(
+            sidecar, probe.method.value, base_url + probe.path, probe.body
+        )
+        return ProbeResult(
+            probe=probe,
+            actual_status=status,
+            passed=status in probe.allowed_statuses,
+            error=error[:MAX_PROBE_ERROR_CHARS],
+        )
+
+    def _http_status(
+        self, sidecar: str, method: str, url: str, body: str | None
+    ) -> tuple[int | None, str]:
+        """Send one request from the sidecar; return the status (None if no answer) and an error."""
+        command = [
+            "curl",
+            "--silent",
+            "--globoff",
+            "--output",
+            "/dev/null",
+            "--write-out",
+            "%{http_code}",
+            "--max-time",
+            str(self.config.probe_timeout_seconds),
+            "--request",
+            method,
+        ]
+        if body is not None:
+            # --data-raw never treats a leading "@" as a file name.
+            command += ["--header", "Content-Type: application/json", "--data-raw", body]
+        command += ["--", url]
+        result = self.engine.exec(sidecar, tuple(command))
+        text = result.output.strip()
+        if text.isdigit() and int(text) >= 100:
+            return int(text), ""
+        return None, CURL_ERRORS.get(result.exit_code, f"no answer (curl exit {result.exit_code})")
+
+    # ------------------------------------------------------------------ steps and specs
+
+    def _run_step(self, step: RunnerStep, spec: ContainerSpec, timeout: float) -> _StepRecord:
+        started = self.clock()
+        logger.info("Step %s started", step.value)
+        try:
+            container = self._create(spec)
+            self.engine.start(container)
+            exit_code, oom_killed, timed_out = self._wait_for_exit(container, started + timeout)
+            log = self.engine.logs(container)
+            self._remove_container(container)
+            outcome = StepOutcome(step, exit_code, timed_out, oom_killed, log_text=log)
+        except EngineError as error:
+            log = str(error)
+            outcome = StepOutcome(step, engine_error=True, log_text=log)
+        self._log_step_end(step, started, outcome)
+        self._write_log(step, log)
+        return _StepRecord(step, outcome, log)
+
+    def _wait_for_exit(self, container: str, deadline: float) -> tuple[int | None, bool, bool]:
+        while True:
+            state = self.engine.state(container)
+            if not state.running:
+                return state.exit_code, state.oom_killed, False
+            if self.clock() >= deadline:
+                return None, state.oom_killed, True
+            self.sleep(self.config.step_poll_seconds)
+
+    def _step_spec(
+        self,
+        kind: str,
+        image: str,
+        command: tuple[str, ...],
+        work_volume: str,
+        *,
+        cache_read_only: bool,
+        network_mode: str,
+        limits: ContainerLimits,
+    ) -> ContainerSpec:
+        return ContainerSpec(
+            name=self._name(kind),
+            image=image,
+            command=command,
+            labels=self._labels(kind),
+            user=self.config.user,
+            memory_mb=limits.memory_mb,
+            cpus=limits.cpus,
+            pids=limits.pids,
+            mounts=(
+                Mount(work_volume, WORK_MOUNT, read_only=False),
+                Mount(self.config.nuget_cache_volume, CACHE_MOUNT, read_only=cache_read_only),
+            ),
+            network_mode=network_mode,
+            environment=DOTNET_ENVIRONMENT,
+        )
+
+    def _app_spec(
+        self, name: str, network: str, work_volume: str, assembly_name: str
+    ) -> ContainerSpec:
+        limits = self.config.run_limits
+        environment = {
+            **dict(self.request.environment),
+            # Set last, so the student's environment cannot move the app to another port.
+            "ASPNETCORE_HTTP_PORTS": str(self.config.app_port),
+        }
+        return ContainerSpec(
+            name=name,
+            image=self.config.runtime_image,
+            command=("dotnet", f"{OUTPUT_DIR}/{assembly_name}.dll"),
+            labels=self._labels("app"),
+            user=self.config.user,
+            memory_mb=limits.memory_mb,
+            cpus=limits.cpus,
+            pids=limits.pids,
+            mounts=(Mount(work_volume, WORK_MOUNT, read_only=True),),
+            network=network,
+            environment=environment,
+            read_only_root=True,
+            tmpfs=TMPFS,
+        )
+
+    def _probe_spec(self, network: str) -> ContainerSpec:
+        limits = self.config.probe_limits
+        budget = self.config.readiness_timeout_seconds + self.config.probe_timeout_seconds * (
+            len(self.request.probes) + 1
+        )
+        return ContainerSpec(
+            name=self._name("probe"),
+            image=self.config.probe_image,
+            command=(str(int(budget) + 60),),
+            entrypoint=("sleep",),
+            labels=self._labels("probe"),
+            user=self.config.user,
+            memory_mb=limits.memory_mb,
+            cpus=limits.cpus,
+            pids=limits.pids,
+            network=network,
+            read_only_root=True,
+        )
+
+    # ------------------------------------------------------------------ results
+
+    def _prepare_failed(
+        self, message: str, *, project_found: bool = True, engine: bool = False
+    ) -> ExecutionResult:
+        outcome = StepOutcome(
+            RunnerStep.PREPARE,
+            exit_code=0 if engine else 1,
+            project_found=project_found,
+            engine_error=engine,
+            log_text=message,
+        )
+        logger.info("Step prepare failed: %s", message)
+        self._write_log(RunnerStep.PREPARE, message + "\n")
+        return ExecutionResult(
+            prepare_status=StepStatus.FAILED,
+            build_status=StepStatus.SKIPPED,
+            run_status=StepStatus.SKIPPED,
+            failure_kind=classify(outcome) or FailureKind.ENVIRONMENT_ERROR,
+            logs_excerpt=excerpt_log(message),
+            logs_path=self.request.logs_dir,
+        )
+
+    def _build_failed(self, kind: FailureKind, log: str) -> ExecutionResult:
+        return ExecutionResult(
+            build_status=StepStatus.FAILED,
+            run_status=StepStatus.SKIPPED,
+            failure_kind=kind,
+            logs_excerpt=excerpt_log(log),
+            logs_path=self.request.logs_dir,
+        )
+
+    # ------------------------------------------------------------------ helpers
+
+    def _name(self, kind: str) -> str:
+        raw = f"{self.config.label_prefix}-{self.request.run_id}-{self.request.repo_id}-{kind}"
+        return f"{_INVALID_NAME_CHARACTERS.sub('-', raw)}-{self.suffix}"
+
+    def _labels(self, kind: str) -> dict[str, str]:
+        prefix = self.config.label_prefix
+        return {
+            prefix: "1",
+            f"{prefix}.run": self.request.run_id,
+            f"{prefix}.repo": self.request.repo_id,
+            f"{prefix}.kind": kind,
+        }
+
+    def _create(self, spec: ContainerSpec) -> str:
+        container = self.engine.create_container(spec)
+        self.containers.append(container)
+        return container
+
+    def _remove_container(self, container: str) -> None:
+        self.engine.remove_container(container)
+        self.containers.remove(container)
+
+    def _write_log(self, step: RunnerStep, text: str) -> None:
+        path: Path = self.request.logs_dir / f"{step.value}.log"
+        path.write_bytes(text.encode("utf-8"))
+
+    def _log_step_end(self, step: RunnerStep, started: float, outcome: StepOutcome) -> None:
+        kind = classify(outcome)
+        logger.info(
+            "Step %s finished in %.1f s: %s",
+            step.value,
+            self.clock() - started,
+            "ok" if kind is None else kind.value,
+            extra={"step": step.value, "outcome": "ok" if kind is None else kind.value},
+        )
+
+    def _cleanup(self) -> None:
+        """Remove everything this execution created; never raise."""
+        for container in reversed(self.containers):
+            self._quietly("container", self.engine.remove_container, container)
+        for network in reversed(self.networks):
+            self._quietly("network", self.engine.remove_network, network)
+        for volume in reversed(self.volumes):
+            self._quietly("volume", self.engine.remove_volume, volume)
+        self.containers.clear()
+        self.networks.clear()
+        self.volumes.clear()
+
+    @staticmethod
+    def _quietly(kind: str, remove: Callable[[str], None], name: str) -> None:
+        try:
+            remove(name)
+        except EngineError as error:
+            logger.warning("Cleanup could not remove %s %s: %s", kind, name, error)

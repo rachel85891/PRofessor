@@ -69,5 +69,9 @@ runner:
   nuget_cache_volume: hw-checker-nuget-cache
   # Prefix of the labels on everything the runner creates, used by the leftover sweep.
   label_prefix: hw-checker
+  # Largest working copy (all files) and largest single file copied into a container;
+  # a larger repo is not run and is flagged for manual review.
+  max_archive_mb: 200
+  max_file_mb: 50
   # Full build and run logs, per run and repo; relative to workspace_dir.
   logs_root: logs

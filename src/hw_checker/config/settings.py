@@ -109,6 +109,8 @@ class RunnerSettings(BaseModel):
         default="hw-checker-nuget-cache", pattern=r"^[a-zA-Z0-9][a-zA-Z0-9_.-]+$"
     )
     label_prefix: str = Field(default="hw-checker", pattern=r"^[a-z0-9][a-z0-9.-]*$")
+    max_archive_mb: int = Field(default=200, ge=1)
+    max_file_mb: int = Field(default=50, ge=1)
     logs_root: Path = Path("logs")
     """Folder for full build and run logs, relative to `workspace_dir`."""
 
