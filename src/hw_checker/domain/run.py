@@ -5,6 +5,7 @@ from typing import Self
 
 from pydantic import AwareDatetime, Field, model_validator
 
+from hw_checker.domain.assignment import SHA256_HEX_PATTERN
 from hw_checker.domain.base import DomainModel, Identifier, NonBlankStr
 from hw_checker.domain.execution import ExecutionResult
 from hw_checker.domain.findings import Finding, JudgedFinding
@@ -56,6 +57,13 @@ class RepoRunResult(DomainModel):
         return self
 
 
+class AssignmentVersion(DomainModel):
+    """Which version of an assignment's requirements file a round checked (design §8)."""
+
+    assignment_id: Identifier
+    source_hash: str = Field(pattern=SHA256_HEX_PATTERN)
+
+
 class Run(DomainModel):
     """One checking round for an assignment over all repos in the roster."""
 
@@ -64,6 +72,14 @@ class Run(DomainModel):
     started_at: AwareDatetime
     status: RunStatus
     repo_runs: tuple[RepoRunResult, ...] = ()
+    assignment_versions: tuple[AssignmentVersion, ...] = ()
+
+    @model_validator(mode="after")
+    def _assignment_versions_are_unique(self) -> Self:
+        ids = [version.assignment_id for version in self.assignment_versions]
+        if len(set(ids)) != len(ids):
+            raise ValueError("assignment_versions must have one entry per assignment_id")
+        return self
 
     @model_validator(mode="after")
     def _repos_are_unique(self) -> Self:

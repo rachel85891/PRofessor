@@ -47,6 +47,7 @@ from hw_checker.domain.roster import (
 )
 from hw_checker.domain.run import (
     AssignmentResult,
+    AssignmentVersion,
     RepoRunResult,
     RepoRunStatus,
     Run,
@@ -57,6 +58,7 @@ from hw_checker.domain.vcs import CommitInfo, PullRequestRef
 __all__ = [
     "Assignment",
     "AssignmentResult",
+    "AssignmentVersion",
     "CheckDescription",
     "CheckParamDescription",
     "CommitInfo",
