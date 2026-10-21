@@ -1,9 +1,18 @@
 """Assignment models: assignments, requirements, HTTP probes, severity and kinds."""
 
+from collections.abc import Mapping
 from enum import StrEnum
-from typing import Self
+from types import MappingProxyType
+from typing import Annotated, Self
 
-from pydantic import Field, ValidationInfo, field_validator, model_validator
+from pydantic import (
+    AfterValidator,
+    Field,
+    PlainSerializer,
+    ValidationInfo,
+    field_validator,
+    model_validator,
+)
 
 from hw_checker.domain.base import DomainModel, HttpStatusCode, Identifier, NonBlankStr
 
@@ -62,9 +71,36 @@ class HttpMethod(StrEnum):
     OPTIONS = "OPTIONS"
 
 
-class HttpProbe(DomainModel):
-    """One HTTP request against the running app and the statuses that count as a pass."""
+ParamScalar = bool | int | float | str
+ParamValue = ParamScalar | tuple[ParamScalar, ...]
 
+SHA256_HEX_PATTERN = r"^[0-9a-f]{64}$"
+
+# Kinds whose requirements name a deterministic check; the other kinds must not.
+KINDS_WITH_CHECK = frozenset({RequirementKind.STRUCTURE, RequirementKind.CUSTOM})
+
+
+def _freeze_params(value: Mapping[str, ParamValue]) -> Mapping[str, ParamValue]:
+    return MappingProxyType(dict(value))
+
+
+CheckParams = Annotated[
+    Mapping[str, ParamValue],
+    AfterValidator(_freeze_params),
+    PlainSerializer(dict, return_type=dict[str, ParamValue]),
+]
+"""Named check parameters, stored as a read-only mapping."""
+
+
+class HttpProbe(DomainModel):
+    """One HTTP request against the running app and the statuses that count as a pass.
+
+    `requirement_id` and `assignment_id` say which requirement the probe belongs to, so a
+    `ProbeResult` (which carries its probe) can always be traced back to it.
+    """
+
+    requirement_id: Identifier
+    assignment_id: Identifier
     method: HttpMethod
     path: str = Field(pattern=r"^/")
     body: str | None = None
@@ -88,7 +124,12 @@ class HttpProbe(DomainModel):
 
 
 class Requirement(DomainModel):
-    """A single requirement of an assignment."""
+    """A single requirement of an assignment.
+
+    `check` names the deterministic check for `structure` and `custom` requirements, and
+    `params` holds its named parameters. `params` is a mapping because checks take named
+    arguments of different kinds; it is read-only so the model stays immutable.
+    """
 
     id: Identifier
     title: NonBlankStr
@@ -96,6 +137,8 @@ class Requirement(DomainModel):
     severity: Severity
     kind: RequirementKind
     allowed_alternatives: tuple[NonBlankStr, ...] = ()
+    check: Identifier | None = None
+    params: CheckParams = Field(default_factory=lambda: MappingProxyType({}))
     http_probes: tuple[HttpProbe, ...] = ()
 
     @model_validator(mode="after")
@@ -104,6 +147,22 @@ class Requirement(DomainModel):
             raise ValueError("an http requirement needs at least one probe")
         if self.kind is not RequirementKind.HTTP and self.http_probes:
             raise ValueError(f"a {self.kind} requirement must not have http probes")
+        return self
+
+    @model_validator(mode="after")
+    def _check_matches_kind(self) -> Self:
+        if self.kind in KINDS_WITH_CHECK and self.check is None:
+            raise ValueError(f"a {self.kind} requirement needs a check")
+        if self.kind not in KINDS_WITH_CHECK and self.check is not None:
+            raise ValueError(f"a {self.kind} requirement must not have a check")
+        if self.check is None and self.params:
+            raise ValueError("params are only allowed together with a check")
+        return self
+
+    @model_validator(mode="after")
+    def _probes_belong_to_this_requirement(self) -> Self:
+        if any(probe.requirement_id != self.id for probe in self.http_probes):
+            raise ValueError(f"every probe must have requirement_id {self.id!r}")
         return self
 
 
@@ -116,6 +175,8 @@ class Assignment(DomainModel):
     requirements: tuple[Requirement, ...]
     taught_techniques: tuple[NonBlankStr, ...] = ()
     lenient_notes: tuple[NonBlankStr, ...] = ()
+    source_hash: str | None = Field(default=None, pattern=SHA256_HEX_PATTERN)
+    """SHA-256 of the requirements file, so results show which version they were checked against."""
 
     @model_validator(mode="after")
     def _requirement_ids_are_unique(self) -> Self:
@@ -123,4 +184,11 @@ class Assignment(DomainModel):
         duplicates = sorted({item for item in ids if ids.count(item) > 1})
         if duplicates:
             raise ValueError(f"duplicate requirement ids: {', '.join(duplicates)}")
+        return self
+
+    @model_validator(mode="after")
+    def _probes_belong_to_this_assignment(self) -> Self:
+        probes = (probe for requirement in self.requirements for probe in requirement.http_probes)
+        if any(probe.assignment_id != self.id for probe in probes):
+            raise ValueError(f"every probe must have assignment_id {self.id!r}")
         return self

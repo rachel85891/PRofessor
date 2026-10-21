@@ -35,6 +35,8 @@ def repo_target(**overrides: Any) -> RepoTarget:
 
 def probe(**overrides: Any) -> HttpProbe:
     values: dict[str, Any] = {
+        "requirement_id": "hw03-r2",
+        "assignment_id": "hw03",
         "method": HttpMethod.GET,
         "path": "/api/products",
         "expected_status": 200,

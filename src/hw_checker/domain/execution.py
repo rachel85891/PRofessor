@@ -41,12 +41,25 @@ class StepStatus(StrEnum):
 
 
 class ProbeResult(DomainModel):
-    """The result of one HTTP probe against the running app."""
+    """The result of one HTTP probe against the running app.
+
+    The probe carries the requirement and assignment it belongs to.
+    """
 
     probe: HttpProbe
     actual_status: HttpStatusCode | None = None
     passed: bool
     error: str = Field(default="", max_length=MAX_PROBE_ERROR_CHARS)
+
+    @property
+    def requirement_id(self) -> str:
+        """The requirement this probe result belongs to."""
+        return self.probe.requirement_id
+
+    @property
+    def assignment_id(self) -> str:
+        """The assignment this probe result belongs to."""
+        return self.probe.assignment_id
 
     @model_validator(mode="after")
     def _passed_matches_status(self) -> Self:
