@@ -20,6 +20,7 @@ _OWNER_AND_NAME = 2
 # GitHub owners: letters, digits and inner hyphens. Repo names: letters, digits, '.', '_', '-'.
 _OWNER_PATTERN = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?$")
 _REPO_NAME_PATTERN = re.compile(r"^[A-Za-z0-9._-]+$")
+_SCHEMELESS_PATTERN = re.compile(r"^(?:www\.)?github\.com/", re.IGNORECASE)
 _SSH_PATTERN = re.compile(r"^git@github\.com:(?P<path>[^:]+)$", re.IGNORECASE)
 
 
@@ -102,9 +103,10 @@ class GitHubRepo(DomainModel):
 def parse_github_url(text: str) -> GitHubRepo | None:
     """Parse a GitHub repo URL into its canonical form, or return None if it is not one.
 
-    Accepts https/http URLs on github.com or www.github.com (any host case), a trailing
-    slash or `.git`, extra path segments (only the first two are used), query strings,
-    fragments, SSH URLs (`git@github.com:owner/name.git`) and surrounding whitespace.
+    Accepts https/http URLs on github.com or www.github.com (any host case), the same
+    without a scheme (treated as https), a trailing slash or `.git`, extra path segments
+    (only the first two are used), query strings, fragments, SSH URLs
+    (`git@github.com:owner/name.git`) and surrounding whitespace.
     The canonical URL is `https://github.com/<owner>/<name>` and the repo id is
     `<owner>__<name>`, both lowercase. Owners cannot contain `_`, so the id is unambiguous.
     """
@@ -128,6 +130,8 @@ def _repo_path_segments(text: str) -> list[str] | None:
     if ssh:
         segments = ssh.group("path").strip("/").split("/")
         return segments if len(segments) == _OWNER_AND_NAME else None
+    if _SCHEMELESS_PATTERN.match(text):
+        text = f"https://{text}"
     parts = urlsplit(text)
     if parts.scheme.lower() not in {"http", "https"}:
         return None
