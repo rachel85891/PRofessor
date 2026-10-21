@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Annotated, Any, Literal
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field, SecretStr, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, SecretStr, ValidationError, field_validator
 from pydantic_settings import BaseSettings, PydanticBaseSettingsSource, SettingsConfigDict
 
 from hw_checker.config.errors import ConfigurationError
@@ -60,6 +60,67 @@ class GitSettings(BaseModel):
     commit_author_email: NonBlankText | None = None
 
 
+PinnedImage = Annotated[
+    str, Field(pattern=r"^[a-z0-9][a-z0-9._/-]*(:[A-Za-z0-9._-]+)?@sha256:[0-9a-f]{64}$")
+]
+"""An image reference pinned by digest: `<name>[:<tag>]@sha256:<64 hex>`."""
+
+
+class StepLimits(BaseModel):
+    """Resource limits for one container step."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    memory_mb: int = Field(ge=1)
+    cpus: float = Field(gt=0)
+    pids: int = Field(ge=1)
+
+
+class RunnerSettings(BaseModel):
+    """How student projects are built and run in Docker (ADR 0015)."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    sdk_image: PinnedImage = (
+        "mcr.microsoft.com/dotnet/sdk:9.0"
+        "@sha256:d9ad72f6b3eb5d61adb158db510ae1c3098c12c92d23ab8da833418275f1c652"
+    )
+    runtime_image: PinnedImage = (
+        "mcr.microsoft.com/dotnet/aspnet:9.0"
+        "@sha256:88fcfc1b81c43afa15ba3c138c57d77f77c1cb5118ae9d7024c94e82e2895aa5"
+    )
+    probe_image: PinnedImage = (
+        "curlimages/curl:8.10.1"
+        "@sha256:d9b4541e214bcd85196d6e92e2753ac6d0ea699f0af5741f8c6cccbfcf00ef4b"
+    )
+    restore_limits: StepLimits = StepLimits(memory_mb=1024, cpus=2, pids=512)
+    build_limits: StepLimits = StepLimits(memory_mb=1024, cpus=2, pids=512)
+    run_limits: StepLimits = StepLimits(memory_mb=512, cpus=1, pids=512)
+    probe_limits: StepLimits = StepLimits(memory_mb=64, cpus=0.5, pids=64)
+    restore_timeout_seconds: int = Field(default=300, ge=1)
+    build_timeout_seconds: int = Field(default=300, ge=1)
+    readiness_timeout_seconds: int = Field(default=30, ge=1)
+    probe_timeout_seconds: int = Field(default=5, ge=1)
+    readiness_poll_seconds: float = Field(default=0.5, gt=0)
+    app_port: int = Field(default=8080, ge=1, le=65535)
+    app_uid: int = Field(default=1654, ge=1)
+    app_gid: int = Field(default=1654, ge=1)
+    nuget_cache_volume: str = Field(
+        default="hw-checker-nuget-cache", pattern=r"^[a-zA-Z0-9][a-zA-Z0-9_.-]+$"
+    )
+    label_prefix: str = Field(default="hw-checker", pattern=r"^[a-z0-9][a-z0-9.-]*$")
+    logs_root: Path = Path("logs")
+    """Folder for full build and run logs, relative to `workspace_dir`."""
+
+    @field_validator("logs_root")
+    @classmethod
+    def _logs_root_stays_inside_workspace(cls, value: Path) -> Path:
+        # `anchor` (drive or root) also catches "/logs", which Windows doesn't call absolute.
+        if value.anchor or ".." in value.parts:
+            raise ValueError("must be a relative path inside workspace_dir, without '..'")
+        return value
+
+
 class Settings(BaseSettings):
     """All runtime settings.
 
@@ -83,6 +144,7 @@ class Settings(BaseSettings):
     logging: LoggingSettings = LoggingSettings()
     roster: RosterSettings = RosterSettings()
     git: GitSettings = GitSettings()
+    runner: RunnerSettings = RunnerSettings()
     github_token: SecretStr | None = None
 
     @classmethod
