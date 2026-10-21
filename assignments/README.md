@@ -73,7 +73,26 @@ Unknown fields are rejected, so a typo such as `chek` is reported instead of bei
       glob: "**/Controllers/ProductsController.cs"
 ```
 
-Check names and their `params` are defined together with the check registry. `file_exists` is used here as an illustration.
+A folder can be required the same way:
+
+```yaml
+  - id: hw01-r5
+    kind: structure
+    title: A Models folder exists
+    severity: minor
+    check: folder_exists
+    params:
+      path: Models
+```
+
+The available checks:
+
+| Check | Params | Passes when |
+| --- | --- | --- |
+| `file_exists` | `glob` (required), `min_count` (optional, default 1) | At least `min_count` files match `glob`. In `glob`, `**/` means "in any folder", `*` matches part of a name, and `?` one character. |
+| `folder_exists` | `path` (required), for example `Controllers` or `src/Models` | A folder with that path exists, at any depth (projects often sit in a subfolder). |
+
+Both checks ignore upper and lower case (`controllers/` matches `Controllers`), skip `bin/`, `obj/` and `.git/`, and only read the files; nothing from the student's repo is run. `glob` and `path` are relative to the repository root, with forward slashes, and may not contain `..`.
 
 **code**: reviewed by reading the code. Evidence is required for every finding.
 
@@ -119,17 +138,9 @@ The same body written as JSON text: `body: '{"name": "Pen", "price": 3.5}'` (use
     severity: critical
 ```
 
-**custom**: a special check that does not fit the other kinds.
+**custom**: a check written specially for one assignment, for something the kinds above cannot express. It is written like a `structure` requirement, with `kind: custom` and the custom check's name in `check`. No custom checks exist yet; until one is needed, use `structure` with the checks above.
 
-```yaml
-  - id: hw01-r5
-    kind: custom
-    title: Controllers are named in English
-    severity: minor
-    check: controller_names
-    params:
-      allowed_suffixes: [Controller]
-```
+**How results are decided.** A `build` requirement gives a finding only when the build failed because of the code, not because of the environment. An `http` requirement is judged only when the app built and started; a status listed in `allowed_statuses` always counts as correct. A requirement that could not be checked, for example every `http` requirement when the build failed, is shown as "not evaluated" with the reason, and never counts against the student.
 
 ## YAML tips
 
