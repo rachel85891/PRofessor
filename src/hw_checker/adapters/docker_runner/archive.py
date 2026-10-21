@@ -121,3 +121,11 @@ def _add_file(archive: tarfile.TarFile, path: Path, name: str, uid: int, gid: in
     info = _owned(name, uid, gid)
     info.mode, info.size = FILE_MODE, len(data)
     archive.addfile(info, io.BytesIO(data))
+
+
+def directory_archive(name: str, uid: int, gid: int) -> bytes:
+    """A tar holding one empty directory `name`, owned by `uid:gid`."""
+    buffer = io.BytesIO()
+    with tarfile.open(fileobj=buffer, mode="w", format=tarfile.PAX_FORMAT) as archive:
+        _add_directory(archive, name, uid, gid)
+    return buffer.getvalue()

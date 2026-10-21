@@ -13,7 +13,11 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from hw_checker.adapters.docker_runner.archive import ArchiveTooLargeError, build_work_archive
+from hw_checker.adapters.docker_runner.archive import (
+    ArchiveTooLargeError,
+    build_work_archive,
+    directory_archive,
+)
 from hw_checker.adapters.docker_runner.classification import RunnerStep, StepOutcome, classify
 from hw_checker.adapters.docker_runner.discovery import DiscoveryFailure, discover_web_project
 from hw_checker.adapters.docker_runner.engine import (
@@ -21,6 +25,7 @@ from hw_checker.adapters.docker_runner.engine import (
     DockerEngine,
     EngineError,
     Mount,
+    Resource,
 )
 from hw_checker.adapters.docker_runner.excerpt import excerpt_log
 from hw_checker.adapters.docker_runner.runner_config import ContainerLimits, DockerRunnerConfig
@@ -47,6 +52,7 @@ DOTNET_ENVIRONMENT = {
     "DOTNET_NOLOGO": "1",
 }
 TMPFS = {"/tmp": "size=64m"}
+CACHE_KIND = "cache"
 CURL_ERRORS = {6: "could not resolve the app", 7: "connection refused", 28: "timed out"}
 _INVALID_NAME_CHARACTERS = re.compile(r"[^a-zA-Z0-9_.-]")
 
@@ -79,6 +85,107 @@ class DockerCodeRunner:
         with log_context(run_id=request.run_id, repo_id=request.repo_id):
             execution = _Execution(self._config, self._engine, request, self._clock, self._sleep)
             return execution.run()
+
+    def check_environment(self) -> None:
+        """Check that Docker answers, pull any missing pinned image, and prepare the cache.
+
+        Raises:
+            ExecutionEnvironmentError: Docker is not running, an image cannot be pulled, or
+                the package cache volume cannot be created.
+        """
+        try:
+            self._engine.ping()
+        except EngineError as error:
+            raise ExecutionEnvironmentError(
+                f"Docker Desktop is not running or cannot be reached: {error}"
+            ) from error
+        for image in self._config.images:
+            self._ensure_image(image)
+        try:
+            self._ensure_cache_volume()
+        except EngineError as error:
+            raise ExecutionEnvironmentError(
+                f"cannot prepare the package cache volume {self._config.nuget_cache_volume}: "
+                f"{error}"
+            ) from error
+
+    def sweep_leftovers(self) -> int:
+        """Remove every labelled container, network and volume except the package cache.
+
+        Raises:
+            ExecutionEnvironmentError: Docker cannot be reached.
+        """
+        prefix = self._config.label_prefix
+        try:
+            resources = self._engine.list_labelled(prefix)
+        except EngineError as error:
+            raise ExecutionEnvironmentError(f"cannot list leftovers in Docker: {error}") from error
+        order = {"container": 0, "network": 1, "volume": 2}
+        leftovers = sorted(
+            (item for item in resources if item.labels.get(f"{prefix}.kind") != CACHE_KIND),
+            key=lambda item: order[item.kind],
+        )
+        removed = sum(1 for item in leftovers if self._remove_leftover(item))
+        logger.info("Swept %d leftover Docker resources", removed, extra={"removed": removed})
+        return removed
+
+    def _ensure_image(self, image: str) -> None:
+        try:
+            if self._engine.image_exists(image):
+                return
+            logger.info("Pulling missing image %s", image)
+            self._engine.pull(image)
+            logger.info("Pulled image %s", image)
+        except EngineError as error:
+            raise ExecutionEnvironmentError(f"cannot pull {image}: {error}") from error
+
+    def _ensure_cache_volume(self) -> None:
+        name = self._config.nuget_cache_volume
+        if not self._engine.volume_exists(name):
+            prefix = self._config.label_prefix
+            self._engine.create_volume(name, {prefix: "1", f"{prefix}.kind": CACHE_KIND})
+            logger.info("Created the package cache volume %s", name)
+        # The packages folder must belong to the app user, or restore cannot write to it.
+        helper = self._engine.create_container(
+            ContainerSpec(
+                name=f"{self._config.label_prefix}-cache-init-{uuid.uuid4().hex[:8]}",
+                image=self._config.runtime_image,
+                command=("true",),
+                labels={
+                    self._config.label_prefix: "1",
+                    f"{self._config.label_prefix}.kind": "init",
+                },
+                user=self._config.user,
+                memory_mb=self._config.probe_limits.memory_mb,
+                cpus=self._config.probe_limits.cpus,
+                pids=self._config.probe_limits.pids,
+                mounts=(Mount(name, CACHE_MOUNT, read_only=False),),
+                network_mode="none",
+            )
+        )
+        try:
+            self._engine.put_archive(
+                helper,
+                CACHE_MOUNT,
+                directory_archive("packages", self._config.app_uid, self._config.app_gid),
+            )
+        finally:
+            self._engine.remove_container(helper)
+
+    def _remove_leftover(self, resource: Resource) -> bool:
+        removers = {
+            "container": self._engine.remove_container,
+            "network": self._engine.remove_network,
+            "volume": self._engine.remove_volume,
+        }
+        try:
+            removers[resource.kind](resource.name)
+        except EngineError as error:
+            logger.warning(
+                "Could not remove leftover %s %s: %s", resource.kind, resource.name, error
+            )
+            return False
+        return True
 
 
 @dataclass
