@@ -49,15 +49,15 @@ class RosterSettings(BaseModel):
 
 
 class GitSettings(BaseModel):
-    """How the git CLI is run. The commit author values are placeholders until decided."""
+    """How the git CLI is run. The commit author is set in `.env`, never in this repo."""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     executable: NonBlankText = "git"
     timeout_seconds: int = Field(default=120, ge=1)
     ssl_backend: Literal["openssl", "schannel"] | None = None
-    commit_author_name: NonBlankText = "HW Checker"
-    commit_author_email: NonBlankText = "hw-checker@example.invalid"
+    commit_author_name: NonBlankText | None = None
+    commit_author_email: NonBlankText | None = None
 
 
 class Settings(BaseSettings):

@@ -15,6 +15,8 @@ def _isolate_environment(monkeypatch: pytest.MonkeyPatch) -> None:
         "HW_CHECKER_LOGGING__LEVEL",
         "HW_CHECKER_LOGGING__LOG_DIR",
         "HW_CHECKER_GITHUB_TOKEN",
+        "HW_CHECKER_GIT__COMMIT_AUTHOR_NAME",
+        "HW_CHECKER_GIT__COMMIT_AUTHOR_EMAIL",
     ):
         monkeypatch.delenv(name, raising=False)
 
@@ -182,8 +184,8 @@ def test_git_defaults_apply(tmp_path: Path) -> None:
 
     assert git.executable == "git"
     assert git.timeout_seconds == 120
-    assert git.commit_author_name == "HW Checker"
-    assert git.commit_author_email == "hw-checker@example.invalid"
+    assert git.commit_author_name is None
+    assert git.commit_author_email is None
 
 
 def test_git_values_load_from_yaml(tmp_path: Path) -> None:
@@ -213,3 +215,25 @@ def test_git_ssl_backend_loads_from_yaml(tmp_path: Path) -> None:
 def test_git_unknown_ssl_backend_is_rejected(tmp_path: Path) -> None:
     with pytest.raises(ConfigurationError, match=r"git\.ssl_backend"):
         _load(tmp_path, "git:\n  ssl_backend: gnutls\n")
+
+
+def test_git_commit_author_loads_from_env_file(tmp_path: Path) -> None:
+    git = _load(
+        tmp_path,
+        "",
+        "HW_CHECKER_GIT__COMMIT_AUTHOR_NAME=Test Reviewer\n"
+        "HW_CHECKER_GIT__COMMIT_AUTHOR_EMAIL=1+test@users.noreply.github.com\n",
+    ).git
+
+    assert git.commit_author_name == "Test Reviewer"
+    assert git.commit_author_email == "1+test@users.noreply.github.com"
+
+
+def test_git_empty_commit_author_in_env_file_counts_as_unset(tmp_path: Path) -> None:
+    git = _load(
+        tmp_path,
+        "",
+        "HW_CHECKER_GIT__COMMIT_AUTHOR_NAME=\nHW_CHECKER_GIT__COMMIT_AUTHOR_EMAIL=\n",
+    ).git
+
+    assert (git.commit_author_name, git.commit_author_email) == (None, None)

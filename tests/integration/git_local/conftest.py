@@ -55,7 +55,7 @@ class Remote:
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_bytes(content)
             git("add", "--", name, cwd=self.author)
-        git("commit", "-m", message, cwd=self.author)
+        git("-c", "commit.gpgsign=false", "commit", "-m", message, cwd=self.author)
         git("push", "origin", f"{branch}:{branch}", cwd=self.author)
         return git("rev-parse", "HEAD", cwd=self.author).strip()
 
@@ -68,11 +68,13 @@ class Remote:
 
 @pytest.fixture(autouse=True)
 def isolated_git_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
-    """Ignore the machine's git config and simulate a global `core.autocrlf=true`."""
+    """Ignore the machine's git config; simulate global `core.autocrlf` and signing on."""
     global_config = tmp_path / "global.gitconfig"
     global_config.write_text(
         "[core]\n\tautocrlf = true\n"
         f"[user]\n\tname = {AUTHOR_NAME}\n\temail = {AUTHOR_EMAIL}\n"
+        # Signing would fail here (no key); the client's commits must override it.
+        "[commit]\n\tgpgsign = true\n"
         "[init]\n\tdefaultBranch = main\n",
         encoding="utf-8",
     )

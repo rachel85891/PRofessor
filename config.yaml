@@ -36,7 +36,5 @@ git:
   # schannel because on this Windows machine the OpenSSL backend hangs during the TLS
   # handshake with GitHub.
   ssl_backend: schannel
-  # Author of fix commits that students will see.
-  # PLACEHOLDERS: replace once it is decided who fix commits come from.
-  commit_author_name: HW Checker
-  commit_author_email: hw-checker@example.invalid
+  # The author of fix commits (commit_author_name, commit_author_email) is a personal
+  # identity, so it is set in .env, not here. See .env.example.

@@ -193,3 +193,45 @@ def test_branch_shorthand_is_not_accepted_as_a_name(tmp_path: Path) -> None:
 
     with pytest.raises(GitOperationError, match="invalid branch name"):
         client(runner).create_branch(tmp_path, "@{-1}", "HEAD")
+
+
+@pytest.mark.parametrize(
+    ("name", "email"), [(None, "hw@example.invalid"), ("HW Checker", None), (None, None)]
+)
+def test_commit_without_configured_author_runs_no_git(
+    tmp_path: Path, name: str | None, email: str | None
+) -> None:
+    runner = FakeCommandRunner(lambda args: ok())
+    unconfigured = LocalGitClient("git", 10, name, email, runner)
+
+    with pytest.raises(GitOperationError, match="commit author is not configured"):
+        unconfigured.commit(tmp_path, "fix", ("a.cs",))
+
+    assert runner.commands == []
+
+
+def test_commit_disables_signing(tmp_path: Path) -> None:
+    def respond(args: list[str]) -> subprocess.CompletedProcess[str]:
+        if args[:2] == ["diff", "--cached"]:
+            return subprocess.CompletedProcess([], 1, "", "")
+        return ok("c" * 40 + "\n")
+
+    runner = FakeCommandRunner(respond)
+
+    client(runner).commit(tmp_path, "fix", ("a.cs",))
+
+    commit = next(command for command in runner.commands if "commit" in command)
+    position = commit.index("commit.gpgsign=false")
+    assert commit[position - 1] == "-c"
+    assert position < commit.index("commit")
+
+
+def test_log_works_without_configured_author(tmp_path: Path) -> None:
+    def respond(args: list[str]) -> subprocess.CompletedProcess[str]:
+        if args[:2] == ["rev-parse", "--show-toplevel"]:
+            return ok(str(tmp_path))
+        return ok("")
+
+    unconfigured = LocalGitClient("git", 10, None, None, FakeCommandRunner(respond))
+
+    assert unconfigured.log(tmp_path) == ()
