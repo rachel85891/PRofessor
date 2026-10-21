@@ -25,18 +25,20 @@ _REMOTE_HEAD_PREFIX = "origin/"
 class LocalGitClient:
     """Clones and works with local copies of repos through the `git` executable.
 
-    Working copies always hold the repo's exact bytes (`core.autocrlf=false`).
+    Working copies always hold the repo's exact bytes (`core.autocrlf=false`). When
+    `ssl_backend` is set, every command uses that TLS backend (`http.sslBackend`).
     """
 
     def __init__(
         self,
         executable: str,
         timeout_seconds: float,
-        commit_author_name: str,
-        commit_author_email: str,
+        commit_author_name: str | None,
+        commit_author_email: str | None,
         runner: CommandRunner = run_subprocess,
+        ssl_backend: str | None = None,
     ) -> None:
-        self._git = GitRunner(executable, timeout_seconds, runner)
+        self._git = GitRunner(executable, timeout_seconds, runner, ssl_backend)
         self._author_name = commit_author_name
         self._author_email = commit_author_email
 
@@ -123,14 +125,19 @@ class LocalGitClient:
     def commit(self, repo_dir: Path, message: str, paths: tuple[str, ...]) -> str:
         """Stage the repo-relative `paths`, commit them with `message`, and return the new sha.
 
-        Only `paths` are committed, as the configured author; nothing is written to the repo
-        config.
+        Only `paths` are committed, as the configured author, and never signed; nothing is
+        written to the repo config.
 
         Raises:
-            GitOperationError: no paths were given, there is nothing to commit, or staging
-                or committing failed.
+            GitOperationError: the commit author is not configured, no paths were given,
+                there is nothing to commit, or staging or committing failed.
             ExecutionEnvironmentError: the git executable is not available.
         """
+        if not self._author_name or not self._author_email:
+            raise GitOperationError(
+                "commit author is not configured; set HW_CHECKER_GIT__COMMIT_AUTHOR_NAME and "
+                "HW_CHECKER_GIT__COMMIT_AUTHOR_EMAIL in .env"
+            )
         if not paths:
             raise GitOperationError(f"nothing to commit in {repo_dir}: no paths given")
         self._git.run(["add", "--", *paths], repo_dir, GitOperationError)
@@ -145,6 +152,8 @@ class LocalGitClient:
                 f"user.name={self._author_name}",
                 "-c",
                 f"user.email={self._author_email}",
+                "-c",
+                "commit.gpgsign=false",
                 "commit",
                 "--quiet",
                 "-m",

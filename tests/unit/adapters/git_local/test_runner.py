@@ -133,3 +133,27 @@ def test_logs_command_at_debug_and_failure_at_warning_without_secrets(
     levels = [record.levelno for record in caplog.records]
     assert levels == [logging.DEBUG, logging.WARNING]
     assert all("secret" not in record.getMessage() for record in caplog.records)
+
+
+def test_ssl_backend_is_passed_before_the_subcommand_when_set(tmp_path: Path) -> None:
+    scripted = ScriptedRunner()
+
+    GitRunner("git", 1, scripted, ssl_backend="schannel").run(
+        ["fetch"], tmp_path, GitOperationError
+    )
+
+    args = scripted.calls[0]["args"]
+    assert isinstance(args, list)
+    position = args.index("http.sslBackend=schannel")
+    assert args[position - 1] == "-c"
+    assert position < args.index("fetch")
+
+
+def test_ssl_backend_is_absent_when_not_set(tmp_path: Path) -> None:
+    scripted = ScriptedRunner()
+
+    GitRunner("git", 1, scripted).run(["fetch"], tmp_path, GitOperationError)
+
+    args = scripted.calls[0]["args"]
+    assert isinstance(args, list)
+    assert not any(str(arg).startswith("http.sslBackend") for arg in args)
