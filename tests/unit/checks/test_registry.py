@@ -3,8 +3,8 @@ from pathlib import Path
 import pytest
 from pydantic import BaseModel, ConfigDict
 
-from hw_checker.checks.registry import CheckInput, CheckRegistry, check
-from hw_checker.domain import Assignment, CheckParamDescription, Finding
+from hw_checker.checks.registry import CheckRegistry, check
+from hw_checker.domain import Assignment, CheckInput, CheckParamDescription, Finding
 from hw_checker.domain.errors import CheckRegistrationError, NotFoundError
 from hw_checker.ports import CheckCatalog
 from tests.fakes.checks import FakeCheckCatalog
@@ -47,10 +47,9 @@ def registry() -> CheckRegistry:
 
 
 def check_input() -> CheckInput:
-    assignment = Assignment(id="hw03", order=3, title="Products", requirements=())
-    return CheckInput(
-        repo_dir=Path("repo"), assignment=assignment, requirement=builders.requirement()
-    )
+    requirement = builders.requirement()
+    assignment = Assignment(id="hw03", order=3, title="Products", requirements=(requirement,))
+    return CheckInput(repo_dir=Path("repo"), assignment=assignment, requirement=requirement)
 
 
 def test_decorator_returns_the_same_callable_function() -> None:

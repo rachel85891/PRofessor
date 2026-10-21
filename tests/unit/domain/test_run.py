@@ -7,6 +7,8 @@ from pydantic import ValidationError
 from hw_checker.domain import (
     AssignmentResult,
     AssignmentVersion,
+    NotEvaluated,
+    NotEvaluatedReason,
     RepoRunResult,
     RepoRunStatus,
     Run,
@@ -175,3 +177,51 @@ def test_assignment_versions_must_have_unique_ids() -> None:
 def test_assignment_version_hash_must_be_sha256_hex(source_hash: str) -> None:
     with pytest.raises(ValidationError):
         AssignmentVersion(assignment_id="hw01", source_hash=source_hash)
+
+
+def test_assignment_result_records_not_evaluated_requirements() -> None:
+    result = AssignmentResult(
+        assignment_id="hw01",
+        findings=(builders.finding(requirement_id="hw01-r1"),),
+        not_evaluated=(
+            NotEvaluated(requirement_id="hw01-r2", reason=NotEvaluatedReason.BUILD_FAILED),
+            NotEvaluated(requirement_id="hw01-r3", reason=NotEvaluatedReason.NO_EXECUTION),
+        ),
+    )
+
+    assert [entry.reason for entry in result.not_evaluated] == [
+        NotEvaluatedReason.BUILD_FAILED,
+        NotEvaluatedReason.NO_EXECUTION,
+    ]
+
+
+def test_not_evaluated_reasons() -> None:
+    assert {reason.value for reason in NotEvaluatedReason} == {
+        "no_execution",
+        "build_failed",
+        "run_not_healthy",
+        "environment_issue",
+    }
+
+
+def test_a_requirement_cannot_be_both_failed_and_not_evaluated() -> None:
+    with pytest.raises(ValidationError, match="both failed and not evaluated: hw01-r1"):
+        AssignmentResult(
+            assignment_id="hw01",
+            findings=(builders.finding(requirement_id="hw01-r1"),),
+            not_evaluated=(
+                NotEvaluated(requirement_id="hw01-r1", reason=NotEvaluatedReason.RUN_NOT_HEALTHY),
+            ),
+        )
+
+
+def test_not_evaluated_lists_each_requirement_once() -> None:
+    entry = NotEvaluated(requirement_id="hw01-r2", reason=NotEvaluatedReason.BUILD_FAILED)
+
+    with pytest.raises(ValidationError, match="each requirement once"):
+        AssignmentResult(assignment_id="hw01", not_evaluated=(entry, entry))
+
+
+def test_not_evaluated_rejects_unknown_reason() -> None:
+    with pytest.raises(ValidationError):
+        NotEvaluated.model_validate({"requirement_id": "hw01-r2", "reason": "skipped"})

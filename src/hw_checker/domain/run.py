@@ -29,11 +29,42 @@ class RunStatus(StrEnum):
     FAILED = "failed"
 
 
+class NotEvaluatedReason(StrEnum):
+    """Why a requirement could not be checked; none of these count against the student."""
+
+    NO_EXECUTION = "no_execution"
+    BUILD_FAILED = "build_failed"
+    RUN_NOT_HEALTHY = "run_not_healthy"
+    ENVIRONMENT_ISSUE = "environment_issue"
+
+
+class NotEvaluated(DomainModel):
+    """A requirement that was not checked, and why."""
+
+    requirement_id: Identifier
+    reason: NotEvaluatedReason
+
+
 class AssignmentResult(DomainModel):
-    """The findings produced by checking one assignment in one repo (before judging)."""
+    """The outcome of checking one assignment in one repo (before judging).
+
+    A requirement is in `findings` (it failed), in `not_evaluated` (it could not be
+    checked), or in neither (it passed); never in both.
+    """
 
     assignment_id: Identifier
     findings: tuple[Finding, ...] = ()
+    not_evaluated: tuple[NotEvaluated, ...] = ()
+
+    @model_validator(mode="after")
+    def _not_evaluated_is_consistent(self) -> Self:
+        skipped = [entry.requirement_id for entry in self.not_evaluated]
+        if len(set(skipped)) != len(skipped):
+            raise ValueError("not_evaluated must list each requirement once")
+        both = sorted(set(skipped) & {finding.requirement_id for finding in self.findings})
+        if both:
+            raise ValueError(f"requirements both failed and not evaluated: {', '.join(both)}")
+        return self
 
 
 class RepoRunResult(DomainModel):

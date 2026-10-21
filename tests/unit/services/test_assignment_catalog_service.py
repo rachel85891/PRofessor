@@ -3,8 +3,15 @@ from typing import Any
 import pytest
 from pydantic import BaseModel, ConfigDict
 
-from hw_checker.checks.registry import CheckInput, CheckRegistry, check
-from hw_checker.domain import Assignment, Finding, Requirement, RequirementKind, Severity
+from hw_checker.checks.registry import CheckRegistry, check
+from hw_checker.domain import (
+    Assignment,
+    CheckInput,
+    Finding,
+    Requirement,
+    RequirementKind,
+    Severity,
+)
 from hw_checker.domain.errors import InvalidAssignmentError, NotFoundError
 from hw_checker.services.assignments import AssignmentCatalogService
 from tests.fakes.assignments import FakeAssignmentSource
