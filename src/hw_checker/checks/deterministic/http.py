@@ -1,0 +1,60 @@
+"""Evaluator for `http` requirements: one finding per requirement for failed probes."""
+
+from hw_checker.checks.deterministic.findings import deterministic_finding
+from hw_checker.checks.deterministic.messages import (
+    HTTP_PROBES_FAILED,
+    PROBE_NO_ANSWER,
+    PROBE_WRONG_STATUS,
+    STATUS_SEPARATOR,
+    Localized,
+)
+from hw_checker.domain import CheckInput, Finding, NotEvaluatedReason, ProbeResult, StepStatus
+
+
+def evaluate_http(check_input: CheckInput) -> tuple[Finding, ...] | NotEvaluatedReason:
+    """Return one finding naming every failed probe of the requirement.
+
+    Only a successful run is judged, so a build failure never cascades into HTTP findings.
+    A probe passes when its status is in the probe's `allowed_statuses`, and only then.
+    """
+    execution = check_input.execution
+    if execution is None:
+        return NotEvaluatedReason.NO_EXECUTION
+    if execution.prepare_status is StepStatus.FAILED:
+        return NotEvaluatedReason.ENVIRONMENT_ISSUE
+    if execution.build_status is StepStatus.FAILED:
+        return NotEvaluatedReason.BUILD_FAILED
+    if execution.run_status is not StepStatus.SUCCEEDED:
+        return NotEvaluatedReason.RUN_NOT_HEALTHY
+    results = [
+        result
+        for result in execution.probe_results
+        if result.requirement_id == check_input.requirement.id
+        and result.assignment_id == check_input.assignment.id
+    ]
+    if not results:
+        return NotEvaluatedReason.ENVIRONMENT_ISSUE  # the runner did not probe this requirement
+    failed = [result for result in results if not result.passed]
+    if not failed:
+        return ()
+    lines = [_describe(result) for result in failed]
+    probes = Localized(
+        he="\n".join(line.he for line in lines), en="\n".join(line.en for line in lines)
+    )
+    facts = tuple(
+        f"{r.probe.method.value} {r.probe.path} {r.actual_status or 'none'}" for r in failed
+    )
+    return (deterministic_finding(check_input, HTTP_PROBES_FAILED.render(probes=probes), facts),)
+
+
+def _describe(result: ProbeResult) -> Localized:
+    probe = result.probe
+    separator = STATUS_SEPARATOR.render()
+    expected = Localized(
+        he=separator.he.join(str(status) for status in probe.allowed_statuses),
+        en=separator.en.join(str(status) for status in probe.allowed_statuses),
+    )
+    fields = {"method": probe.method.value, "path": probe.path, "expected": expected}
+    if result.actual_status is None:
+        return PROBE_NO_ANSWER.render(**fields)
+    return PROBE_WRONG_STATUS.render(**fields, actual=result.actual_status)

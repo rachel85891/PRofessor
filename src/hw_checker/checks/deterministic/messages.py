@@ -55,4 +55,46 @@ FOLDER_MISSING = MessageTemplate(
     en="No folder named {path} was found in the repository.",
 )
 
-ALL_TEMPLATES: tuple[MessageTemplate, ...] = (FILE_MISSING, FILE_TOO_FEW, FOLDER_MISSING)
+BUILD_FAILED = MessageTemplate(
+    name="BUILD_FAILED",
+    he="הפרויקט לא עובר בנייה. שגיאת הקומפילציה הראשונה: {error}",
+    en="The project does not build. First compiler error: {error}",
+)
+
+BUILD_FAILED_NO_DETAIL = MessageTemplate(
+    name="BUILD_FAILED_NO_DETAIL",
+    he="הפרויקט לא עובר בנייה. הפרטים נמצאים ביומן הבנייה.",
+    en="The project does not build. The build log has the details.",
+)
+
+HTTP_PROBES_FAILED = MessageTemplate(
+    name="HTTP_PROBES_FAILED",
+    he="בקשות HTTP שלא החזירו את הסטטוס הצפוי:\n{probes}",
+    en="HTTP requests that did not return the expected status:\n{probes}",
+)
+
+PROBE_WRONG_STATUS = MessageTemplate(
+    name="PROBE_WRONG_STATUS",
+    he="{method} {path}: צפוי {expected}, התקבל {actual}",
+    en="{method} {path}: expected {expected}, got {actual}",
+)
+
+PROBE_NO_ANSWER = MessageTemplate(
+    name="PROBE_NO_ANSWER",
+    he="{method} {path}: צפוי {expected}, לא התקבלה תשובה",
+    en="{method} {path}: expected {expected}, no answer",
+)
+
+STATUS_SEPARATOR = MessageTemplate(name="STATUS_SEPARATOR", he=" או ", en=" or ")
+
+ALL_TEMPLATES: tuple[MessageTemplate, ...] = (
+    FILE_MISSING,
+    FILE_TOO_FEW,
+    FOLDER_MISSING,
+    BUILD_FAILED,
+    BUILD_FAILED_NO_DETAIL,
+    HTTP_PROBES_FAILED,
+    PROBE_WRONG_STATUS,
+    PROBE_NO_ANSWER,
+    STATUS_SEPARATOR,
+)
