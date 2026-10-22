@@ -6,7 +6,7 @@ from typing import Self
 
 from pydantic import Field, model_validator
 
-from hw_checker.domain.assignment import HttpProbe
+from hw_checker.domain.assignment import HttpMethod, HttpProbe
 from hw_checker.domain.base import DomainModel, HttpStatusCode, Identifier, NonBlankStr
 
 MAX_LOGS_EXCERPT_CHARS = 8000
@@ -17,6 +17,9 @@ MAX_PROBE_ERROR_CHARS = 500
 
 MAX_PATH_TEXT_CHARS = 1000
 """Upper bound for a path text recorded from student code."""
+
+MAX_ROUTE_TEXT_CHARS = 500
+"""Upper bound for a route template or a routing description recorded from student code."""
 
 
 class FailureKind(StrEnum):
@@ -115,6 +118,47 @@ class PathRewrite(DomainModel):
         return self
 
 
+class DeclaredRoute(DomainModel):
+    """One route a controller action declares in the student's code (attribute routing).
+
+    `template` is the class and action templates combined, with `[controller]` and
+    `[action]` replaced, without leading or trailing slashes, otherwise as written (for
+    example `api/User/{id}`). `method` is None when the action has a `[Route]` but no HTTP
+    method attribute, so it answers every method.
+    """
+
+    method: HttpMethod | None
+    template: str = Field(max_length=MAX_ROUTE_TEXT_CHARS)
+    controller: NonBlankStr
+    action: NonBlankStr
+    file_path: NonBlankStr
+    line: int = Field(ge=1)
+
+
+class UnsupportedRouting(DomainModel):
+    """A routing form the route table cannot read, such as a minimal API (`app.MapGet`)."""
+
+    file_path: NonBlankStr
+    line: int = Field(ge=1)
+    form: str = Field(min_length=1, max_length=MAX_ROUTE_TEXT_CHARS)
+
+
+class RouteTable(DomainModel):
+    """The routes declared in the student's code, read as text, for resolving probe paths.
+
+    The table is usable only when it has routes and nothing unsupported was found: a route
+    declared in a form the table cannot read would otherwise look missing.
+    """
+
+    routes: tuple[DeclaredRoute, ...] = ()
+    unsupported: tuple[UnsupportedRouting, ...] = ()
+
+    @property
+    def usable(self) -> bool:
+        """True when probe paths can be resolved against this table."""
+        return bool(self.routes) and not self.unsupported
+
+
 class ExecutionResult(DomainModel):
     """Prepare, build and run outcome for one repo, with probe results and a log excerpt.
 
@@ -131,6 +175,8 @@ class ExecutionResult(DomainModel):
     probe_results: tuple[ProbeResult, ...] = ()
     path_rewrites: tuple[PathRewrite, ...] = ()
     """Paths in the student's code that were adapted (or could not be) to run in Docker."""
+    routes: RouteTable | None = None
+    """The routes declared in the student's code; None when they were not read."""
 
     @property
     def steps(self) -> tuple[StepStatus, StepStatus, StepStatus]:

@@ -16,6 +16,7 @@ from hw_checker.domain import (
     Assignment,
     ExecutionResult,
     FailureKind,
+    HttpMethod,
     NotEvaluated,
     NotEvaluatedReason,
     PathFixKind,
@@ -92,6 +93,15 @@ def test_sample_api_writes_and_reads_its_text_file_and_answers_every_probe(
     ]
     assert all_passed(result), describe(result)
     assert result.path_rewrites == ()
+    assert result.routes is not None and result.routes.usable
+    assert {(r.method, r.template) for r in result.routes.routes} == {
+        (HttpMethod.GET, "api/Users"),
+        (HttpMethod.GET, "api/Users/{id}"),
+        (HttpMethod.POST, "api/Users"),
+        (HttpMethod.POST, "api/Users/login"),
+        (HttpMethod.PUT, "api/Users/{id}"),
+        (HttpMethod.DELETE, "api/Users/{id}"),
+    }
     assert data_file.read_bytes() == before, "the student's working copy is never written to"
     written = sorted(path.name for path in (tmp_path / "logs").iterdir())
     assert written == ["build.log", "prepare.log", "restore.log", "run.log"]

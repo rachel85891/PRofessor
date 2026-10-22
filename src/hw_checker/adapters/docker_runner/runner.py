@@ -39,6 +39,7 @@ from hw_checker.adapters.docker_runner.engine import (
 )
 from hw_checker.adapters.docker_runner.excerpt import excerpt_log
 from hw_checker.adapters.docker_runner.host_paths import PathPlan, plan_path_fixes
+from hw_checker.adapters.docker_runner.routes import extract_route_table
 from hw_checker.adapters.docker_runner.runner_config import ContainerLimits, DockerRunnerConfig
 from hw_checker.config.logging_setup import log_context
 from hw_checker.domain import (
@@ -48,6 +49,7 @@ from hw_checker.domain import (
     HttpProbe,
     PathRewrite,
     ProbeResult,
+    RouteTable,
     StepStatus,
 )
 from hw_checker.domain.errors import ExecutionEnvironmentError
@@ -223,6 +225,7 @@ class _Execution:
     networks: list[str] = field(default_factory=list)
     volumes: list[str] = field(default_factory=list)
     suffix: str = field(default_factory=lambda: uuid.uuid4().hex[:8])
+    routes: RouteTable | None = None
 
     def run(self) -> ExecutionResult:
         self.request.logs_dir.mkdir(parents=True, exist_ok=True)
@@ -240,9 +243,10 @@ class _Execution:
         if (problem := discovery.framework_problem()) is not None:
             return self._prepare_failed(f"not run, flagged for review: {problem}")
         plan = plan_path_fixes(self.request.working_copy, discovery.folder)
+        self.routes = extract_route_table(self.request.working_copy, discovery.folder)
         result = self._prepare_build_run(discovery, plan)
-        # Every result after this point records what was done with the detected paths.
-        return result.model_copy(update={"path_rewrites": plan.rewrites})
+        # Every result after this point records the detected paths and the route table.
+        return result.model_copy(update={"path_rewrites": plan.rewrites, "routes": self.routes})
 
     def _prepare_build_run(self, discovery: WebProject, plan: PathPlan) -> ExecutionResult:
         limits = (self.config.max_archive_bytes, self.config.max_file_bytes)
@@ -280,7 +284,9 @@ class _Execution:
             return self._prepare_failed(f"cannot copy the code into Docker: {error}", engine=True)
         self._write_log(
             RunnerStep.PREPARE,
-            f"Web project: {discovery.path}\n" + _describe_paths(plan.rewrites),
+            f"Web project: {discovery.path}\n"
+            + _describe_paths(plan.rewrites)
+            + _describe_routes(self.routes),
         )
         if plan.rewrites:
             rewritten = sum(1 for rewrite in plan.rewrites if rewrite.rewritten is not None)
@@ -673,4 +679,20 @@ def _describe_paths(rewrites: tuple[PathRewrite, ...]) -> str:
             f"{rewrite.kind} path {rewrite.original!r} at {rewrite.file_path}:{rewrite.line}: "
             f"{outcome}\n"
         )
+    return "".join(lines)
+
+
+def _describe_routes(routes: RouteTable | None) -> str:
+    """The route table, one prepare-log line per route or unsupported form."""
+    if routes is None:
+        return ""
+    lines = [
+        f"route {route.method or 'ANY'} /{route.template} "
+        f"({route.controller}.{route.action}, {route.file_path}:{route.line})\n"
+        for route in routes.routes
+    ]
+    lines += [
+        f"unsupported routing: {item.form} at {item.file_path}:{item.line}\n"
+        for item in routes.unsupported
+    ]
     return "".join(lines)

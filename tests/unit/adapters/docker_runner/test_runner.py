@@ -246,6 +246,33 @@ def test_absolute_path_is_rewritten_in_the_copied_code_only(tmp_path: Path) -> N
     assert "rewritten to 'Data/users.txt'" in prepare_log
 
 
+def test_route_table_is_recorded_on_the_result_and_in_the_prepare_log(
+    repo: Path, tmp_path: Path
+) -> None:
+    (repo / "Controllers" / "ProductsController.cs").write_text(
+        '[Route("api/[controller]")]\npublic class ProductsController\n{\n'
+        '    [HttpGet("{id}")]\n    public IActionResult Get(int id) => Ok();\n}\n',
+        encoding="utf-8",
+    )
+    engine = FakeEngine(exit_codes={"build": 1}, logs_by_kind={"build": BUILD_ERROR})
+
+    result = runner(engine).execute(request(repo, tmp_path))
+
+    assert result.routes is not None
+    assert [(r.method, r.template) for r in result.routes.routes] == [
+        (HttpMethod.GET, "api/Products/{id}")
+    ]
+    prepare_log = (tmp_path / "logs" / "prepare.log").read_text(encoding="utf-8")
+    assert "route GET /api/Products/{id} (ProductsController.Get" in prepare_log
+
+
+def test_project_without_routes_records_an_empty_table(repo: Path, tmp_path: Path) -> None:
+    result = runner(FakeEngine()).execute(request(repo, tmp_path))
+
+    assert result.routes is not None
+    assert result.routes.routes == () and not result.routes.usable
+
+
 def test_unresolved_path_is_recorded_on_a_failed_build_too(repo: Path, tmp_path: Path) -> None:
     (repo / "Store.cs").write_text('var p = @"C:\\x\\orders.txt";', encoding="utf-8")
     engine = FakeEngine(exit_codes={"build": 1}, logs_by_kind={"build": BUILD_ERROR})

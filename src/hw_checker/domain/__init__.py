@@ -14,6 +14,7 @@ from hw_checker.domain.assignment import (
 )
 from hw_checker.domain.checks import CheckDescription, CheckInput, CheckParamDescription
 from hw_checker.domain.execution import (
+    DeclaredRoute,
     ExecutionRequest,
     ExecutionResult,
     FailureKind,
@@ -21,7 +22,9 @@ from hw_checker.domain.execution import (
     PathNotRewrittenReason,
     PathRewrite,
     ProbeResult,
+    RouteTable,
     StepStatus,
+    UnsupportedRouting,
 )
 from hw_checker.domain.findings import (
     Evidence,
@@ -68,6 +71,7 @@ __all__ = [
     "CheckInput",
     "CheckParamDescription",
     "CommitInfo",
+    "DeclaredRoute",
     "Evidence",
     "ExecutionRequest",
     "ExecutionResult",
@@ -101,11 +105,13 @@ __all__ = [
     "RosterRow",
     "RosterWarning",
     "RosterWarningKind",
+    "RouteTable",
     "Run",
     "RunStatus",
     "Severity",
     "StepStatus",
     "Student",
+    "UnsupportedRouting",
     "Verdict",
     "parse_github_url",
 ]
