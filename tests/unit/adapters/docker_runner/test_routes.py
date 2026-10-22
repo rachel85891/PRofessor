@@ -5,9 +5,18 @@ import pytest
 from hw_checker.adapters.docker_runner.routes import (
     combine_templates,
     extract_route_table,
+    resolve_probe_path,
     routes_in_source,
+    template_matches,
 )
-from hw_checker.domain import DeclaredRoute, HttpMethod, RouteTable, UnsupportedRouting
+from hw_checker.domain import (
+    DeclaredRoute,
+    HttpMethod,
+    HttpProbe,
+    RouteResolution,
+    RouteTable,
+    UnsupportedRouting,
+)
 
 GET, POST, PUT, DELETE, PATCH = (
     HttpMethod.GET,
@@ -302,3 +311,111 @@ def test_combine_templates(
     class_template: str | None, action_template: str | None, expected: str
 ) -> None:
     assert combine_templates(class_template, action_template) == expected
+
+
+# ---------------------------------------------------------------- matching
+
+
+@pytest.mark.parametrize(
+    ("template", "path", "matches"),
+    [
+        ("api/Users", "/api/users", True),
+        ("api/Users", "/API/USERS/", True),
+        ("api/Users", "/api/user", False),
+        ("api/Users/{id}", "/api/users/3", True),
+        ("api/Users/{id:int}", "/api/users/3", True),
+        ("api/Users/{id:int:min(1)}", "/api/users/3", True),
+        ("api/Users/{id}", "/api/users", False),
+        ("api/Users/{id?}", "/api/users", True),
+        ("api/Users/{id?}", "/api/users/3", True),
+        ("api/Users/{page=1}", "/api/users", True),
+        ("api/Users/{id}", "/api/users/3/orders", False),
+        ("files/{*rest}", "/files/a/b/c", True),
+        ("api/Users/login", "/api/users/LOGIN", True),
+        ("api/Users/{email} {password}", "/api/users/login", False),
+        ("api/Users", "/api/users?page=2", True),
+        ("", "/", True),
+        ("", "/api", False),
+    ],
+)
+def test_template_matching(template: str, path: str, matches: bool) -> None:
+    assert template_matches(template, path) is matches
+
+
+def route(method: HttpMethod | None, template: str) -> DeclaredRoute:
+    return DeclaredRoute(
+        method=method, template=template, controller="C", action="A", file_path="C.cs", line=1
+    )
+
+
+TABLE = RouteTable(
+    routes=(
+        route(GET, "api/User"),
+        route(GET, "api/User/{id:int}"),
+        route(POST, "api/User"),
+        route(POST, "api/User/signin"),
+        route(None, "api/User/ping"),
+    )
+)
+
+
+def http_probe(method: HttpMethod, path: str, *alternatives: str) -> HttpProbe:
+    return HttpProbe(
+        requirement_id="hw01-r1",
+        assignment_id="hw01",
+        method=method,
+        path=path,
+        path_alternatives=alternatives,
+        expected_status=200,
+    )
+
+
+@pytest.mark.parametrize(
+    ("probe", "expected"),
+    [
+        (http_probe(GET, "/api/users", "/api/user"), "/api/user"),
+        (http_probe(GET, "/api/users/3", "/api/user/3"), "/api/user/3"),
+        (http_probe(GET, "/api/User/7"), "/api/User/7"),
+        (
+            http_probe(
+                POST, "/api/users/login", "/api/user/login", "/api/users/signin", "/api/user/signin"
+            ),
+            "/api/user/signin",
+        ),
+        (http_probe(POST, "/api/user/signin", "/api/user"), "/api/user/signin"),
+        (http_probe(DELETE, "/api/user/ping"), "/api/user/ping"),
+    ],
+)
+def test_first_candidate_declared_for_the_method_wins(probe: HttpProbe, expected: str) -> None:
+    assert resolve_probe_path(probe, TABLE) == (expected, RouteResolution.RESOLVED)
+
+
+@pytest.mark.parametrize(
+    "probe",
+    [
+        http_probe(DELETE, "/api/users/3", "/api/user/3"),
+        http_probe(PUT, "/api/user"),
+        http_probe(GET, "/api/users/abc/orders"),
+    ],
+)
+def test_probe_without_a_declared_route_is_not_sent(probe: HttpProbe) -> None:
+    assert resolve_probe_path(probe, TABLE) == (None, RouteResolution.ROUTE_NOT_FOUND)
+
+
+@pytest.mark.parametrize(
+    "table",
+    [
+        None,
+        RouteTable(),
+        RouteTable(
+            routes=TABLE.routes,
+            unsupported=(
+                UnsupportedRouting(file_path="Program.cs", line=4, form="minimal API (MapGet)"),
+            ),
+        ),
+    ],
+)
+def test_unusable_table_falls_back_to_the_first_path(table: RouteTable | None) -> None:
+    probe = http_probe(DELETE, "/api/users/3", "/api/user/3")
+
+    assert resolve_probe_path(probe, table) == ("/api/users/3", RouteResolution.UNAVAILABLE)

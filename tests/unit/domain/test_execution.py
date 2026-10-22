@@ -11,6 +11,7 @@ from hw_checker.domain import (
     PathNotRewrittenReason,
     PathRewrite,
     ProbeResult,
+    RouteResolution,
     StepStatus,
 )
 from hw_checker.domain.execution import MAX_LOGS_EXCERPT_CHARS, MAX_PROBE_ERROR_CHARS
@@ -277,3 +278,44 @@ def test_execution_with_path_rewrites_round_trips_through_json() -> None:
     )
 
     assert ExecutionResult.model_validate_json(execution.model_dump_json()) == execution
+
+
+def test_probe_whose_route_was_not_found_was_never_sent() -> None:
+    probe = builders.probe(path="/api/users", path_alternatives=("/api/user",))
+
+    unsent = ProbeResult(
+        probe=probe, passed=False, route_resolution=RouteResolution.ROUTE_NOT_FOUND
+    )
+
+    assert unsent.sent_path is None and not unsent.passed
+    with pytest.raises(ValidationError, match="never sent"):
+        ProbeResult(
+            probe=probe,
+            passed=False,
+            sent_path="/api/users",
+            route_resolution=RouteResolution.ROUTE_NOT_FOUND,
+        )
+
+
+def test_sent_path_must_be_a_candidate_of_the_probe() -> None:
+    probe = builders.probe(path="/api/users", path_alternatives=("/api/user",))
+
+    sent = ProbeResult(
+        probe=probe,
+        actual_status=200,
+        passed=True,
+        sent_path="/api/user",
+        route_resolution=RouteResolution.RESOLVED,
+    )
+
+    assert sent.sent_path == "/api/user"
+    with pytest.raises(ValidationError, match="candidate paths"):
+        ProbeResult(probe=probe, actual_status=200, passed=True, sent_path="/api/people")
+
+
+def test_probe_result_defaults_keep_older_results_valid() -> None:
+    result = ProbeResult.model_validate(
+        {"probe": builders.probe().model_dump(mode="json"), "actual_status": 200, "passed": True}
+    )
+
+    assert (result.sent_path, result.route_resolution) == (None, RouteResolution.UNAVAILABLE)

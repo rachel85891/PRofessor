@@ -39,7 +39,7 @@ from hw_checker.adapters.docker_runner.engine import (
 )
 from hw_checker.adapters.docker_runner.excerpt import excerpt_log
 from hw_checker.adapters.docker_runner.host_paths import PathPlan, plan_path_fixes
-from hw_checker.adapters.docker_runner.routes import extract_route_table
+from hw_checker.adapters.docker_runner.routes import extract_route_table, resolve_probe_path
 from hw_checker.adapters.docker_runner.runner_config import ContainerLimits, DockerRunnerConfig
 from hw_checker.config.logging_setup import log_context
 from hw_checker.domain import (
@@ -434,14 +434,23 @@ class _Execution:
             self.sleep(self.config.readiness_poll_seconds)
 
     def _probe(self, sidecar: str, base_url: str, probe: HttpProbe) -> ProbeResult:
-        status, error = self._http_status(
-            sidecar, probe.method.value, base_url + probe.path, probe.body
-        )
+        path, resolution = resolve_probe_path(probe, self.routes)
+        if path is None:
+            logger.info("Probe %s %s not sent: no declared route matches", probe.method, probe.path)
+            return ProbeResult(
+                probe=probe,
+                passed=False,
+                error="no route declared in the code matches the probe's paths",
+                route_resolution=resolution,
+            )
+        status, error = self._http_status(sidecar, probe.method.value, base_url + path, probe.body)
         return ProbeResult(
             probe=probe,
             actual_status=status,
             passed=status in probe.allowed_statuses,
             error=error[:MAX_PROBE_ERROR_CHARS],
+            sent_path=path,
+            route_resolution=resolution,
         )
 
     def _http_status(

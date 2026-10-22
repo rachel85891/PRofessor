@@ -23,6 +23,7 @@ from hw_checker.domain import (
     PathNotRewrittenReason,
     Requirement,
     RequirementKind,
+    RouteResolution,
     Severity,
     StepStatus,
 )
@@ -92,6 +93,10 @@ def test_sample_api_writes_and_reads_its_text_file_and_answers_every_probe(
         ("GET", "/api/users/3", 404),
     ]
     assert all_passed(result), describe(result)
+    assert all(
+        r.route_resolution is RouteResolution.RESOLVED and r.sent_path == r.probe.path
+        for r in result.probe_results
+    )
     assert result.path_rewrites == ()
     assert result.routes is not None and result.routes.usable
     assert {(r.method, r.template) for r in result.routes.routes} == {

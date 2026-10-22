@@ -17,7 +17,14 @@ from hw_checker.adapters.docker_runner.csharp_source import (
     mask_source,
     source_files,
 )
-from hw_checker.domain import DeclaredRoute, HttpMethod, RouteTable, UnsupportedRouting
+from hw_checker.domain import (
+    DeclaredRoute,
+    HttpMethod,
+    HttpProbe,
+    RouteResolution,
+    RouteTable,
+    UnsupportedRouting,
+)
 from hw_checker.domain.execution import MAX_ROUTE_TEXT_CHARS
 
 HTTP_ATTRIBUTES = {
@@ -45,6 +52,7 @@ _CONVENTIONAL = re.compile(
     r"|UseMvcWithDefaultRoute|UseMvc)\s*\("
 )
 _TOKEN = re.compile(r"\[(?P<name>[^\[\]]*)\]")
+_PARAMETER = re.compile(r"^\{(?P<inner>[^{}]+)\}$")
 
 
 @dataclass
@@ -140,6 +148,59 @@ def routes_in_source(
             for method, template in built
         )
     return routes, unsupported
+
+
+def resolve_probe_path(
+    probe: HttpProbe, table: RouteTable | None
+) -> tuple[str | None, RouteResolution]:
+    """The path to send `probe` to, and how it was chosen.
+
+    The first candidate (`path`, then `path_alternatives`) that matches a route declared for
+    the probe's method wins; the candidate is sent as written, with its own values. With no
+    match the probe is not sent. When the table is not usable (empty, or with routing forms
+    it could not read), the probe is sent to its first path, as before route resolution.
+    """
+    if table is None or not table.usable:
+        return probe.path, RouteResolution.UNAVAILABLE
+    for candidate in probe.candidate_paths:
+        for route in table.routes:
+            if route.method in (None, probe.method) and template_matches(route.template, candidate):
+                return candidate, RouteResolution.RESOLVED
+    return None, RouteResolution.ROUTE_NOT_FOUND
+
+
+def template_matches(template: str, path: str) -> bool:
+    """True when the request `path` matches the route `template`.
+
+    Literal segments are compared ignoring case. A `{param}` segment (with a constraint such
+    as `{id:int}` or not) matches any one segment; `{id?}` and `{id=1}` may also be absent
+    at the end, and `{*rest}` matches whatever remains. A segment mixing text and
+    parameters (such as `{email} {password}`) is compared as text. Leading and trailing
+    slashes, and the path's query string, are ignored.
+    """
+    path_segments = _segments(path.split("?", 1)[0].split("#", 1)[0])
+    template_segments = _segments(template)
+    index = 0
+    for segment in template_segments:
+        parameter = _PARAMETER.match(segment)
+        if parameter is not None:
+            inner = parameter["inner"]
+            if inner.startswith("*"):
+                return True
+            if index < len(path_segments):
+                index += 1
+                continue
+            if inner.endswith("?") or "=" in inner:
+                continue
+            return False
+        if index >= len(path_segments) or segment.casefold() != path_segments[index].casefold():
+            return False
+        index += 1
+    return index == len(path_segments)
+
+
+def _segments(value: str) -> list[str]:
+    return [segment for segment in value.strip("/").split("/") if segment]
 
 
 def controller_token(class_name: str) -> str:

@@ -48,16 +48,31 @@ class StepStatus(StrEnum):
     SKIPPED = "skipped"
 
 
+class RouteResolution(StrEnum):
+    """How the path a probe was sent to was chosen from its candidate paths."""
+
+    RESOLVED = "resolved"
+    """Sent to the first candidate that matches a route declared for the probe's method."""
+    ROUTE_NOT_FOUND = "route_not_found"
+    """No candidate matches a declared route, so the probe was not sent."""
+    UNAVAILABLE = "unavailable"
+    """The route table was empty or incomplete, so the probe was sent to its first path."""
+
+
 class ProbeResult(DomainModel):
     """The result of one HTTP probe against the running app.
 
-    The probe carries the requirement and assignment it belongs to.
+    The probe carries the requirement and assignment it belongs to. `sent_path` is the
+    candidate path the request went to (None when it was not sent, and for results
+    recorded before path alternatives existed).
     """
 
     probe: HttpProbe
     actual_status: HttpStatusCode | None = None
     passed: bool
     error: str = Field(default="", max_length=MAX_PROBE_ERROR_CHARS)
+    sent_path: str | None = None
+    route_resolution: RouteResolution = RouteResolution.UNAVAILABLE
 
     @property
     def requirement_id(self) -> str:
@@ -74,6 +89,16 @@ class ProbeResult(DomainModel):
         expected_pass = self.actual_status in self.probe.allowed_statuses
         if self.passed != expected_pass:
             raise ValueError("passed must be true exactly when actual_status is an allowed status")
+        return self
+
+    @model_validator(mode="after")
+    def _unsent_probe_has_no_answer(self) -> Self:
+        if self.route_resolution is RouteResolution.ROUTE_NOT_FOUND and (
+            self.sent_path is not None or self.actual_status is not None
+        ):
+            raise ValueError("a probe whose route was not found is never sent")
+        if self.sent_path is not None and self.sent_path not in self.probe.candidate_paths:
+            raise ValueError("sent_path must be one of the probe's candidate paths")
         return self
 
 
