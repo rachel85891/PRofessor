@@ -20,15 +20,15 @@ logging:
 
 roster:
   # Sheet holding the roster; leave empty (null) to use the first sheet.
-  sheet_name: null
+  sheet_name: Sheet1
   # Row number (1-based) of the header row; data starts on the row below.
   header_row: 1
   # Header text of each column, matched ignoring case and surrounding spaces.
-  # PLACEHOLDERS: replace with the headers of the lecturer's real roster file.
+  # The roster file itself is kept outside the repo (it holds students' names).
   columns:
-    name: Name
-    partner_name: Partner
-    github_url: GitHub
+    name: "שם + משפחה"
+    partner_name: "בת הזוג של"
+    github_url: Github Url
 
 git:
   # Git executable; a full path if git is not on PATH.

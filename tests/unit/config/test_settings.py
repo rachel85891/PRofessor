@@ -156,6 +156,19 @@ def test_roster_defaults_apply(tmp_path: Path) -> None:
     )
 
 
+def test_repo_config_has_the_real_roster_headers(tmp_path: Path) -> None:
+    from hw_checker.config.settings import DEFAULT_CONFIG_PATH
+
+    roster = load_settings(config_path=DEFAULT_CONFIG_PATH, env_path=tmp_path / ".env").roster
+
+    assert (roster.sheet_name, roster.header_row) == ("Sheet1", 1)
+    assert (roster.columns.name, roster.columns.partner_name, roster.columns.github_url) == (
+        "\u05e9\u05dd + \u05de\u05e9\u05e4\u05d7\u05d4",
+        "\u05d1\u05ea \u05d4\u05d6\u05d5\u05d2 \u05e9\u05dc",
+        "Github Url",
+    )
+
+
 def test_roster_values_load_from_yaml(tmp_path: Path) -> None:
     roster = _load(
         tmp_path,
