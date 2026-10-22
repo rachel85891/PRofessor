@@ -12,16 +12,42 @@ from pathlib import Path
 WEB_SDK = "microsoft.net.sdk.web"
 EXCLUDED_DIRS = frozenset({"bin", "obj", ".git"})
 MAX_PROJECT_FILE_BYTES = 1_000_000
+SUPPORTED_FRAMEWORK = "net10.0"
+"""The only target framework the pinned images build and run (.NET 10 only)."""
 _SAFE_ASSEMBLY_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 
 
 @dataclass(frozen=True)
 class WebProject:
-    """The Web project to build: its path relative to the working copy, and its assembly."""
+    """The Web project to build: its path relative to the working copy, and its assembly.
+
+    `target_framework` is the literal `<TargetFramework>` (or `<TargetFrameworks>`) text,
+    None when the project file has neither.
+    """
 
     path: str
     assembly_name: str
     unreadable: tuple[str, ...] = ()
+    target_framework: str | None = None
+
+    @property
+    def folder(self) -> str:
+        """The folder holding the project file, relative to the working copy ("" at the root)."""
+        return self.path.rpartition("/")[0]
+
+    def framework_problem(self) -> str | None:
+        """Why the pinned images cannot build this project, or None when they can."""
+        if self.target_framework is None:
+            return (
+                f"no <TargetFramework> found in {self.path}; "
+                f"only {SUPPORTED_FRAMEWORK} is supported"
+            )
+        if self.target_framework.strip().lower() != SUPPORTED_FRAMEWORK:
+            return (
+                f"{self.path} targets {self.target_framework.strip()}; "
+                f"only {SUPPORTED_FRAMEWORK} is supported"
+            )
+        return None
 
 
 @dataclass(frozen=True)
@@ -39,6 +65,7 @@ class _ParsedProject:
     path: str
     is_web: bool
     assembly_name: str
+    target_framework: str | None
 
 
 def discover_web_project(working_copy: Path) -> WebProject | DiscoveryFailure:
@@ -58,7 +85,9 @@ def discover_web_project(working_copy: Path) -> WebProject | DiscoveryFailure:
     web = [project for project in parsed if project.is_web]
     others = tuple(project.path for project in parsed if not project.is_web)
     if len(web) == 1:
-        return WebProject(web[0].path, web[0].assembly_name, tuple(unreadable))
+        return WebProject(
+            web[0].path, web[0].assembly_name, tuple(unreadable), web[0].target_framework
+        )
     return DiscoveryFailure(
         message=_failure_message(web, others, unreadable),
         web_projects=tuple(project.path for project in web),
@@ -90,7 +119,9 @@ def _parse_project(path: Path, relative: str) -> _ParsedProject | None:
         root = ElementTree.fromstring(path.read_bytes())
     except (OSError, ElementTree.ParseError):
         return None
-    return _ParsedProject(relative, _is_web_project(root), _assembly_name(root, path))
+    return _ParsedProject(
+        relative, _is_web_project(root), _assembly_name(root, path), _target_framework(root)
+    )
 
 
 def _local_name(tag: str) -> str:
@@ -117,6 +148,14 @@ def _assembly_name(root: ElementTree.Element, path: Path) -> str:
             if _SAFE_ASSEMBLY_NAME.match(name):
                 return name
     return path.stem
+
+
+def _target_framework(root: ElementTree.Element) -> str | None:
+    for name in ("TargetFramework", "TargetFrameworks"):
+        for element in root.iter():
+            if _local_name(element.tag) == name and (element.text or "").strip():
+                return (element.text or "").strip()
+    return None
 
 
 def _failure_message(

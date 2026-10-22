@@ -1,5 +1,7 @@
 from pathlib import Path
 
+import pytest
+
 from hw_checker.adapters.docker_runner.discovery import (
     DiscoveryFailure,
     WebProject,
@@ -152,4 +154,53 @@ def test_external_entities_are_not_resolved(tmp_path: Path) -> None:
 def test_the_committed_sample_fixture_is_found() -> None:
     fixture = Path(__file__).parents[3] / "fixtures" / "sample_webapi"
 
-    assert discover_web_project(fixture) == WebProject("SampleWebApi.csproj", "SampleWebApi")
+    assert discover_web_project(fixture) == WebProject(
+        "SampleWebApi.csproj", "SampleWebApi", target_framework="net10.0"
+    )
+
+
+def test_target_framework_is_read(tmp_path: Path) -> None:
+    write(tmp_path, "Api/Api.csproj", web("<TargetFramework> net10.0 </TargetFramework>"))
+
+    result = discover_web_project(tmp_path)
+
+    assert result == WebProject("Api/Api.csproj", "Api", target_framework="net10.0")
+    assert isinstance(result, WebProject)
+    assert result.framework_problem() is None
+    assert result.folder == "Api"
+
+
+def test_target_frameworks_plural_is_read(tmp_path: Path) -> None:
+    write(tmp_path, "Api.csproj", web("<TargetFrameworks>net8.0;net10.0</TargetFrameworks>"))
+
+    result = discover_web_project(tmp_path)
+
+    assert isinstance(result, WebProject)
+    assert result.target_framework == "net8.0;net10.0"
+    assert result.folder == ""
+
+
+@pytest.mark.parametrize(
+    ("framework", "problem"),
+    [
+        ("net9.0", "Api.csproj targets net9.0; only net10.0 is supported"),
+        ("net10.0-windows", "Api.csproj targets net10.0-windows; only net10.0 is supported"),
+        ("NET10.0", None),
+        (None, "no <TargetFramework> found in Api.csproj; only net10.0 is supported"),
+    ],
+)
+def test_only_net10_is_supported(framework: str | None, problem: str | None) -> None:
+    project = WebProject("Api.csproj", "Api", target_framework=framework)
+
+    assert project.framework_problem() == problem
+
+
+def test_folder_names_with_bidi_marks_and_hebrew_are_found(tmp_path: Path) -> None:
+    folder = "\u200fשיעורי בית\u200f/Web Api"  # noqa: RUF001
+    write(tmp_path, f"{folder}/Web Api.csproj", web("<TargetFramework>net10.0</TargetFramework>"))
+
+    result = discover_web_project(tmp_path)
+
+    assert result == WebProject(f"{folder}/Web Api.csproj", "Web Api", target_framework="net10.0")
+    assert isinstance(result, WebProject)
+    assert result.folder == folder

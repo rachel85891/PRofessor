@@ -222,6 +222,8 @@ class _Execution:
         discovery = discover_web_project(self.request.working_copy)
         if isinstance(discovery, DiscoveryFailure):
             return self._prepare_failed(discovery.message, project_found=False)
+        if (problem := discovery.framework_problem()) is not None:
+            return self._prepare_failed(f"not run, flagged for review: {problem}")
         try:
             archive = build_work_archive(
                 self.request.working_copy,

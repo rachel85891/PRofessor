@@ -17,7 +17,10 @@ from hw_checker.domain.errors import ExecutionEnvironmentError
 from tests.unit.adapters.docker_runner.fake_engine import FakeClock, FakeEngine
 from tests.unit.adapters.docker_runner.test_engine_and_config import config as base_config
 
-WEB_PROJECT = '<Project Sdk="Microsoft.NET.Sdk.Web"><PropertyGroup /></Project>'
+WEB_PROJECT = (
+    '<Project Sdk="Microsoft.NET.Sdk.Web"><PropertyGroup>'
+    "<TargetFramework>net10.0</TargetFramework></PropertyGroup></Project>"
+)
 BUILD_ERROR = "Program.cs(3,1): error CS0103: The name 'x' does not exist [/work/src/Api.csproj]"
 
 
@@ -333,6 +336,33 @@ def test_project_not_found_creates_nothing(tmp_path: Path) -> None:
     assert result.steps == (StepStatus.FAILED, StepStatus.SKIPPED, StepStatus.SKIPPED)
     assert engine.calls == []
     assert "no .csproj" in (tmp_path / "logs" / "prepare.log").read_text(encoding="utf-8")
+
+
+@pytest.mark.parametrize(
+    ("framework", "message"),
+    [
+        ("<TargetFramework>net9.0</TargetFramework>", "Shop.Api.csproj targets net9.0"),
+        ("<TargetFrameworks>net8.0;net10.0</TargetFrameworks>", "targets net8.0;net10.0"),
+        ("", "no <TargetFramework> found in Shop.Api.csproj"),
+    ],
+)
+def test_other_target_framework_fails_prepare_without_docker(
+    repo: Path, tmp_path: Path, framework: str, message: str
+) -> None:
+    (repo / "Shop.Api.csproj").write_text(
+        f'<Project Sdk="Microsoft.NET.Sdk.Web"><PropertyGroup>{framework}</PropertyGroup>'
+        "</Project>",
+        encoding="utf-8",
+    )
+    engine = FakeEngine()
+
+    result = runner(engine).execute(request(repo, tmp_path))
+
+    assert result.failure_kind is FailureKind.ENVIRONMENT_ERROR
+    assert result.steps == (StepStatus.FAILED, StepStatus.SKIPPED, StepStatus.SKIPPED)
+    assert message in result.logs_excerpt
+    assert "only net10.0 is supported" in result.logs_excerpt
+    assert engine.calls == []
 
 
 def test_oversized_repo_fails_prepare_without_docker(repo: Path, tmp_path: Path) -> None:

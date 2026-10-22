@@ -82,12 +82,12 @@ class RunnerSettings(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     sdk_image: PinnedImage = (
-        "mcr.microsoft.com/dotnet/sdk:9.0"
-        "@sha256:d9ad72f6b3eb5d61adb158db510ae1c3098c12c92d23ab8da833418275f1c652"
+        "mcr.microsoft.com/dotnet/sdk:10.0"
+        "@sha256:747cbade5bfd918a175ac32f8f1d931edec2c7d0d5397a3de72eaef1ac1f66d2"
     )
     runtime_image: PinnedImage = (
-        "mcr.microsoft.com/dotnet/aspnet:9.0"
-        "@sha256:88fcfc1b81c43afa15ba3c138c57d77f77c1cb5118ae9d7024c94e82e2895aa5"
+        "mcr.microsoft.com/dotnet/aspnet:10.0"
+        "@sha256:8af87eba5e7cdafb1514d7388be287365da97c132509e84dfe252ffd552398ca"
     )
     probe_image: PinnedImage = (
         "curlimages/curl:8.10.1"

@@ -249,8 +249,8 @@ def test_runner_defaults_load_from_the_repo_config(tmp_path: Path) -> None:
 
     runner = load_settings(config_path=DEFAULT_CONFIG_PATH, env_path=tmp_path / ".env").runner
 
-    assert runner.sdk_image.startswith("mcr.microsoft.com/dotnet/sdk:9.0@sha256:")
-    assert runner.runtime_image.startswith("mcr.microsoft.com/dotnet/aspnet:9.0@sha256:")
+    assert runner.sdk_image.startswith("mcr.microsoft.com/dotnet/sdk:10.0@sha256:")
+    assert runner.runtime_image.startswith("mcr.microsoft.com/dotnet/aspnet:10.0@sha256:")
     assert "@sha256:" in runner.probe_image
     assert runner.run_limits.memory_mb == 512
     assert runner.readiness_timeout_seconds == 30
