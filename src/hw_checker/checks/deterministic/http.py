@@ -23,7 +23,10 @@ def evaluate_http(check_input: CheckInput) -> tuple[Finding, ...] | NotEvaluated
     if execution.prepare_status is StepStatus.FAILED:
         return NotEvaluatedReason.ENVIRONMENT_ISSUE
     if execution.build_status is StepStatus.FAILED:
-        return NotEvaluatedReason.BUILD_FAILED
+        kind = execution.failure_kind
+        if kind is not None and kind.is_student_issue:
+            return NotEvaluatedReason.BUILD_FAILED
+        return NotEvaluatedReason.ENVIRONMENT_ISSUE  # a build timeout or environment problem
     if execution.run_status is not StepStatus.SUCCEEDED:
         return NotEvaluatedReason.RUN_NOT_HEALTHY
     results = [

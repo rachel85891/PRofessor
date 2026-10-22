@@ -322,7 +322,8 @@ def test_two_failing_probes_give_a_single_finding_naming_both() -> None:
     [
         (None, NotEvaluatedReason.NO_EXECUTION),
         (failure(FailureKind.BUILD_FAILED), NotEvaluatedReason.BUILD_FAILED),
-        (failure(FailureKind.TIMEOUT), NotEvaluatedReason.BUILD_FAILED),
+        (failure(FailureKind.TIMEOUT), NotEvaluatedReason.ENVIRONMENT_ISSUE),
+        (failure(FailureKind.ENVIRONMENT_ERROR), NotEvaluatedReason.ENVIRONMENT_ISSUE),
         (failure(FailureKind.STARTUP_FAILED), NotEvaluatedReason.RUN_NOT_HEALTHY),
         (failure(FailureKind.PROJECT_NOT_FOUND), NotEvaluatedReason.ENVIRONMENT_ISSUE),
         (run_ok(), NotEvaluatedReason.ENVIRONMENT_ISSUE),
