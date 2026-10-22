@@ -49,6 +49,7 @@ class ContainerSpec:
     entrypoint: tuple[str, ...] | None = None
     read_only_root: bool = False
     tmpfs: Mapping[str, str] = field(default_factory=dict)
+    working_dir: str = CONTAINER_WORKDIR
 
 
 @dataclass(frozen=True)
@@ -189,7 +190,7 @@ class SdkDockerEngine:
                     mount.volume: {"bind": mount.target, "mode": "ro" if mount.read_only else "rw"}
                     for mount in spec.mounts
                 },
-                working_dir=CONTAINER_WORKDIR,
+                working_dir=spec.working_dir,
                 network=spec.network,
                 network_mode=spec.network_mode,
                 mem_limit=f"{spec.memory_mb}m",

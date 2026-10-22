@@ -1,4 +1,6 @@
+import io
 import logging
+import tarfile
 from pathlib import Path
 
 import pytest
@@ -106,6 +108,9 @@ def test_step_order_and_cleanup_after_success(repo: Path, tmp_path: Path) -> Non
         "create_volume",
         "create_container copy",
         "put_archive /work",
+        "create_volume",
+        "create_container copy",
+        "put_archive /data",
         "create_container restore",
         "start restore",
         "create_container build",
@@ -141,7 +146,14 @@ def test_container_settings(repo: Path, tmp_path: Path) -> None:
     assert build.command[:4] == ("dotnet", "publish", "/work/src/Shop.Api.csproj", "--no-restore")
     assert app.network is not None and app.network == sidecar.network
     assert engine.networks == {} and app.network in engine.removed
-    assert app.mounts == (Mount(work, "/work", read_only=True),)
+    project = app.mounts[1].volume
+    assert app.mounts == (
+        Mount(work, "/work", read_only=True),
+        Mount(project, "/data", read_only=False),
+    )
+    assert project != work and project in engine.removed
+    assert app.working_dir == "/data/project"
+    assert restore.working_dir == build.working_dir == "/work"
     assert app.read_only_root and app.tmpfs == {"/tmp": "size=64m"}
     assert app.command == ("dotnet", "/work/out/Shop.Api.dll")
     assert app.environment == {"FEATURE_FLAG": "on", "ASPNETCORE_HTTP_PORTS": "8080"}
@@ -160,6 +172,39 @@ def test_container_settings(repo: Path, tmp_path: Path) -> None:
         assert spec.labels["hw-checker-test"] == "1"
         assert spec.labels["hw-checker-test.run"] == "run-1"
         assert spec.labels["hw-checker-test.repo"] == "dana__api"
+
+
+def test_project_copy_holds_only_the_web_project_folder(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    (repo / "WebApi" / "WebApi" / "Data").mkdir(parents=True)
+    (repo / "WebApi" / "WebApi.slnx").write_text("<Solution />", encoding="utf-8")
+    (repo / "WebApi" / "WebApi" / "WebApi.csproj").write_text(WEB_PROJECT, encoding="utf-8")
+    (repo / "WebApi" / "WebApi" / "users.txt").write_text("", encoding="utf-8")
+    (repo / "WebApi" / "WebApi" / "Data" / "seed.txt").write_text("1", encoding="utf-8")
+    copied: dict[str, set[str]] = {}
+    engine = FakeEngine()
+    original = engine.put_archive
+
+    def record(container: str, path: str, data: bytes) -> None:
+        with tarfile.open(fileobj=io.BytesIO(data)) as archive:
+            copied[path] = set(archive.getnames())
+        original(container, path, data)
+
+    engine.put_archive = record  # type: ignore[method-assign]
+
+    result = runner(engine).execute(request(repo, tmp_path))
+
+    assert result.failure_kind is None
+    assert copied["/data"] == {
+        "project",
+        "project/WebApi.csproj",
+        "project/users.txt",
+        "project/Data",
+        "project/Data/seed.txt",
+    }
+    assert "src/WebApi/WebApi.slnx" in copied["/work"]
+    (build,) = engine.specs("build")
+    assert build.command[2] == "/work/src/WebApi/WebApi/WebApi.csproj"
 
 
 def test_internal_network_is_used_for_the_run(repo: Path, tmp_path: Path) -> None:

@@ -2,6 +2,10 @@
 
 Student code never runs on the host, never has network access during build or run, and
 everything created for a repo is removed in `finally`.
+
+The app runs like `dotnet run` on the student's machine: its working directory is a
+writable copy of the Web project's folder (with its data files), on a per-repo volume of its
+own, while the source and the published output stay read-only.
 """
 
 import dataclasses
@@ -14,7 +18,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from hw_checker.adapters.docker_runner.archive import (
+    PROJECT_DIR,
     ArchiveTooLargeError,
+    build_project_archive,
     build_work_archive,
     directory_archive,
 )
@@ -46,6 +52,9 @@ logger = logging.getLogger(__name__)
 WORK_MOUNT = "/work"
 CACHE_MOUNT = "/nuget"
 OUTPUT_DIR = "/work/out"
+DATA_MOUNT = "/data"
+APP_WORKING_DIR = f"{DATA_MOUNT}/{PROJECT_DIR}"
+"""The app's working directory: the writable copy of the Web project's folder."""
 DOTNET_ENVIRONMENT = {
     "NUGET_PACKAGES": f"{CACHE_MOUNT}/packages",
     "DOTNET_CLI_TELEMETRY_OPTOUT": "1",
@@ -224,13 +233,12 @@ class _Execution:
             return self._prepare_failed(discovery.message, project_found=False)
         if (problem := discovery.framework_problem()) is not None:
             return self._prepare_failed(f"not run, flagged for review: {problem}")
+        limits = (self.config.max_archive_bytes, self.config.max_file_bytes)
+        uid, gid = self.config.app_uid, self.config.app_gid
         try:
-            archive = build_work_archive(
-                self.request.working_copy,
-                self.config.app_uid,
-                self.config.app_gid,
-                self.config.max_archive_bytes,
-                self.config.max_file_bytes,
+            archive = build_work_archive(self.request.working_copy, uid, gid, *limits)
+            project_archive = build_project_archive(
+                self.request.working_copy / discovery.folder, uid, gid, *limits
             )
         except ArchiveTooLargeError as error:
             return self._prepare_failed(f"not run, flagged for review: {error}")
@@ -240,8 +248,10 @@ class _Execution:
             )
         self._preflight()
         work_volume = self._name("work")
+        project_volume = self._name("project")
         try:
-            self._create_work_volume(work_volume, archive.data)
+            self._create_volume(work_volume, "work", WORK_MOUNT, archive.data)
+            self._create_volume(project_volume, "project", DATA_MOUNT, project_archive.data)
         except EngineError as error:
             return self._prepare_failed(f"cannot copy the code into Docker: {error}", engine=True)
         self._write_log(RunnerStep.PREPARE, f"Web project: {discovery.path}\n")
@@ -277,7 +287,7 @@ class _Execution:
         )
         if (kind := classify(build.outcome)) is not None:
             return self._build_failed(kind, build.log)
-        return self._run_and_probe(work_volume, discovery.assembly_name)
+        return self._run_and_probe(work_volume, project_volume, discovery.assembly_name)
 
     def _preflight(self) -> None:
         try:
@@ -296,8 +306,9 @@ class _Execution:
                 "run the environment check"
             )
 
-    def _create_work_volume(self, name: str, data: bytes) -> None:
-        self.engine.create_volume(name, self._labels("work"))
+    def _create_volume(self, name: str, kind: str, mount: str, data: bytes) -> None:
+        """Create a per-repo volume and copy `data` (a tar) into it through a helper."""
+        self.engine.create_volume(name, self._labels(kind))
         self.volumes.append(name)
         helper = self.engine.create_container(
             ContainerSpec(
@@ -309,15 +320,17 @@ class _Execution:
                 memory_mb=self.config.probe_limits.memory_mb,
                 cpus=self.config.probe_limits.cpus,
                 pids=self.config.probe_limits.pids,
-                mounts=(Mount(name, WORK_MOUNT, read_only=False),),
+                mounts=(Mount(name, mount, read_only=False),),
                 network_mode="none",
             )
         )
         self.containers.append(helper)
-        self.engine.put_archive(helper, WORK_MOUNT, data)
+        self.engine.put_archive(helper, mount, data)
         self._remove_container(helper)
 
-    def _run_and_probe(self, work_volume: str, assembly_name: str) -> ExecutionResult:
+    def _run_and_probe(
+        self, work_volume: str, project_volume: str, assembly_name: str
+    ) -> ExecutionResult:
         network = self._name("net")
         app_name = self._name("app")
         started = self.clock()
@@ -325,7 +338,9 @@ class _Execution:
         try:
             self.engine.create_network(network, self._labels("network"), internal=True)
             self.networks.append(network)
-            app = self._create(self._app_spec(app_name, network, work_volume, assembly_name))
+            app = self._create(
+                self._app_spec(app_name, network, work_volume, project_volume, assembly_name)
+            )
             sidecar = self._create(self._probe_spec(network))
             self.engine.start(sidecar)
             self.engine.start(app)
@@ -472,7 +487,7 @@ class _Execution:
         )
 
     def _app_spec(
-        self, name: str, network: str, work_volume: str, assembly_name: str
+        self, name: str, network: str, work_volume: str, project_volume: str, assembly_name: str
     ) -> ContainerSpec:
         limits = self.config.run_limits
         environment = {
@@ -489,11 +504,16 @@ class _Execution:
             memory_mb=limits.memory_mb,
             cpus=limits.cpus,
             pids=limits.pids,
-            mounts=(Mount(work_volume, WORK_MOUNT, read_only=True),),
+            mounts=(
+                Mount(work_volume, WORK_MOUNT, read_only=True),
+                # The only writable place: the project copy, discarded in cleanup.
+                Mount(project_volume, DATA_MOUNT, read_only=False),
+            ),
             network=network,
             environment=environment,
             read_only_root=True,
             tmpfs=TMPFS,
+            working_dir=APP_WORKING_DIR,
         )
 
     def _probe_spec(self, network: str) -> ContainerSpec:

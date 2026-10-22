@@ -227,6 +227,7 @@ def test_run_container_is_isolated(
     assert host["PidsLimit"] == 512
     assert InspectingEngine.network_attributes["Internal"] is True
     mounts = {(mount["Destination"], mount["RW"]) for mount in app["Mounts"]}
-    assert mounts == {("/work", False)}
+    assert mounts == {("/work", False), ("/data", True)}
+    assert app["Config"]["WorkingDir"] == "/data/project"
     assert all("docker.sock" not in str(mount.get("Source")) for mount in app["Mounts"])
     assert_nothing_left(engine)

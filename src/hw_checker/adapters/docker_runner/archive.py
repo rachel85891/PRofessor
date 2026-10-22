@@ -10,6 +10,7 @@ from hw_checker.adapters.docker_runner.discovery import EXCLUDED_DIRS
 
 SOURCE_DIR = "src"
 OUTPUT_DIR = "out"
+PROJECT_DIR = "project"
 DIRECTORY_MODE = 0o755
 FILE_MODE = 0o644
 
@@ -64,13 +65,45 @@ def build_work_archive(
     Raises:
         ArchiveTooLargeError: a file, or all files together, exceed the given limits.
     """
-    root = working_copy.resolve()
+    return _tree_archive(
+        working_copy, SOURCE_DIR, (OUTPUT_DIR,), uid, gid, max_total_bytes, max_file_bytes
+    )
+
+
+def build_project_archive(
+    project_dir: Path,
+    uid: int,
+    gid: int,
+    max_total_bytes: int | None = None,
+    max_file_bytes: int | None = None,
+) -> WorkArchive:
+    """Tar the Web project's folder under `project/`, owned by `uid:gid`, for the app to write.
+
+    The same rules as `build_work_archive`: `bin/`, `obj/` and `.git/` are left out, unsafe
+    paths are skipped and listed, and the size limits apply.
+
+    Raises:
+        ArchiveTooLargeError: a file, or all files together, exceed the given limits.
+    """
+    return _tree_archive(project_dir, PROJECT_DIR, (), uid, gid, max_total_bytes, max_file_bytes)
+
+
+def _tree_archive(
+    tree: Path,
+    prefix: str,
+    empty_dirs: tuple[str, ...],
+    uid: int,
+    gid: int,
+    max_total_bytes: int | None,
+    max_file_bytes: int | None,
+) -> WorkArchive:
+    root = tree.resolve()
     guard = _SizeGuard(max_total_bytes, max_file_bytes)
     buffer = io.BytesIO()
     skipped: list[str] = []
     with tarfile.open(fileobj=buffer, mode="w", format=tarfile.PAX_FORMAT) as archive:
-        _add_directory(archive, SOURCE_DIR, uid, gid)
-        _add_directory(archive, OUTPUT_DIR, uid, gid)
+        for name in (prefix, *empty_dirs):
+            _add_directory(archive, name, uid, gid)
         for directory, subdirectories, files in os.walk(root, followlinks=False):
             current = Path(directory)
             kept: list[str] = []
@@ -82,7 +115,7 @@ def build_work_archive(
                     skipped.append(path.relative_to(root).as_posix())
                     continue
                 kept.append(name)
-                _add_directory(archive, _member_name(path, root), uid, gid)
+                _add_directory(archive, _member_name(path, root, prefix), uid, gid)
             subdirectories[:] = kept
             for name in sorted(files):
                 path = current / name
@@ -90,7 +123,7 @@ def build_work_archive(
                     skipped.append(path.relative_to(root).as_posix())
                     continue
                 guard.admit(path, path.relative_to(root).as_posix())
-                _add_file(archive, path, _member_name(path, root), uid, gid)
+                _add_file(archive, path, _member_name(path, root, prefix), uid, gid)
     return WorkArchive(buffer.getvalue(), tuple(sorted(skipped)))
 
 
@@ -100,8 +133,8 @@ def _is_safe(path: Path, root: Path) -> bool:
     return path.resolve().is_relative_to(root)
 
 
-def _member_name(path: Path, root: Path) -> str:
-    return f"{SOURCE_DIR}/{path.relative_to(root).as_posix()}"
+def _member_name(path: Path, root: Path, prefix: str) -> str:
+    return f"{prefix}/{path.relative_to(root).as_posix()}"
 
 
 def _owned(name: str, uid: int, gid: int) -> tarfile.TarInfo:
