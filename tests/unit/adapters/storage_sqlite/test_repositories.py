@@ -79,6 +79,7 @@ def test_a_full_round_is_saved_and_loaded_back_equal(storage: SqlStorage) -> Non
         assert [entry.reason.value for entry in not_evaluated] == [
             "build_failed",
             "build_failed",
+            "route_not_found",
             "environment_issue",
             "run_not_healthy",
         ]

@@ -57,7 +57,28 @@ def test_not_evaluated_entries_are_loaded_back_in_order(storage: Storage) -> Non
     failed = storage.runs.get(run.run_id).repo_runs[0]
     (result,) = failed.assignment_results
     assert result.not_evaluated == run.repo_runs[0].assignment_results[0].not_evaluated
-    assert [entry.requirement_id for entry in result.not_evaluated] == ["hw01-r3", "hw01-r5"]
+    assert [entry.requirement_id for entry in result.not_evaluated] == [
+        "hw01-r3",
+        "hw01-r5",
+        "hw01-r6",
+    ]
+    assert result.not_evaluated[-1].reason.value == "route_not_found"
+
+
+def test_route_table_and_probe_resolution_are_loaded_back(storage: Storage) -> None:
+    run = builders.full_run()
+
+    storage.runs.save(run)
+
+    execution = storage.runs.get(run.run_id).repo_runs[1].execution
+    assert execution is not None and execution.routes is not None
+    assert execution.routes == builders.successful_execution().routes
+    assert [r.route_resolution.value for r in execution.probe_results] == [
+        "resolved",
+        "unavailable",
+        "route_not_found",
+    ]
+    assert execution.probe_results[0].sent_path == "/api/product"
 
 
 def test_saving_a_repo_run_replaces_its_not_evaluated_entries(storage: Storage) -> None:

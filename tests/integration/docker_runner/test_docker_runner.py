@@ -35,6 +35,8 @@ from tests.integration.docker_runner.conftest import (
     PREFIX,
     PROJECT,
     SAMPLE_PROBES,
+    USER_SIGNIN_FIXTURE,
+    USER_SIGNIN_PROBES,
     leftovers,
     make_request,
     replace_in,
@@ -221,6 +223,50 @@ def test_absolute_path_without_a_matching_file_is_flagged_and_gives_no_findings(
     assert checked.findings == ()
     assert checked.not_evaluated == (
         NotEvaluated(requirement_id="hw01-r1", reason=NotEvaluatedReason.ENVIRONMENT_ISSUE),
+    )
+    assert_nothing_left(engine)
+
+
+def test_probe_alternatives_reach_the_routes_the_student_declared(
+    docker_runner: DockerCodeRunner,
+    engine: SdkDockerEngine,
+    sample_copy: SampleCopy,
+    tmp_path: Path,
+) -> None:
+    repo = sample_copy(source=USER_SIGNIN_FIXTURE)
+
+    result = docker_runner.execute(make_request(repo, tmp_path / "logs", probes=USER_SIGNIN_PROBES))
+
+    assert [(r.sent_path, r.route_resolution, r.actual_status) for r in result.probe_results] == [
+        ("/api/user", RouteResolution.RESOLVED, 200),
+        ("/api/user", RouteResolution.RESOLVED, 201),
+        ("/api/user/2", RouteResolution.RESOLVED, 200),
+        ("/api/user/signin", RouteResolution.RESOLVED, 200),
+        (None, RouteResolution.ROUTE_NOT_FOUND, None),
+    ], describe(result)
+    assert result.routes is not None
+    assert {(r.method, r.template) for r in result.routes.routes} == {
+        (HttpMethod.GET, "api/User"),
+        (HttpMethod.GET, "api/User/{id}"),
+        (HttpMethod.POST, "api/User"),
+        (HttpMethod.POST, "api/User/signin"),
+    }
+    requirements = tuple(
+        Requirement(
+            id=requirement_id,
+            title=requirement_id,
+            severity=Severity.MAJOR,
+            kind=RequirementKind.HTTP,
+            http_probes=tuple(p for p in USER_SIGNIN_PROBES if p.requirement_id == requirement_id),
+        )
+        for requirement_id in ("hw01-r1", "hw01-r2", "hw01-r3")
+    )
+    assignment = Assignment(id="hw01", order=1, title="Users", requirements=requirements)
+    checker = DeterministicRequirementChecker(CheckRegistry(builtin_checks()))
+    checked = DeterministicCheckService(checker).evaluate(assignment, repo, result)
+    assert checked.findings == ()
+    assert checked.not_evaluated == (
+        NotEvaluated(requirement_id="hw01-r3", reason=NotEvaluatedReason.ROUTE_NOT_FOUND),
     )
     assert_nothing_left(engine)
 

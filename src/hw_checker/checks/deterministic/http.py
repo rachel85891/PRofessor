@@ -8,7 +8,14 @@ from hw_checker.checks.deterministic.messages import (
     STATUS_SEPARATOR,
     Localized,
 )
-from hw_checker.domain import CheckInput, Finding, NotEvaluatedReason, ProbeResult, StepStatus
+from hw_checker.domain import (
+    CheckInput,
+    Finding,
+    NotEvaluatedReason,
+    ProbeResult,
+    RouteResolution,
+    StepStatus,
+)
 
 
 def evaluate_http(check_input: CheckInput) -> tuple[Finding, ...] | NotEvaluatedReason:
@@ -17,7 +24,9 @@ def evaluate_http(check_input: CheckInput) -> tuple[Finding, ...] | NotEvaluated
     Only a successful run is judged, so a build failure never cascades into HTTP findings.
     A probe passes when its status is in the probe's `allowed_statuses`, and only then.
     When a hard-coded path could not be adapted to the container, an unhealthy run or a
-    failing probe may be our environment's fault, so it is not evaluated instead.
+    failing probe may be our environment's fault, so it is not evaluated instead. A probe
+    that was not sent because none of its paths is declared in the code makes the whole
+    requirement not evaluated (`route_not_found`): the route may just be named differently.
     """
     execution = check_input.execution
     if execution is None:
@@ -41,6 +50,8 @@ def evaluate_http(check_input: CheckInput) -> tuple[Finding, ...] | NotEvaluated
     ]
     if not results:
         return NotEvaluatedReason.ENVIRONMENT_ISSUE  # the runner did not probe this requirement
+    if any(result.route_resolution is RouteResolution.ROUTE_NOT_FOUND for result in results):
+        return NotEvaluatedReason.ROUTE_NOT_FOUND
     failed = [result for result in results if not result.passed]
     if not failed:
         return ()

@@ -16,6 +16,7 @@ from hw_checker.domain import ExecutionRequest, HttpMethod, HttpProbe
 FIXTURES = Path(__file__).parents[2] / "fixtures"
 FIXTURE = FIXTURES / "sample_webapi"
 ABSOLUTE_PATH_FIXTURE = FIXTURES / "sample_webapi_absolute_path"
+USER_SIGNIN_FIXTURE = FIXTURES / "sample_webapi_user_signin"
 PROJECT = Path("WebApi") / "WebApi"
 """Where the sample fixture's Web project sits, relative to the fixture root."""
 PREFIX = "hw-checker-it"
@@ -53,13 +54,19 @@ def runner_config() -> DockerRunnerConfig:
 
 
 def probe(
-    requirement_id: str, method: HttpMethod, path: str, status: int, body: str | None = None
+    requirement_id: str,
+    method: HttpMethod,
+    path: str,
+    status: int,
+    body: str | None = None,
+    alternatives: tuple[str, ...] = (),
 ) -> HttpProbe:
     return HttpProbe(
         requirement_id=requirement_id,
         assignment_id="hw01",
         method=method,
         path=path,
+        path_alternatives=alternatives,
         body=body,
         expected_status=status,
     )
@@ -156,3 +163,29 @@ def replace_in(path: Path, old: str, new: str) -> None:
     text = path.read_text(encoding="utf-8")
     assert old in text, f"{old!r} not found in {path}"
     path.write_text(text.replace(old, new), encoding="utf-8")
+
+
+LOGIN_ALTERNATIVES = ("/api/user/login", "/api/users/signin", "/api/user/signin")
+USER_SIGNIN_PROBES = (
+    probe("hw01-r1", HttpMethod.GET, "/api/users", 200, alternatives=("/api/user",)),
+    probe(
+        "hw01-r1",
+        HttpMethod.POST,
+        "/api/users",
+        201,
+        user_body("newuser", TEST_PASSWORD),
+        alternatives=("/api/user",),
+    ),
+    probe("hw01-r1", HttpMethod.GET, "/api/users/2", 200, alternatives=("/api/user/2",)),
+    probe(
+        "hw01-r2",
+        HttpMethod.POST,
+        "/api/users/login",
+        200,
+        user_body("newuser", TEST_PASSWORD),
+        alternatives=LOGIN_ALTERNATIVES,
+    ),
+    probe("hw01-r3", HttpMethod.DELETE, "/api/users/2", 204, alternatives=("/api/user/2",)),
+)
+"""Against `sample_webapi_user_signin`: every route is singular, login is `signin`, and
+there is no DELETE action, so the hw01-r3 probe has no declared route."""

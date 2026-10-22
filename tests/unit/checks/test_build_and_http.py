@@ -23,6 +23,7 @@ from hw_checker.domain import (
     ProbeResult,
     Requirement,
     RequirementKind,
+    RouteResolution,
     Severity,
     StepStatus,
 )
@@ -412,6 +413,35 @@ def test_failing_probe_with_every_path_rewritten_is_a_finding() -> None:
     )
 
     assert len(_findings(evaluate_http(check_input(HTTP_REQUIREMENT, execution)))) == 1
+
+
+def not_sent(probe_: HttpProbe) -> ProbeResult:
+    return ProbeResult(probe=probe_, passed=False, route_resolution=RouteResolution.ROUTE_NOT_FOUND)
+
+
+def test_probe_with_no_declared_route_makes_the_requirement_not_evaluated() -> None:
+    execution = run_ok(result(GET_ALL, 500), result(GET_MISSING, 404), not_sent(CREATE))
+
+    outcome = evaluate_http(check_input(HTTP_REQUIREMENT, execution))
+
+    assert outcome is NotEvaluatedReason.ROUTE_NOT_FOUND
+
+
+def test_resolved_probes_are_evaluated_as_before() -> None:
+    def resolved(probe_: HttpProbe, status: int) -> ProbeResult:
+        return ProbeResult(
+            probe=probe_,
+            actual_status=status,
+            passed=status in probe_.allowed_statuses,
+            sent_path=probe_.path,
+            route_resolution=RouteResolution.RESOLVED,
+        )
+
+    passing = run_ok(resolved(GET_ALL, 200), resolved(GET_MISSING, 404), resolved(CREATE, 201))
+    failing = run_ok(resolved(GET_ALL, 200), resolved(GET_MISSING, 404), resolved(CREATE, 500))
+
+    assert evaluate_http(check_input(HTTP_REQUIREMENT, passing)) == ()
+    assert len(_findings(evaluate_http(check_input(HTTP_REQUIREMENT, failing)))) == 1
 
 
 def test_probes_of_other_requirements_are_ignored() -> None:
