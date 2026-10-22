@@ -129,18 +129,18 @@ Both checks ignore upper and lower case (`controllers/` matches `Controllers`), 
 
 The same body written as JSON text: `body: '{"name": "Pen", "price": 3.5}'` (use single quotes around it).
 
-**build**: the project must build. No other fields are needed.
+**build**: The project builds and starts without crashing. No other fields are needed.
 
 ```yaml
   - id: hw01-r4
     kind: build
-    title: The project builds without errors
+    title: The project builds and starts without crashing
     severity: critical
 ```
 
 **custom**: a check written specially for one assignment, for something the kinds above cannot express. It is written like a `structure` requirement, with `kind: custom` and the custom check's name in `check`. No custom checks exist yet; until one is needed, use `structure` with the checks above.
 
-**How results are decided.** A `build` requirement gives a finding only when the build failed because of the code, not because of the environment. An `http` requirement is judged only when the app built and started; a status listed in `allowed_statuses` always counts as correct. A requirement that could not be checked, for example every `http` requirement when the build failed, is shown as "not evaluated" with the reason, and never counts against the student.
+**How results are decided.** A `build` requirement gives a finding only when the build failed because of the code, or when the project built but crashed on startup; a build or run that failed because of the environment, or timed out, is not evaluated. An `http` requirement is judged only when the app built and started; a status listed in `allowed_statuses` always counts as correct. A requirement that could not be checked, for example every `http` requirement when the build failed, is shown as "not evaluated" with the reason, and never counts against the student.
 
 ## YAML tips
 

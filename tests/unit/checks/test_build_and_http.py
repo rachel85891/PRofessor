@@ -2,7 +2,11 @@ from pathlib import Path
 
 import pytest
 
-from hw_checker.checks.deterministic.build import evaluate_build, first_compiler_error
+from hw_checker.checks.deterministic.build import (
+    evaluate_build,
+    first_compiler_error,
+    first_startup_crash,
+)
 from hw_checker.checks.deterministic.http import evaluate_http
 from hw_checker.domain import (
     Assignment,
@@ -91,7 +95,7 @@ def failure(kind: FailureKind) -> ExecutionResult:
 
 EXPECTED_BUILD = {
     FailureKind.BUILD_FAILED: "finding",
-    FailureKind.STARTUP_FAILED: "pass",
+    FailureKind.STARTUP_FAILED: "finding",
     FailureKind.DB_UNREACHABLE: "pass",
     FailureKind.HARDCODED_CONNECTION_UNRESOLVED: NotEvaluatedReason.ENVIRONMENT_ISSUE,
     FailureKind.TIMEOUT: NotEvaluatedReason.ENVIRONMENT_ISSUE,
@@ -172,6 +176,101 @@ def test_build_failure_without_a_compiler_error_uses_the_generic_message() -> No
 
 def test_compiler_error_outside_the_working_copy_is_ignored() -> None:
     assert first_compiler_error("/usr/share/dotnet/x.cs(1,1): error CS0001: boom") is None
+
+
+STARTUP_LOG = (
+    "info: Microsoft.Hosting.Lifetime[0]\n"
+    "Unhandled exception. System.InvalidOperationException: Unable to resolve service for type "
+    "'IProductService'.\n"
+    "   at Microsoft.Extensions.DependencyInjection.ServiceProvider.GetService(Type t)\n"
+    "   at Program.<Main>$(String[] args) in /work/src/Program.cs:line 2\n"
+)
+
+
+def startup_crash(log: str) -> ExecutionResult:
+    return ExecutionResult(
+        build_status=OK,
+        run_status=FAILED,
+        failure_kind=FailureKind.STARTUP_FAILED,
+        logs_excerpt=log,
+    )
+
+
+def test_startup_crash_finding_names_the_exception_line_with_evidence(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "Program.cs").write_text(
+        "var app = WebApplication.Create();\napp.Services.GetRequiredService<IProductService>();\n",
+        encoding="utf-8",
+    )
+
+    (finding,) = _findings(
+        evaluate_build(check_input(BUILD_REQUIREMENT, startup_crash(STARTUP_LOG), repo))
+    )
+
+    assert finding.message_en == (
+        "The project builds but crashes on startup. The exception: Unhandled exception. "
+        "System.InvalidOperationException: Unable to resolve service for type 'IProductService'."
+    )
+    assert "System.InvalidOperationException" in finding.message_he
+    assert finding.severity is Severity.CRITICAL
+    assert finding.evidence is not None
+    assert (finding.evidence.file_path, finding.evidence.line_start) == ("Program.cs", 2)
+    assert finding.evidence.quote == "app.Services.GetRequiredService<IProductService>();"
+
+
+def test_startup_crash_without_a_file_in_the_working_copy_has_no_evidence() -> None:
+    (finding,) = _findings(
+        evaluate_build(check_input(BUILD_REQUIREMENT, startup_crash(STARTUP_LOG)))
+    )
+
+    assert finding.evidence is None
+
+
+def test_startup_crash_without_an_exception_line_uses_the_generic_message() -> None:
+    execution = startup_crash("info: Microsoft.Hosting.Lifetime[0]\nApplication is shutting down")
+
+    (finding,) = _findings(evaluate_build(check_input(BUILD_REQUIREMENT, execution)))
+
+    assert finding.message_en == (
+        "The project builds but crashes on startup. The run log has the details."
+    )
+    assert finding.evidence is None
+
+
+@pytest.mark.parametrize("kind", [FailureKind.TIMEOUT, FailureKind.ENVIRONMENT_ERROR])
+def test_run_timeout_or_environment_error_is_not_evaluated(kind: FailureKind) -> None:
+    execution = ExecutionResult(
+        build_status=OK, run_status=FAILED, failure_kind=kind, logs_excerpt=STARTUP_LOG
+    )
+
+    outcome = evaluate_build(check_input(BUILD_REQUIREMENT, execution))
+
+    assert outcome is NotEvaluatedReason.ENVIRONMENT_ISSUE
+
+
+def test_startup_finding_id_depends_on_the_exception_type() -> None:
+    def finding_id(log: str) -> str:
+        (finding,) = _findings(evaluate_build(check_input(BUILD_REQUIREMENT, startup_crash(log))))
+        return finding.id
+
+    other_type = STARTUP_LOG.replace("InvalidOperationException", "ArgumentNullException")
+
+    assert finding_id(STARTUP_LOG) == finding_id(STARTUP_LOG)
+    assert finding_id(STARTUP_LOG) != finding_id(other_type)
+    assert finding_id(STARTUP_LOG) != finding_id("no exception here")
+
+
+def test_startup_crash_parsing() -> None:
+    crash = first_startup_crash(STARTUP_LOG)
+
+    assert crash is not None
+    assert crash.exception_type == "System.InvalidOperationException"
+    assert (crash.path, crash.source_line) == ("Program.cs", 2)
+    assert first_startup_crash("Unhandled exception.") == first_startup_crash(
+        "x\nUnhandled exception.\n   at A.B() in /usr/lib/x.cs:line 3"
+    )
+    assert first_startup_crash("all good") is None
 
 
 def _findings(outcome: tuple[Finding, ...] | NotEvaluatedReason) -> tuple[Finding, ...]:
