@@ -134,6 +134,33 @@ def test_requirement_fields_are_mapped(tmp_path: Path) -> None:
     assert build.kind is RequirementKind.BUILD
 
 
+def test_path_alternatives_are_optional_and_loaded_in_order(tmp_path: Path) -> None:
+    hw = HW01.replace(
+        "      - method: GET\n        path: /api/products\n",
+        "      - method: GET\n        path: /api/products\n"
+        "        path_alternatives: [/api/product, /api/Products/all]\n",
+    )
+
+    _, hw01 = load(tmp_path, {"_general": GENERAL, "hw01": hw}).load_all()
+
+    post, get = hw01.requirements[1].http_probes
+    assert post.path_alternatives == ()
+    assert get.candidate_paths == ("/api/products", "/api/product", "/api/Products/all")
+
+
+def test_path_alternative_without_leading_slash_is_reported(tmp_path: Path) -> None:
+    hw = HW01.replace(
+        "      - method: GET\n        path: /api/products\n",
+        "      - method: GET\n        path: /api/products\n"
+        "        path_alternatives: [api/product]\n",
+    )
+
+    message = problems_of(load(tmp_path, {"_general": GENERAL, "hw01": hw}))
+
+    assert "requirement 'hw01-r2'" in message
+    assert "path_alternatives" in message
+
+
 def test_probe_body_mapping_becomes_compact_json(tmp_path: Path) -> None:
     _, hw01, _ = load(tmp_path, {"_general": GENERAL, "hw01": HW01, "hw02": HW02}).load_all()
 

@@ -54,6 +54,7 @@ Unknown fields are rejected, so a typo such as `chek` is reported instead of bei
 | --- | --- | --- |
 | `method` | yes | `GET`, `POST`, `PUT`, `PATCH`, `DELETE`, `HEAD` or `OPTIONS` (uppercase). |
 | `path` | yes | Starts with `/`, for example `/api/products/1`. |
+| `path_alternatives` | no | Other paths a correct solution may use, each starting with `/`. The task does not fix route names, so one student writes `/api/users` and another `/api/user`. The checker reads the routes declared in the student's code and sends the probe to the first of `path`, then `path_alternatives`, that the code declares for the probe's method. If none is declared, the probe is not sent and the requirement is "not evaluated" (reason `route_not_found`), with the student's routes shown to the reviewer. |
 | `body` | no | The request body: either written as YAML fields (converted to JSON) or as JSON text in quotes. |
 | `expected_status` | yes | The status code a correct solution returns, 100–599. |
 | `allowed_statuses` | no | All status codes that count as correct. Must include `expected_status`. If omitted, only `expected_status` counts. |
@@ -128,6 +129,23 @@ Both checks ignore upper and lower case (`controllers/` matches `Controllers`), 
 ```
 
 The same body written as JSON text: `body: '{"name": "Pen", "price": 3.5}'` (use single quotes around it).
+
+When route names are up to the student, list the other names as `path_alternatives`. Upper and lower case do not matter (`/api/Users/Login` matches a route `api/users/login`), and a value such as `3` matches a route parameter such as `{id}` or `{id:int}`:
+
+```yaml
+  - id: hw01-r6
+    kind: http
+    title: Login with a registered user
+    severity: major
+    probes:
+      - method: POST
+        path: /api/users/login
+        path_alternatives: [/api/user/login, /api/users/signin, /api/user/signin]
+        body:
+          userName: newuser
+          password: pw123
+        expected_status: 200
+```
 
 **build**: The project builds and starts without crashing. No other fields are needed.
 

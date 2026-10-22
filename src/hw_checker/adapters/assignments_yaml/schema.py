@@ -18,6 +18,7 @@ class ProbeEntry(_FileModel):
 
     method: str
     path: str
+    path_alternatives: list[str] = []
     body: str | dict[str, Any] | list[Any] | None = None
     expected_status: int
     allowed_statuses: list[int] = []

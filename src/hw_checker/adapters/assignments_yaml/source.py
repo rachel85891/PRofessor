@@ -230,6 +230,7 @@ def _probe_data(probe: ProbeEntry, requirement_id: str, assignment_id: str) -> d
         "assignment_id": assignment_id,
         "method": probe.method,
         "path": probe.path,
+        "path_alternatives": probe.path_alternatives,
         "body": _body_text(probe.body),
         "expected_status": probe.expected_status,
         "allowed_statuses": probe.allowed_statuses,
