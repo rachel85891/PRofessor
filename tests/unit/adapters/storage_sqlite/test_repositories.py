@@ -70,6 +70,18 @@ def test_a_full_round_is_saved_and_loaded_back_equal(storage: SqlStorage) -> Non
     try:
         assert reopened.runs.get(run.run_id) == run
         assert reopened.runs.list_runs() == (run,)
+        not_evaluated = [
+            entry
+            for repo_run in reopened.runs.get(run.run_id).repo_runs
+            for result in repo_run.assignment_results
+            for entry in result.not_evaluated
+        ]
+        assert [entry.reason.value for entry in not_evaluated] == [
+            "build_failed",
+            "build_failed",
+            "environment_issue",
+            "run_not_healthy",
+        ]
         assert reopened.proposals.get("p-1") == proposal
         assert reopened.proposals.get_review_decision(with_proposal) == final
         assert reopened.findings.list_judged_findings(run.repo_runs[1].repo_run_id) == (

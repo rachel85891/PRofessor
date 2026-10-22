@@ -6,6 +6,7 @@ from typing import Any
 from hw_checker.adapters.storage_sqlite.schema import (
     FindingRow,
     JudgedFindingRow,
+    NotEvaluatedRow,
     ProposalRow,
     RepoRunRow,
     ReviewDecisionRow,
@@ -20,6 +21,8 @@ from hw_checker.domain import (
     FindingSource,
     FixProposal,
     JudgedFinding,
+    NotEvaluated,
+    NotEvaluatedReason,
     Patch,
     ProposalStatus,
     RepoRunResult,
@@ -70,7 +73,10 @@ def fill_repo_run_row(row: RepoRunRow, repo_run: RepoRunResult) -> None:
 
 
 def repo_run_from_rows(
-    row: RepoRunRow, findings: Sequence[FindingRow], judged: Sequence[JudgedFindingRow]
+    row: RepoRunRow,
+    findings: Sequence[FindingRow],
+    judged: Sequence[JudgedFindingRow],
+    not_evaluated: Sequence[NotEvaluatedRow],
 ) -> RepoRunResult:
     results = tuple(
         AssignmentResult(
@@ -78,6 +84,13 @@ def repo_run_from_rows(
             findings=tuple(
                 finding_from_row(item)
                 for item in findings
+                if item.result_assignment_id == assignment_id
+            ),
+            not_evaluated=tuple(
+                NotEvaluated(
+                    requirement_id=item.requirement_id, reason=NotEvaluatedReason(item.reason)
+                )
+                for item in not_evaluated
                 if item.result_assignment_id == assignment_id
             ),
         )
@@ -123,6 +136,20 @@ def finding_rows(repo_run: RepoRunResult) -> list[FindingRow]:
             for position, finding in enumerate(result.findings)
         )
     return rows
+
+
+def not_evaluated_rows(repo_run: RepoRunResult) -> list[NotEvaluatedRow]:
+    return [
+        NotEvaluatedRow(
+            repo_run_id=repo_run.repo_run_id,
+            result_assignment_id=result.assignment_id,
+            position=position,
+            requirement_id=entry.requirement_id,
+            reason=entry.reason.value,
+        )
+        for result in repo_run.assignment_results
+        for position, entry in enumerate(result.not_evaluated)
+    ]
 
 
 def judged_rows(repo_run_id: str, findings: Sequence[JudgedFinding]) -> list[JudgedFindingRow]:

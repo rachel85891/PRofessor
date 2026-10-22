@@ -12,6 +12,7 @@ from hw_checker.adapters.storage_sqlite.database import Database
 from hw_checker.adapters.storage_sqlite.schema import (
     FindingRow,
     JudgedFindingRow,
+    NotEvaluatedRow,
     ProposalRow,
     RepoRunRow,
     ReviewDecisionRow,
@@ -94,6 +95,10 @@ def _upsert_repo_run(session: Session, run_id: str, repo_run: RepoRunResult) -> 
     session.flush()
     session.execute(delete(FindingRow).where(FindingRow.repo_run_id == repo_run.repo_run_id))
     session.add_all(mapping.finding_rows(repo_run))
+    session.execute(
+        delete(NotEvaluatedRow).where(NotEvaluatedRow.repo_run_id == repo_run.repo_run_id)
+    )
+    session.add_all(mapping.not_evaluated_rows(repo_run))
     _replace_judged(session, repo_run.repo_run_id, repo_run.judged_findings)
 
 
@@ -119,7 +124,14 @@ def _load_repo_run(session: Session, row: RepoRunRow) -> RepoRunResult:
         .where(FindingRow.repo_run_id == row.repo_run_id)
         .order_by(FindingRow.position)
     ).all()
-    return mapping.repo_run_from_rows(row, findings, _judged_rows(session, row.repo_run_id))
+    not_evaluated = session.scalars(
+        select(NotEvaluatedRow)
+        .where(NotEvaluatedRow.repo_run_id == row.repo_run_id)
+        .order_by(NotEvaluatedRow.position)
+    ).all()
+    return mapping.repo_run_from_rows(
+        row, findings, _judged_rows(session, row.repo_run_id), not_evaluated
+    )
 
 
 def _judged_rows(session: Session, repo_run_id: str) -> list[JudgedFindingRow]:

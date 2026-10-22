@@ -8,7 +8,7 @@ from typing import Protocol
 import pytest
 
 from hw_checker.adapters.storage_sqlite import SqlStorage, migrate
-from hw_checker.domain import ProposalStatus, ReviewOutcome, Verdict
+from hw_checker.domain import AssignmentResult, ProposalStatus, ReviewOutcome, Verdict
 from hw_checker.domain.errors import NotFoundError
 from hw_checker.ports import FindingRepository, ProposalRepository, RunRepository
 from tests.fakes.storage import InMemoryStorage
@@ -47,6 +47,31 @@ def test_saved_run_is_loaded_back_equal(storage: Storage) -> None:
     storage.runs.save(run)
 
     assert storage.runs.get(run.run_id) == run
+
+
+def test_not_evaluated_entries_are_loaded_back_in_order(storage: Storage) -> None:
+    run = builders.full_run()
+
+    storage.runs.save(run)
+
+    failed = storage.runs.get(run.run_id).repo_runs[0]
+    (result,) = failed.assignment_results
+    assert result.not_evaluated == run.repo_runs[0].assignment_results[0].not_evaluated
+    assert [entry.requirement_id for entry in result.not_evaluated] == ["hw01-r3", "hw01-r5"]
+
+
+def test_saving_a_repo_run_replaces_its_not_evaluated_entries(storage: Storage) -> None:
+    run = builders.empty_run("run-1", builders.STARTED)
+    storage.runs.save(run)
+    first = builders.failed_repo_run()
+    storage.runs.save_repo_run("run-1", first)
+
+    evaluated = first.model_copy(
+        update={"assignment_results": (AssignmentResult(assignment_id="hw01"),)}
+    )
+    storage.runs.save_repo_run("run-1", evaluated)
+
+    assert storage.runs.get("run-1").repo_runs == (evaluated,)
 
 
 def test_unknown_run_raises_not_found(storage: Storage) -> None:

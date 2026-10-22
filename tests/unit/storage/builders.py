@@ -15,6 +15,8 @@ from hw_checker.domain import (
     HttpMethod,
     HttpProbe,
     JudgedFinding,
+    NotEvaluated,
+    NotEvaluatedReason,
     Patch,
     ProbeResult,
     ProposalStatus,
@@ -131,10 +133,22 @@ def repo_run_with_findings(run_id: str = "run-1") -> RepoRunResult:
         status=RepoRunStatus.DONE,
         execution=successful_execution(),
         assignment_results=(
-            AssignmentResult(assignment_id="_general"),
+            AssignmentResult(
+                assignment_id="_general",
+                not_evaluated=(
+                    NotEvaluated(
+                        requirement_id="gen-r1", reason=NotEvaluatedReason.ENVIRONMENT_ISSUE
+                    ),
+                ),
+            ),
             AssignmentResult(
                 assignment_id="hw01",
                 findings=(finding("f-1"), finding("f-2", Severity.MINOR, llm=False)),
+                not_evaluated=(
+                    NotEvaluated(
+                        requirement_id="hw01-r4", reason=NotEvaluatedReason.RUN_NOT_HEALTHY
+                    ),
+                ),
             ),
         ),
         judged_findings=(
@@ -153,7 +167,15 @@ def failed_repo_run(run_id: str = "run-1") -> RepoRunResult:
         commit_sha="1" * 40,
         status=RepoRunStatus.FAILED,
         execution=failed_build(),
-        assignment_results=(AssignmentResult(assignment_id="hw01"),),
+        assignment_results=(
+            AssignmentResult(
+                assignment_id="hw01",
+                not_evaluated=(
+                    NotEvaluated(requirement_id="hw01-r3", reason=NotEvaluatedReason.BUILD_FAILED),
+                    NotEvaluated(requirement_id="hw01-r5", reason=NotEvaluatedReason.BUILD_FAILED),
+                ),
+            ),
+        ),
         score=0.0,
         errors=("build failed",),
     )
