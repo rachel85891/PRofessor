@@ -15,6 +15,9 @@ MAX_LOGS_EXCERPT_CHARS = 8000
 MAX_PROBE_ERROR_CHARS = 500
 """Upper bound for the short error text of a single probe."""
 
+MAX_PATH_TEXT_CHARS = 1000
+"""Upper bound for a path text recorded from student code."""
+
 
 class FailureKind(StrEnum):
     """Why a build or run failed (design §5). Choosing the kind is the runner's job."""
@@ -71,6 +74,47 @@ class ProbeResult(DomainModel):
         return self
 
 
+class PathFixKind(StrEnum):
+    """Why a file path in the student's code had to be adapted to run in the container."""
+
+    ABSOLUTE = "absolute"
+    """A hard-coded absolute host path (`C:\\...`, `\\\\server\\...`)."""
+    CASE = "case"
+    """A relative path whose letter case differs from the real file (Windows ignores case)."""
+
+
+class PathNotRewrittenReason(StrEnum):
+    """Why a detected path could not be rewritten safely."""
+
+    NO_MATCH = "no_match"
+    SEVERAL_MATCHES = "several_matches"
+    DYNAMIC = "dynamic"
+    """The path is built with interpolation, so there is no single literal to rewrite."""
+
+
+class PathRewrite(DomainModel):
+    """One path detected in the student's code, and what the runner did with it.
+
+    The rewrite is made only in the runner's temporary copy (design §9, step 4); the
+    student's working copy and repo are never changed, and fixes never include it.
+    """
+
+    file_path: NonBlankStr
+    """The source file, relative to the working copy, with forward slashes."""
+    line: int = Field(ge=1)
+    kind: PathFixKind
+    original: str = Field(min_length=1, max_length=MAX_PATH_TEXT_CHARS)
+    rewritten: str | None = Field(default=None, max_length=MAX_PATH_TEXT_CHARS)
+    """The project-relative path used instead, or None when the path was not rewritten."""
+    not_rewritten_reason: PathNotRewrittenReason | None = None
+
+    @model_validator(mode="after")
+    def _rewritten_or_reason(self) -> Self:
+        if (self.rewritten is None) == (self.not_rewritten_reason is None):
+            raise ValueError("a path is either rewritten or has a not_rewritten_reason")
+        return self
+
+
 class ExecutionResult(DomainModel):
     """Prepare, build and run outcome for one repo, with probe results and a log excerpt.
 
@@ -85,11 +129,18 @@ class ExecutionResult(DomainModel):
     logs_excerpt: str = Field(default="", max_length=MAX_LOGS_EXCERPT_CHARS)
     logs_path: Path | None = None
     probe_results: tuple[ProbeResult, ...] = ()
+    path_rewrites: tuple[PathRewrite, ...] = ()
+    """Paths in the student's code that were adapted (or could not be) to run in Docker."""
 
     @property
     def steps(self) -> tuple[StepStatus, StepStatus, StepStatus]:
         """The step statuses in execution order: prepare, build, run."""
         return (self.prepare_status, self.build_status, self.run_status)
+
+    @property
+    def has_unresolved_paths(self) -> bool:
+        """True when a detected path could not be rewritten, so the run may fail for that."""
+        return any(rewrite.rewritten is None for rewrite in self.path_rewrites)
 
     @model_validator(mode="after")
     def _failure_kind_matches_steps(self) -> Self:

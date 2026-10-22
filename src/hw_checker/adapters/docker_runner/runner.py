@@ -25,7 +25,11 @@ from hw_checker.adapters.docker_runner.archive import (
     directory_archive,
 )
 from hw_checker.adapters.docker_runner.classification import RunnerStep, StepOutcome, classify
-from hw_checker.adapters.docker_runner.discovery import DiscoveryFailure, discover_web_project
+from hw_checker.adapters.docker_runner.discovery import (
+    DiscoveryFailure,
+    WebProject,
+    discover_web_project,
+)
 from hw_checker.adapters.docker_runner.engine import (
     ContainerSpec,
     DockerEngine,
@@ -34,6 +38,7 @@ from hw_checker.adapters.docker_runner.engine import (
     Resource,
 )
 from hw_checker.adapters.docker_runner.excerpt import excerpt_log
+from hw_checker.adapters.docker_runner.host_paths import PathPlan, plan_path_fixes
 from hw_checker.adapters.docker_runner.runner_config import ContainerLimits, DockerRunnerConfig
 from hw_checker.config.logging_setup import log_context
 from hw_checker.domain import (
@@ -41,6 +46,7 @@ from hw_checker.domain import (
     ExecutionResult,
     FailureKind,
     HttpProbe,
+    PathRewrite,
     ProbeResult,
     StepStatus,
 )
@@ -233,12 +239,30 @@ class _Execution:
             return self._prepare_failed(discovery.message, project_found=False)
         if (problem := discovery.framework_problem()) is not None:
             return self._prepare_failed(f"not run, flagged for review: {problem}")
+        plan = plan_path_fixes(self.request.working_copy, discovery.folder)
+        result = self._prepare_build_run(discovery, plan)
+        # Every result after this point records what was done with the detected paths.
+        return result.model_copy(update={"path_rewrites": plan.rewrites})
+
+    def _prepare_build_run(self, discovery: WebProject, plan: PathPlan) -> ExecutionResult:
         limits = (self.config.max_archive_bytes, self.config.max_file_bytes)
         uid, gid = self.config.app_uid, self.config.app_gid
+        prefix = f"{discovery.folder}/" if discovery.folder else ""
+        project_overrides = {
+            path.removeprefix(prefix): data
+            for path, data in plan.overrides.items()
+            if path.startswith(prefix)
+        }
         try:
-            archive = build_work_archive(self.request.working_copy, uid, gid, *limits)
+            archive = build_work_archive(
+                self.request.working_copy, uid, gid, *limits, overrides=plan.overrides
+            )
             project_archive = build_project_archive(
-                self.request.working_copy / discovery.folder, uid, gid, *limits
+                self.request.working_copy / discovery.folder,
+                uid,
+                gid,
+                *limits,
+                overrides=project_overrides,
             )
         except ArchiveTooLargeError as error:
             return self._prepare_failed(f"not run, flagged for review: {error}")
@@ -254,7 +278,18 @@ class _Execution:
             self._create_volume(project_volume, "project", DATA_MOUNT, project_archive.data)
         except EngineError as error:
             return self._prepare_failed(f"cannot copy the code into Docker: {error}", engine=True)
-        self._write_log(RunnerStep.PREPARE, f"Web project: {discovery.path}\n")
+        self._write_log(
+            RunnerStep.PREPARE,
+            f"Web project: {discovery.path}\n" + _describe_paths(plan.rewrites),
+        )
+        if plan.rewrites:
+            rewritten = sum(1 for rewrite in plan.rewrites if rewrite.rewritten is not None)
+            logger.info(
+                "Adapted %d of %d detected paths in the temporary copy",
+                rewritten,
+                len(plan.rewrites),
+                extra={"paths_detected": len(plan.rewrites), "paths_rewritten": rewritten},
+            )
 
         project = f"{WORK_MOUNT}/src/{discovery.path}"
         restore = self._run_step(
@@ -623,3 +658,19 @@ class _Execution:
             remove(name)
         except EngineError as error:
             logger.warning("Cleanup could not remove %s %s: %s", kind, name, error)
+
+
+def _describe_paths(rewrites: tuple[PathRewrite, ...]) -> str:
+    """One prepare-log line per detected path (kept in the per-repo log, not the app log)."""
+    lines = []
+    for rewrite in rewrites:
+        outcome = (
+            f"rewritten to {rewrite.rewritten!r}"
+            if rewrite.rewritten is not None
+            else f"not rewritten ({rewrite.not_rewritten_reason})"
+        )
+        lines.append(
+            f"{rewrite.kind} path {rewrite.original!r} at {rewrite.file_path}:{rewrite.line}: "
+            f"{outcome}\n"
+        )
+    return "".join(lines)

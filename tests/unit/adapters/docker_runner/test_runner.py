@@ -207,6 +207,55 @@ def test_project_copy_holds_only_the_web_project_folder(tmp_path: Path) -> None:
     assert build.command[2] == "/work/src/WebApi/WebApi/WebApi.csproj"
 
 
+def test_absolute_path_is_rewritten_in_the_copied_code_only(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    (repo / "Api" / "Data").mkdir(parents=True)
+    (repo / "Api" / "Api.csproj").write_text(WEB_PROJECT, encoding="utf-8")
+    store = repo / "Api" / "Store.cs"
+    store.write_bytes(b'class Store { const string P = @"C:\\Shop\\Data\\users.txt"; }')
+    (repo / "Api" / "Data" / "users.txt").write_bytes(b"")
+    before = store.read_bytes()
+    contents: dict[str, dict[str, bytes]] = {}
+    engine = FakeEngine()
+    original = engine.put_archive
+
+    def record(container: str, path: str, data: bytes) -> None:
+        with tarfile.open(fileobj=io.BytesIO(data)) as archive:
+            contents[path] = {
+                member.name: archive.extractfile(member).read()  # type: ignore[union-attr]
+                for member in archive.getmembers()
+                if member.isfile()
+            }
+        original(container, path, data)
+
+    engine.put_archive = record  # type: ignore[method-assign]
+
+    result = runner(engine).execute(request(repo, tmp_path))
+
+    expected = b'class Store { const string P = @"Data/users.txt"; }'
+    assert contents["/work"]["src/Api/Store.cs"] == expected
+    assert contents["/data"]["project/Store.cs"] == expected
+    assert store.read_bytes() == before
+    (rewrite,) = result.path_rewrites
+    assert (rewrite.file_path, rewrite.line, rewrite.rewritten) == (
+        "Api/Store.cs",
+        1,
+        "Data/users.txt",
+    )
+    prepare_log = (tmp_path / "logs" / "prepare.log").read_text(encoding="utf-8")
+    assert "rewritten to 'Data/users.txt'" in prepare_log
+
+
+def test_unresolved_path_is_recorded_on_a_failed_build_too(repo: Path, tmp_path: Path) -> None:
+    (repo / "Store.cs").write_text('var p = @"C:\\x\\orders.txt";', encoding="utf-8")
+    engine = FakeEngine(exit_codes={"build": 1}, logs_by_kind={"build": BUILD_ERROR})
+
+    result = runner(engine).execute(request(repo, tmp_path))
+
+    assert result.failure_kind is FailureKind.BUILD_FAILED
+    assert result.has_unresolved_paths
+
+
 def test_internal_network_is_used_for_the_run(repo: Path, tmp_path: Path) -> None:
     engine = FakeEngine()
     seen: list[bool] = []

@@ -7,6 +7,9 @@ from hw_checker.domain import (
     ExecutionRequest,
     ExecutionResult,
     FailureKind,
+    PathFixKind,
+    PathNotRewrittenReason,
+    PathRewrite,
     ProbeResult,
     StepStatus,
 )
@@ -228,3 +231,49 @@ def test_execution_request_rejects_blank_environment_key() -> None:
 def test_execution_request_rejects_duplicate_environment_keys() -> None:
     with pytest.raises(ValidationError, match="keys must be unique"):
         execution_request(environment=(("A", "1"), ("A", "2")))
+
+
+def path_rewrite(rewritten: str | None) -> PathRewrite:
+    return PathRewrite(
+        file_path="WebApi/Store.cs",
+        line=3,
+        kind=PathFixKind.ABSOLUTE,
+        original="C:\\data\\users.txt",
+        rewritten=rewritten,
+        not_rewritten_reason=None if rewritten else PathNotRewrittenReason.NO_MATCH,
+    )
+
+
+def test_path_rewrite_is_either_rewritten_or_has_a_reason() -> None:
+    with pytest.raises(ValidationError, match="either rewritten"):
+        PathRewrite(file_path="Store.cs", line=1, kind=PathFixKind.CASE, original="users.txt")
+    with pytest.raises(ValidationError, match="either rewritten"):
+        PathRewrite(
+            file_path="Store.cs",
+            line=1,
+            kind=PathFixKind.CASE,
+            original="users.txt",
+            rewritten="Users.txt",
+            not_rewritten_reason=PathNotRewrittenReason.NO_MATCH,
+        )
+
+
+def test_unresolved_paths_are_reported_by_the_execution() -> None:
+    ok = ExecutionResult(build_status=StepStatus.SUCCEEDED, run_status=StepStatus.SUCCEEDED)
+
+    assert not ok.has_unresolved_paths
+    assert not ok.model_copy(
+        update={"path_rewrites": (path_rewrite("users.txt"),)}
+    ).has_unresolved_paths
+    mixed = (path_rewrite("users.txt"), path_rewrite(None))
+    assert ok.model_copy(update={"path_rewrites": mixed}).has_unresolved_paths
+
+
+def test_execution_with_path_rewrites_round_trips_through_json() -> None:
+    execution = ExecutionResult(
+        build_status=StepStatus.SUCCEEDED,
+        run_status=StepStatus.SUCCEEDED,
+        path_rewrites=(path_rewrite("users.txt"), path_rewrite(None)),
+    )
+
+    assert ExecutionResult.model_validate_json(execution.model_dump_json()) == execution

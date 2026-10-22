@@ -3,6 +3,7 @@
 import io
 import os
 import tarfile
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -55,18 +56,27 @@ def build_work_archive(
     gid: int,
     max_total_bytes: int | None = None,
     max_file_bytes: int | None = None,
+    overrides: Mapping[str, bytes] | None = None,
 ) -> WorkArchive:
     """Tar `working_copy` under `src/`, plus an empty `out/`, owned by `uid:gid`.
 
     `bin/`, `obj/` and `.git/` are left out. Symlinks, junctions and anything that resolves
     outside the working copy are skipped and listed. Modes are normalized and timestamps
-    zeroed, so the same input always gives the same bytes.
+    zeroed, so the same input always gives the same bytes. `overrides` replaces the content
+    of files (keyed by their path relative to `working_copy`) in the archive only.
 
     Raises:
         ArchiveTooLargeError: a file, or all files together, exceed the given limits.
     """
     return _tree_archive(
-        working_copy, SOURCE_DIR, (OUTPUT_DIR,), uid, gid, max_total_bytes, max_file_bytes
+        working_copy,
+        SOURCE_DIR,
+        (OUTPUT_DIR,),
+        uid,
+        gid,
+        max_total_bytes,
+        max_file_bytes,
+        overrides or {},
     )
 
 
@@ -76,16 +86,20 @@ def build_project_archive(
     gid: int,
     max_total_bytes: int | None = None,
     max_file_bytes: int | None = None,
+    overrides: Mapping[str, bytes] | None = None,
 ) -> WorkArchive:
     """Tar the Web project's folder under `project/`, owned by `uid:gid`, for the app to write.
 
     The same rules as `build_work_archive`: `bin/`, `obj/` and `.git/` are left out, unsafe
-    paths are skipped and listed, and the size limits apply.
+    paths are skipped and listed, the size limits apply, and `overrides` (keyed relative to
+    `project_dir`) replaces file contents in the archive only.
 
     Raises:
         ArchiveTooLargeError: a file, or all files together, exceed the given limits.
     """
-    return _tree_archive(project_dir, PROJECT_DIR, (), uid, gid, max_total_bytes, max_file_bytes)
+    return _tree_archive(
+        project_dir, PROJECT_DIR, (), uid, gid, max_total_bytes, max_file_bytes, overrides or {}
+    )
 
 
 def _tree_archive(
@@ -96,6 +110,7 @@ def _tree_archive(
     gid: int,
     max_total_bytes: int | None,
     max_file_bytes: int | None,
+    overrides: Mapping[str, bytes],
 ) -> WorkArchive:
     root = tree.resolve()
     guard = _SizeGuard(max_total_bytes, max_file_bytes)
@@ -122,8 +137,12 @@ def _tree_archive(
                 if not _is_safe(path, root):
                     skipped.append(path.relative_to(root).as_posix())
                     continue
-                guard.admit(path, path.relative_to(root).as_posix())
-                _add_file(archive, path, _member_name(path, root, prefix), uid, gid)
+                relative = path.relative_to(root).as_posix()
+                guard.admit(path, relative)
+                data = overrides.get(relative)
+                if data is None:
+                    data = path.read_bytes()
+                _add_file(archive, data, _member_name(path, root, prefix), uid, gid)
     return WorkArchive(buffer.getvalue(), tuple(sorted(skipped)))
 
 
@@ -149,8 +168,7 @@ def _add_directory(archive: tarfile.TarFile, name: str, uid: int, gid: int) -> N
     archive.addfile(info)
 
 
-def _add_file(archive: tarfile.TarFile, path: Path, name: str, uid: int, gid: int) -> None:
-    data = path.read_bytes()
+def _add_file(archive: tarfile.TarFile, data: bytes, name: str, uid: int, gid: int) -> None:
     info = _owned(name, uid, gid)
     info.mode, info.size = FILE_MODE, len(data)
     archive.addfile(info, io.BytesIO(data))
