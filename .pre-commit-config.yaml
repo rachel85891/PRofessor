@@ -41,4 +41,5 @@ repos:
         name: detect-secrets
         entry: uv run python -m detect_secrets.pre_commit_hook --baseline .secrets.baseline
         language: system
-        exclude: ^uv\.lock$
+        # Test fixtures' data files hold made-up users with made-up passwords.
+        exclude: ^(uv\.lock|tests/fixtures/.*\.txt)$

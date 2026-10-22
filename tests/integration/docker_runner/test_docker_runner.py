@@ -9,10 +9,30 @@ import pytest
 
 from hw_checker.adapters.docker_runner.engine import ContainerSpec, SdkDockerEngine
 from hw_checker.adapters.docker_runner.runner import DockerCodeRunner
-from hw_checker.domain import ExecutionResult, FailureKind, StepStatus
+from hw_checker.checks.deterministic.builtin import builtin_checks
+from hw_checker.checks.deterministic.checker import DeterministicRequirementChecker
+from hw_checker.checks.registry import CheckRegistry
+from hw_checker.domain import (
+    Assignment,
+    ExecutionResult,
+    FailureKind,
+    NotEvaluated,
+    NotEvaluatedReason,
+    PathFixKind,
+    PathNotRewrittenReason,
+    Requirement,
+    RequirementKind,
+    Severity,
+    StepStatus,
+)
+from hw_checker.services.deterministic_checks import DeterministicCheckService
 from tests.integration.docker_runner.conftest import (
+    ABSOLUTE_PATH_FIXTURE,
+    ABSOLUTE_PATH_PROBES,
     CACHE_VOLUME,
     PREFIX,
+    PROJECT,
+    SAMPLE_PROBES,
     leftovers,
     make_request,
     replace_in,
@@ -29,23 +49,164 @@ def assert_nothing_left(engine: SdkDockerEngine) -> None:
     assert engine.volume_exists(CACHE_VOLUME)
 
 
-def test_sample_api_builds_runs_and_answers_probes(
+def statuses(result: ExecutionResult) -> list[tuple[str, str, int | None]]:
+    return [(r.probe.method.value, r.probe.path, r.actual_status) for r in result.probe_results]
+
+
+def describe(result: ExecutionResult) -> str:
+    """Every probe with its status and error, then the log excerpt, for assertion messages."""
+    probes = "\n".join(
+        f"{r.probe.method.value} {r.probe.path}: {r.actual_status} {r.error}".rstrip()
+        for r in result.probe_results
+    )
+    return f"{probes}\n{result.logs_excerpt}"
+
+
+def all_passed(result: ExecutionResult) -> bool:
+    return bool(result.probe_results) and all(r.passed for r in result.probe_results)
+
+
+def test_sample_api_writes_and_reads_its_text_file_and_answers_every_probe(
     docker_runner: DockerCodeRunner,
     engine: SdkDockerEngine,
     sample_copy: SampleCopy,
     tmp_path: Path,
 ) -> None:
-    result = docker_runner.execute(make_request(sample_copy(), tmp_path / "logs"))
+    repo = sample_copy()
+    data_file = repo / PROJECT / "users.txt"
+    before = data_file.read_bytes()
+
+    result = docker_runner.execute(make_request(repo, tmp_path / "logs"))
 
     assert result.steps == (StepStatus.SUCCEEDED,) * 3, result.logs_excerpt
-    assert [(r.probe.path, r.actual_status, r.passed) for r in result.probe_results] == [
-        ("/api/products", 200, True),
-        ("/api/products/999", 404, True),
-        ("/api/products", 201, True),
+    assert statuses(result) == [
+        ("GET", "/api/users", 200),
+        ("GET", "/api/users/3", 404),
+        ("POST", "/api/users", 201),
+        ("GET", "/api/users/3", 200),  # the POST was written to users.txt and read back
+        ("POST", "/api/users/login", 200),  # login with the created user
+        ("POST", "/api/users/login", 401),
+        ("PUT", "/api/users/3", 204),
+        ("DELETE", "/api/users/3", 204),
+        ("GET", "/api/users/3", 404),
     ]
+    assert all_passed(result), describe(result)
+    assert result.path_rewrites == ()
+    assert data_file.read_bytes() == before, "the student's working copy is never written to"
     written = sorted(path.name for path in (tmp_path / "logs").iterdir())
     assert written == ["build.log", "prepare.log", "restore.log", "run.log"]
     assert "Restored" in (tmp_path / "logs" / "restore.log").read_text(encoding="utf-8")
+    # UseHttpsRedirection finds no HTTPS port in the container, so it only logs a warning
+    # and never redirects the HTTP probes.
+    run_log = (tmp_path / "logs" / "run.log").read_text(encoding="utf-8")
+    assert "Failed to determine the https port for redirect" in run_log
+    assert_nothing_left(engine)
+
+
+def test_written_data_does_not_outlive_the_run(
+    docker_runner: DockerCodeRunner,
+    engine: SdkDockerEngine,
+    sample_copy: SampleCopy,
+    tmp_path: Path,
+) -> None:
+    repo = sample_copy()
+
+    first = docker_runner.execute(make_request(repo, tmp_path / "logs-1"))
+    second = docker_runner.execute(make_request(repo, tmp_path / "logs-2"))
+
+    # Each run starts from the committed users.txt: user 3 does not exist until it is posted.
+    assert statuses(first) == statuses(second), describe(second)
+    assert all_passed(first), describe(first)
+    assert all_passed(second), describe(second)
+    assert_nothing_left(engine)
+
+
+def test_file_committed_with_other_letter_case_is_found_as_on_windows(
+    docker_runner: DockerCodeRunner,
+    engine: SdkDockerEngine,
+    sample_copy: SampleCopy,
+    tmp_path: Path,
+) -> None:
+    def rename(repo: Path) -> None:
+        (repo / PROJECT / "users.txt").rename(repo / PROJECT / "Users.txt")
+
+    result = docker_runner.execute(make_request(sample_copy(edit=rename), tmp_path / "logs"))
+
+    (rewrite,) = result.path_rewrites
+    assert (rewrite.kind, rewrite.original, rewrite.rewritten) == (
+        PathFixKind.CASE,
+        "users.txt",
+        "Users.txt",
+    )
+    assert rewrite.file_path == "WebApi/WebApi/Controllers/UsersController.cs"
+    assert all_passed(result), describe(result)
+    assert_nothing_left(engine)
+
+
+def test_absolute_path_with_a_matching_file_is_rewritten_and_passes(
+    docker_runner: DockerCodeRunner,
+    engine: SdkDockerEngine,
+    sample_copy: SampleCopy,
+    tmp_path: Path,
+) -> None:
+    repo = sample_copy(source=ABSOLUTE_PATH_FIXTURE)
+    controller = repo / "Controllers" / "UsersController.cs"
+    before = controller.read_bytes()
+
+    result = docker_runner.execute(
+        make_request(repo, tmp_path / "logs", probes=ABSOLUTE_PATH_PROBES)
+    )
+
+    (rewrite,) = result.path_rewrites
+    assert rewrite.kind is PathFixKind.ABSOLUTE
+    assert rewrite.original.startswith("C:\\Users\\Developer\\")
+    assert rewrite.rewritten == "Data/users.txt"
+    assert not result.has_unresolved_paths
+    assert statuses(result) == [
+        ("GET", "/api/users", 200),
+        ("POST", "/api/users", 201),
+        ("GET", "/api/users/2", 200),
+    ], result.logs_excerpt
+    assert controller.read_bytes() == before
+    assert_nothing_left(engine)
+
+
+def test_absolute_path_without_a_matching_file_is_flagged_and_gives_no_findings(
+    docker_runner: DockerCodeRunner,
+    engine: SdkDockerEngine,
+    sample_copy: SampleCopy,
+    tmp_path: Path,
+) -> None:
+    def remove_data(repo: Path) -> None:
+        (repo / "Data" / "users.txt").unlink()
+
+    result = docker_runner.execute(
+        make_request(
+            sample_copy(edit=remove_data, source=ABSOLUTE_PATH_FIXTURE),
+            tmp_path / "logs",
+            probes=ABSOLUTE_PATH_PROBES,
+        )
+    )
+
+    (rewrite,) = result.path_rewrites
+    assert rewrite.not_rewritten_reason is PathNotRewrittenReason.NO_MATCH
+    assert result.has_unresolved_paths
+    assert result.run_status is StepStatus.SUCCEEDED, result.logs_excerpt
+    assert result.probe_results and not all_passed(result), describe(result)
+    requirement = Requirement(
+        id="hw01-r1",
+        title="Users API",
+        severity=Severity.MAJOR,
+        kind=RequirementKind.HTTP,
+        http_probes=ABSOLUTE_PATH_PROBES,
+    )
+    assignment = Assignment(id="hw01", order=1, title="Users", requirements=(requirement,))
+    checker = DeterministicRequirementChecker(CheckRegistry(builtin_checks()))
+    checked = DeterministicCheckService(checker).evaluate(assignment, tmp_path, result)
+    assert checked.findings == ()
+    assert checked.not_evaluated == (
+        NotEvaluated(requirement_id="hw01-r1", reason=NotEvaluatedReason.ENVIRONMENT_ISSUE),
+    )
     assert_nothing_left(engine)
 
 
@@ -57,9 +218,9 @@ def test_compile_error_is_a_build_failure(
 ) -> None:
     def break_build(repo: Path) -> None:
         replace_in(
-            repo / "Controllers" / "ProductsController.cs",
-            "return Ok(products);",
-            "return Ok(produts);",
+            repo / PROJECT / "Controllers" / "UsersController.cs",
+            "return Ok(ReadUsers());",
+            "return Ok(ReadUser());",
         )
 
     result = docker_runner.execute(make_request(sample_copy(edit=break_build), tmp_path / "logs"))
@@ -78,7 +239,7 @@ def test_exception_at_startup_is_a_startup_failure(
 ) -> None:
     def crash(repo: Path) -> None:
         replace_in(
-            repo / "Program.cs",
+            repo / PROJECT / "Program.cs",
             "app.Run();",
             'throw new InvalidOperationException("startup failure");',
         )
@@ -97,7 +258,11 @@ def test_app_that_never_listens_times_out(
     tmp_path: Path,
 ) -> None:
     def hang(repo: Path) -> None:
-        replace_in(repo / "Program.cs", "app.Run();", "Thread.Sleep(Timeout.Infinite);\napp.Run();")
+        replace_in(
+            repo / PROJECT / "Program.cs",
+            "app.Run();",
+            "Thread.Sleep(Timeout.Infinite);\napp.Run();",
+        )
 
     result = docker_runner.execute(make_request(sample_copy(edit=hang), tmp_path / "logs"))
 
@@ -157,7 +322,7 @@ def test_two_repos_in_parallel_both_succeed(
     assert set(results) == {"first", "second"}
     for result in results.values():
         assert result.failure_kind is None, result.logs_excerpt
-        assert [probe.passed for probe in result.probe_results] == [True, True, True]
+        assert [probe.passed for probe in result.probe_results] == [True] * len(SAMPLE_PROBES)
     assert_nothing_left(engine)
 
 

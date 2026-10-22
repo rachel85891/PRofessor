@@ -155,7 +155,15 @@ def test_the_committed_sample_fixture_is_found() -> None:
     fixture = Path(__file__).parents[3] / "fixtures" / "sample_webapi"
 
     assert discover_web_project(fixture) == WebProject(
-        "SampleWebApi.csproj", "SampleWebApi", target_framework="net10.0"
+        "WebApi/WebApi/WebApi.csproj", "WebApi", target_framework="net10.0"
+    )
+
+
+def test_the_committed_absolute_path_fixture_is_found_at_the_root() -> None:
+    fixture = Path(__file__).parents[3] / "fixtures" / "sample_webapi_absolute_path"
+
+    assert discover_web_project(fixture) == WebProject(
+        "AbsolutePathApi.csproj", "AbsolutePathApi", target_framework="net10.0"
     )
 
 
