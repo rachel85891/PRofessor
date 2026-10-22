@@ -100,7 +100,7 @@ class RunnerSettings(BaseModel):
     restore_timeout_seconds: int = Field(default=300, ge=1)
     build_timeout_seconds: int = Field(default=300, ge=1)
     readiness_timeout_seconds: int = Field(default=30, ge=1)
-    probe_timeout_seconds: int = Field(default=5, ge=1)
+    probe_timeout_seconds: int = Field(default=10, ge=1)
     readiness_poll_seconds: float = Field(default=0.5, gt=0)
     app_port: int = Field(default=8080, ge=1, le=65535)
     app_uid: int = Field(default=1654, ge=1)

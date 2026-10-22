@@ -267,6 +267,7 @@ def test_runner_defaults_load_from_the_repo_config(tmp_path: Path) -> None:
     assert "@sha256:" in runner.probe_image
     assert runner.run_limits.memory_mb == 512
     assert runner.readiness_timeout_seconds == 30
+    assert runner.probe_timeout_seconds == 10
     assert runner.app_port == 8080
     assert runner.logs_root == Path("logs")
 
@@ -275,6 +276,7 @@ def test_runner_defaults_apply_without_config(tmp_path: Path) -> None:
     runner = _load(tmp_path, "").runner
 
     assert runner.build_limits.cpus == 2
+    assert runner.probe_timeout_seconds == 10
     assert runner.label_prefix == "hw-checker"
 
 

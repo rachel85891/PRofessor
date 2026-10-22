@@ -41,7 +41,7 @@ def runner_config() -> DockerRunnerConfig:
         restore_timeout_seconds=300,
         build_timeout_seconds=300,
         readiness_timeout_seconds=20,
-        probe_timeout_seconds=5,
+        probe_timeout_seconds=settings.probe_timeout_seconds,
         readiness_poll_seconds=0.5,
         app_port=settings.app_port,
         app_uid=settings.app_uid,
