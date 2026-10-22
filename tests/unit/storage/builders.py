@@ -6,6 +6,7 @@ from pathlib import Path
 from hw_checker.domain import (
     AssignmentResult,
     AssignmentVersion,
+    DeclaredRoute,
     Evidence,
     ExecutionResult,
     FailureKind,
@@ -25,11 +26,14 @@ from hw_checker.domain import (
     RepoTarget,
     ReviewDecision,
     ReviewOutcome,
+    RouteResolution,
+    RouteTable,
     Run,
     RunStatus,
     Severity,
     StepStatus,
     Student,
+    UnsupportedRouting,
     Verdict,
 )
 
@@ -80,6 +84,7 @@ def probe(path: str, status: int) -> HttpProbe:
         expected_status=status,
         allowed_statuses=(status, 200),
         notes="Body must be JSON",
+        path_alternatives=(path.replace("products", "product"),),
     )
 
 
@@ -90,12 +95,46 @@ def successful_execution() -> ExecutionResult:
         logs_excerpt="info: Microsoft.Hosting.Lifetime[14]\n      Now listening on: http://[::]:8080",
         logs_path=Path("workspace") / "logs" / "run-1" / "dana__api",
         probe_results=(
-            ProbeResult(probe=probe("/api/products", 201), actual_status=201, passed=True),
+            ProbeResult(
+                probe=probe("/api/products", 201),
+                actual_status=201,
+                passed=True,
+                sent_path="/api/product",
+                route_resolution=RouteResolution.RESOLVED,
+            ),
             ProbeResult(
                 probe=probe("/api/products/1", 204),
                 actual_status=None,
                 passed=False,
                 error="timed out",
+            ),
+            ProbeResult(
+                probe=probe("/api/products/2", 200),
+                passed=False,
+                route_resolution=RouteResolution.ROUTE_NOT_FOUND,
+            ),
+        ),
+        routes=RouteTable(
+            routes=(
+                DeclaredRoute(
+                    method=HttpMethod.POST,
+                    template="api/Product",
+                    controller="ProductController",
+                    action="Post",
+                    file_path="Api/Controllers/ProductController.cs",
+                    line=12,
+                ),
+                DeclaredRoute(
+                    method=None,
+                    template="api/Product/{email} {password}",
+                    controller="ProductController",
+                    action="Login",
+                    file_path="Api/Controllers/ProductController.cs",
+                    line=30,
+                ),
+            ),
+            unsupported=(
+                UnsupportedRouting(file_path="Api/Program.cs", line=9, form="minimal API (MapGet)"),
             ),
         ),
     )
@@ -173,6 +212,9 @@ def failed_repo_run(run_id: str = "run-1") -> RepoRunResult:
                 not_evaluated=(
                     NotEvaluated(requirement_id="hw01-r3", reason=NotEvaluatedReason.BUILD_FAILED),
                     NotEvaluated(requirement_id="hw01-r5", reason=NotEvaluatedReason.BUILD_FAILED),
+                    NotEvaluated(
+                        requirement_id="hw01-r6", reason=NotEvaluatedReason.ROUTE_NOT_FOUND
+                    ),
                 ),
             ),
         ),

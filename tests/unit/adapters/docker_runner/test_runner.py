@@ -2,6 +2,7 @@ import io
 import logging
 import tarfile
 from pathlib import Path
+from urllib.parse import urlsplit
 
 import pytest
 
@@ -13,6 +14,7 @@ from hw_checker.domain import (
     FailureKind,
     HttpMethod,
     HttpProbe,
+    RouteResolution,
     StepStatus,
 )
 from hw_checker.domain.errors import ExecutionEnvironmentError
@@ -244,6 +246,94 @@ def test_absolute_path_is_rewritten_in_the_copied_code_only(tmp_path: Path) -> N
     )
     prepare_log = (tmp_path / "logs" / "prepare.log").read_text(encoding="utf-8")
     assert "rewritten to 'Data/users.txt'" in prepare_log
+
+
+def test_route_table_is_recorded_on_the_result_and_in_the_prepare_log(
+    repo: Path, tmp_path: Path
+) -> None:
+    (repo / "Controllers" / "ProductsController.cs").write_text(
+        '[Route("api/[controller]")]\npublic class ProductsController\n{\n'
+        '    [HttpGet("{id}")]\n    public IActionResult Get(int id) => Ok();\n}\n',
+        encoding="utf-8",
+    )
+    engine = FakeEngine(exit_codes={"build": 1}, logs_by_kind={"build": BUILD_ERROR})
+
+    result = runner(engine).execute(request(repo, tmp_path))
+
+    assert result.routes is not None
+    assert [(r.method, r.template) for r in result.routes.routes] == [
+        (HttpMethod.GET, "api/Products/{id}")
+    ]
+    prepare_log = (tmp_path / "logs" / "prepare.log").read_text(encoding="utf-8")
+    assert "route GET /api/Products/{id} (ProductsController.Get" in prepare_log
+
+
+USER_CONTROLLER = (
+    '[Route("api/[controller]")]\npublic class UserController : ControllerBase\n{\n'
+    "    [HttpGet]\n    public IActionResult Get() => Ok();\n"
+    '    [HttpPost ("signin")]\n    public IActionResult SignIn() => Ok();\n}\n'
+)
+
+
+def test_probes_are_sent_to_the_resolved_path_or_not_at_all(repo: Path, tmp_path: Path) -> None:
+    (repo / "Controllers" / "ProductsController.cs").write_text(USER_CONTROLLER, encoding="utf-8")
+    probes = (
+        HttpProbe(
+            requirement_id="hw01-r1",
+            assignment_id="hw01",
+            method=HttpMethod.GET,
+            path="/api/users",
+            path_alternatives=("/api/user",),
+            expected_status=200,
+        ),
+        HttpProbe(
+            requirement_id="hw01-r2",
+            assignment_id="hw01",
+            method=HttpMethod.POST,
+            path="/api/users/login",
+            path_alternatives=("/api/user/login", "/api/users/signin", "/api/user/signin"),
+            body="{}",
+            expected_status=200,
+        ),
+        HttpProbe(
+            requirement_id="hw01-r3",
+            assignment_id="hw01",
+            method=HttpMethod.DELETE,
+            path="/api/users/1",
+            path_alternatives=("/api/user/1",),
+            expected_status=204,
+        ),
+    )
+    engine = FakeEngine()
+
+    result = runner(engine).execute(request(repo, tmp_path, probes=probes))
+
+    urls = [command[command.index("--") + 1] for command in engine.exec_commands]
+    sent = [urlsplit(url).path for url in urls if urlsplit(url).path != "/"]
+    assert sent == ["/api/user", "/api/user/signin"], "the DELETE was never sent"
+    assert [(r.sent_path, r.route_resolution, r.actual_status) for r in result.probe_results] == [
+        ("/api/user", RouteResolution.RESOLVED, 200),
+        ("/api/user/signin", RouteResolution.RESOLVED, 200),
+        (None, RouteResolution.ROUTE_NOT_FOUND, None),
+    ]
+    assert not result.probe_results[2].passed
+
+
+def test_without_routes_probes_go_to_their_first_path(repo: Path, tmp_path: Path) -> None:
+    engine = FakeEngine(probe_statuses=STATUSES)
+
+    result = runner(engine).execute(request(repo, tmp_path))
+
+    assert [(r.sent_path, r.route_resolution) for r in result.probe_results] == [
+        (probe.path, RouteResolution.UNAVAILABLE) for probe in PROBES
+    ]
+
+
+def test_project_without_routes_records_an_empty_table(repo: Path, tmp_path: Path) -> None:
+    result = runner(FakeEngine()).execute(request(repo, tmp_path))
+
+    assert result.routes is not None
+    assert result.routes.routes == () and not result.routes.usable
 
 
 def test_unresolved_path_is_recorded_on_a_failed_build_too(repo: Path, tmp_path: Path) -> None:

@@ -2,12 +2,12 @@ from pathlib import Path
 
 import pytest
 
+from hw_checker.adapters.docker_runner.csharp_source import string_literals
 from hw_checker.adapters.docker_runner.host_paths import (
     fix_source,
     is_absolute_host_path,
     match_project_file,
     plan_path_fixes,
-    string_literals,
 )
 from hw_checker.domain import PathFixKind, PathNotRewrittenReason, PathRewrite
 

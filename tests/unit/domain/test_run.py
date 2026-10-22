@@ -201,6 +201,7 @@ def test_not_evaluated_reasons() -> None:
         "build_failed",
         "run_not_healthy",
         "environment_issue",
+        "route_not_found",
     }
 
 

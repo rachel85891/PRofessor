@@ -9,6 +9,7 @@ from pydantic import (
     AfterValidator,
     Field,
     PlainSerializer,
+    StringConstraints,
     ValidationInfo,
     field_validator,
     model_validator,
@@ -92,21 +93,34 @@ CheckParams = Annotated[
 """Named check parameters, stored as a read-only mapping."""
 
 
+ProbePath = Annotated[str, StringConstraints(pattern=r"^/")]
+"""A request path; it starts with `/`."""
+
+
 class HttpProbe(DomainModel):
     """One HTTP request against the running app and the statuses that count as a pass.
 
     `requirement_id` and `assignment_id` say which requirement the probe belongs to, so a
     `ProbeResult` (which carries its probe) can always be traced back to it.
+    `path_alternatives` lists other paths a correct solution may use, because the task does
+    not fix route names (`/api/users` or `/api/user`); the runner sends the probe to the
+    first candidate that the student's code declares.
     """
 
     requirement_id: Identifier
     assignment_id: Identifier
     method: HttpMethod
-    path: str = Field(pattern=r"^/")
+    path: ProbePath
+    path_alternatives: tuple[ProbePath, ...] = ()
     body: str | None = None
     expected_status: HttpStatusCode
     allowed_statuses: tuple[HttpStatusCode, ...] = Field(default=(), validate_default=True)
     notes: str = ""
+
+    @property
+    def candidate_paths(self) -> tuple[str, ...]:
+        """`path` and then `path_alternatives`, in the order they are tried."""
+        return (self.path, *self.path_alternatives)
 
     @field_validator("allowed_statuses")
     @classmethod

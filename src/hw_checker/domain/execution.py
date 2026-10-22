@@ -6,7 +6,7 @@ from typing import Self
 
 from pydantic import Field, model_validator
 
-from hw_checker.domain.assignment import HttpProbe
+from hw_checker.domain.assignment import HttpMethod, HttpProbe
 from hw_checker.domain.base import DomainModel, HttpStatusCode, Identifier, NonBlankStr
 
 MAX_LOGS_EXCERPT_CHARS = 8000
@@ -17,6 +17,9 @@ MAX_PROBE_ERROR_CHARS = 500
 
 MAX_PATH_TEXT_CHARS = 1000
 """Upper bound for a path text recorded from student code."""
+
+MAX_ROUTE_TEXT_CHARS = 500
+"""Upper bound for a route template or a routing description recorded from student code."""
 
 
 class FailureKind(StrEnum):
@@ -45,16 +48,31 @@ class StepStatus(StrEnum):
     SKIPPED = "skipped"
 
 
+class RouteResolution(StrEnum):
+    """How the path a probe was sent to was chosen from its candidate paths."""
+
+    RESOLVED = "resolved"
+    """Sent to the first candidate that matches a route declared for the probe's method."""
+    ROUTE_NOT_FOUND = "route_not_found"
+    """No candidate matches a declared route, so the probe was not sent."""
+    UNAVAILABLE = "unavailable"
+    """The route table was empty or incomplete, so the probe was sent to its first path."""
+
+
 class ProbeResult(DomainModel):
     """The result of one HTTP probe against the running app.
 
-    The probe carries the requirement and assignment it belongs to.
+    The probe carries the requirement and assignment it belongs to. `sent_path` is the
+    candidate path the request went to (None when it was not sent, and for results
+    recorded before path alternatives existed).
     """
 
     probe: HttpProbe
     actual_status: HttpStatusCode | None = None
     passed: bool
     error: str = Field(default="", max_length=MAX_PROBE_ERROR_CHARS)
+    sent_path: str | None = None
+    route_resolution: RouteResolution = RouteResolution.UNAVAILABLE
 
     @property
     def requirement_id(self) -> str:
@@ -71,6 +89,16 @@ class ProbeResult(DomainModel):
         expected_pass = self.actual_status in self.probe.allowed_statuses
         if self.passed != expected_pass:
             raise ValueError("passed must be true exactly when actual_status is an allowed status")
+        return self
+
+    @model_validator(mode="after")
+    def _unsent_probe_has_no_answer(self) -> Self:
+        if self.route_resolution is RouteResolution.ROUTE_NOT_FOUND and (
+            self.sent_path is not None or self.actual_status is not None
+        ):
+            raise ValueError("a probe whose route was not found is never sent")
+        if self.sent_path is not None and self.sent_path not in self.probe.candidate_paths:
+            raise ValueError("sent_path must be one of the probe's candidate paths")
         return self
 
 
@@ -115,6 +143,47 @@ class PathRewrite(DomainModel):
         return self
 
 
+class DeclaredRoute(DomainModel):
+    """One route a controller action declares in the student's code (attribute routing).
+
+    `template` is the class and action templates combined, with `[controller]` and
+    `[action]` replaced, without leading or trailing slashes, otherwise as written (for
+    example `api/User/{id}`). `method` is None when the action has a `[Route]` but no HTTP
+    method attribute, so it answers every method.
+    """
+
+    method: HttpMethod | None
+    template: str = Field(max_length=MAX_ROUTE_TEXT_CHARS)
+    controller: NonBlankStr
+    action: NonBlankStr
+    file_path: NonBlankStr
+    line: int = Field(ge=1)
+
+
+class UnsupportedRouting(DomainModel):
+    """A routing form the route table cannot read, such as a minimal API (`app.MapGet`)."""
+
+    file_path: NonBlankStr
+    line: int = Field(ge=1)
+    form: str = Field(min_length=1, max_length=MAX_ROUTE_TEXT_CHARS)
+
+
+class RouteTable(DomainModel):
+    """The routes declared in the student's code, read as text, for resolving probe paths.
+
+    The table is usable only when it has routes and nothing unsupported was found: a route
+    declared in a form the table cannot read would otherwise look missing.
+    """
+
+    routes: tuple[DeclaredRoute, ...] = ()
+    unsupported: tuple[UnsupportedRouting, ...] = ()
+
+    @property
+    def usable(self) -> bool:
+        """True when probe paths can be resolved against this table."""
+        return bool(self.routes) and not self.unsupported
+
+
 class ExecutionResult(DomainModel):
     """Prepare, build and run outcome for one repo, with probe results and a log excerpt.
 
@@ -131,6 +200,8 @@ class ExecutionResult(DomainModel):
     probe_results: tuple[ProbeResult, ...] = ()
     path_rewrites: tuple[PathRewrite, ...] = ()
     """Paths in the student's code that were adapted (or could not be) to run in Docker."""
+    routes: RouteTable | None = None
+    """The routes declared in the student's code; None when they were not read."""
 
     @property
     def steps(self) -> tuple[StepStatus, StepStatus, StepStatus]:

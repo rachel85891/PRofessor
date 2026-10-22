@@ -13,18 +13,18 @@ Only the exact string literal changes; the student's working copy is never writt
 C# source is read as text and scanned for string literals; nothing is compiled or executed.
 """
 
-import os
 import re
-from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
 
-from hw_checker.adapters.docker_runner.discovery import EXCLUDED_DIRS
+from hw_checker.adapters.docker_runner.csharp_source import (
+    StringLiteral,
+    source_files,
+    string_literals,
+    walk_files,
+)
 from hw_checker.domain import PathFixKind, PathNotRewrittenReason, PathRewrite
 from hw_checker.domain.execution import MAX_PATH_TEXT_CHARS
-
-MAX_SOURCE_FILE_BYTES = 1_000_000
-"""Larger `.cs` files are not scanned (generated code, not student logic)."""
 
 _DRIVE_PATH = re.compile(r"^[A-Za-z]:[\\/](?P<rest>.*)$", re.DOTALL)
 _UNC_PATH = re.compile(r"^\\\\[^\\/\s]+[\\/][^\\/\s]+(?P<rest>.*)$", re.DOTALL)
@@ -32,38 +32,6 @@ _NAME = r"[^<>:\"|?*{}\\/\s][^<>:\"|?*{}\\/]*"
 _RELATIVE_FILE = re.compile(rf"^(?:\./)?(?:{_NAME}[\\/])*{_NAME}\.[A-Za-z0-9]{{1,8}}$")
 """A relative file path with an extension, like `users.txt` or `Data\\users.txt`."""
 _SEPARATORS = re.compile(r"[\\/]+")
-_SIMPLE_ESCAPES = {
-    "\\": "\\",
-    '"': '"',
-    "'": "'",
-    "0": "\0",
-    "a": "\a",
-    "b": "\b",
-    "f": "\f",
-    "n": "\n",
-    "r": "\r",
-    "t": "\t",
-    "v": "\v",
-}
-
-
-@dataclass(frozen=True)
-class StringLiteral:
-    """One C# string literal: where its text sits in the source, and what it says.
-
-    `content_start:content_end` is the text between the quotes. `value` is that text decoded
-    (escapes resolved); for an interpolated string with holes it is the text before the
-    first hole, and `has_holes` is set.
-    """
-
-    content_start: int
-    content_end: int
-    value: str
-    line: int
-    verbatim: bool
-    interpolated: bool
-    raw: bool
-    has_holes: bool
 
 
 @dataclass(frozen=True)
@@ -87,7 +55,7 @@ def plan_path_fixes(working_copy: Path, project_folder: str) -> PathPlan:
     project_files = _project_files(project_root)
     rewrites: list[PathRewrite] = []
     overrides: dict[str, bytes] = {}
-    for source in _source_files(working_copy):
+    for source in source_files(working_copy):
         relative = source.relative_to(working_copy).as_posix()
         data = source.read_bytes()
         try:
@@ -105,11 +73,6 @@ def is_absolute_host_path(value: str) -> bool:
     """True for `C:\\x`, `C:/x` and `\\\\server\\share\\x`; never for `C:` alone or a URL."""
     match = _DRIVE_PATH.match(value) or _UNC_PATH.match(value)
     return match is not None and match["rest"].strip("\\/ ") != ""
-
-
-def string_literals(text: str) -> list[StringLiteral]:
-    """Every string literal of a C# source, skipping comments and character literals."""
-    return list(_Scanner(text).literals())
 
 
 def match_project_file(host_path: str, project_files: list[str]) -> str | PathNotRewrittenReason:
@@ -210,209 +173,5 @@ def _escape(path: str, literal: StringLiteral) -> str:
     return path.replace("\\", "\\\\").replace('"', '\\"')
 
 
-def _walk(root: Path) -> Iterator[Path]:
-    for directory, subdirectories, files in os.walk(root, followlinks=False):
-        subdirectories[:] = sorted(
-            name
-            for name in subdirectories
-            if name.lower() not in EXCLUDED_DIRS and not Path(directory, name).is_symlink()
-        )
-        for name in sorted(files):
-            path = Path(directory, name)
-            if not path.is_symlink():
-                yield path
-
-
-def _source_files(working_copy: Path) -> list[Path]:
-    return [
-        path
-        for path in _walk(working_copy)
-        if path.suffix.lower() == ".cs" and path.stat().st_size <= MAX_SOURCE_FILE_BYTES
-    ]
-
-
 def _project_files(project_root: Path) -> list[str]:
-    return [path.relative_to(project_root).as_posix() for path in _walk(project_root)]
-
-
-class _Scanner:
-    """A small C# lexer that only understands comments, characters and strings."""
-
-    def __init__(self, text: str) -> None:
-        self.text = text
-        self.position = 0
-
-    def literals(self) -> Iterator[StringLiteral]:
-        text = self.text
-        while self.position < len(text):
-            character = text[self.position]
-            if text.startswith("//", self.position):
-                end = text.find("\n", self.position)
-                self.position = len(text) if end < 0 else end
-            elif text.startswith("/*", self.position):
-                end = text.find("*/", self.position + 2)
-                self.position = len(text) if end < 0 else end + 2
-            elif character == "'":
-                self._skip_char_literal()
-            elif character in '"@$':
-                literal = self._string_literal()
-                if literal is not None:
-                    yield literal
-            else:
-                self.position += 1
-
-    def _skip_char_literal(self) -> None:
-        index = self.position + 1
-        while index < len(self.text) and self.text[index] not in "'\n":
-            index += 2 if self.text[index] == "\\" else 1
-        self.position = index + 1
-
-    def _string_literal(self) -> StringLiteral | None:
-        text = self.text
-        start = self.position
-        index = start
-        dollars = 0
-        verbatim = False
-        while index < len(text) and text[index] in "@$":
-            if text[index] == "$":
-                dollars += 1
-            else:
-                verbatim = True
-            index += 1
-        if index >= len(text) or text[index] != '"':
-            self.position = start + 1  # an identifier like @class, or a lone $
-            return None
-        line = text.count("\n", 0, start) + 1
-        rest = text[index:]
-        quotes = len(rest) - len(rest.lstrip('"'))
-        if quotes >= 3:
-            return self._raw(index, quotes, line, dollars)
-        if verbatim:
-            return self._verbatim(index, line, dollars > 0)
-        return self._regular(index, line, dollars > 0)
-
-    def _regular(self, quote: int, line: int, interpolated: bool) -> StringLiteral:
-        text = self.text
-        index = quote + 1
-        decoded: list[str] = []
-        holes = False
-        cut: int | None = None
-        while index < len(text) and text[index] not in '"\n':
-            character = text[index]
-            if character == "\\" and index + 1 < len(text):
-                decoded.append(_SIMPLE_ESCAPES.get(text[index + 1], text[index + 1]))
-                index += 2
-            elif interpolated and character == "{":
-                if text.startswith("{{", index):
-                    decoded.append("{")
-                    index += 2
-                else:
-                    holes = True
-                    cut = len(decoded) if cut is None else cut
-                    index = self._skip_hole(index, multiline=False)
-            elif interpolated and text.startswith("}}", index):
-                decoded.append("}")
-                index += 2
-            else:
-                decoded.append(character)
-                index += 1
-        decoded = decoded if cut is None else decoded[:cut]
-        return self._finish(quote + 1, index, decoded, line, False, interpolated, False, holes)
-
-    def _verbatim(self, quote: int, line: int, interpolated: bool) -> StringLiteral:
-        text = self.text
-        index = quote + 1
-        decoded: list[str] = []
-        holes = False
-        cut: int | None = None
-        while index < len(text):
-            character = text[index]
-            if character == '"':
-                if text.startswith('""', index):
-                    decoded.append('"')
-                    index += 2
-                    continue
-                break
-            if interpolated and character == "{":
-                if text.startswith("{{", index):
-                    decoded.append("{")
-                    index += 2
-                    continue
-                holes = True
-                cut = len(decoded) if cut is None else cut
-                index = self._skip_hole(index, multiline=True)
-                continue
-            if interpolated and text.startswith("}}", index):
-                decoded.append("}")
-                index += 2
-                continue
-            decoded.append(character)
-            index += 1
-        decoded = decoded if cut is None else decoded[:cut]
-        return self._finish(quote + 1, index, decoded, line, True, interpolated, False, holes)
-
-    def _raw(self, quote: int, quotes: int, line: int, dollars: int) -> StringLiteral:
-        text = self.text
-        closing = text.find('"' * quotes, quote + quotes)
-        end = len(text) if closing < 0 else closing
-        content = text[quote + quotes : end]
-        holes = dollars > 0 and "{" * dollars in content
-        literal = StringLiteral(
-            content_start=quote + quotes,
-            content_end=end,
-            value=content.split("{" * dollars)[0] if holes else content,
-            line=line,
-            verbatim=False,
-            interpolated=dollars > 0,
-            raw=True,
-            has_holes=holes,
-        )
-        self.position = end + quotes
-        return literal
-
-    def _skip_hole(self, index: int, *, multiline: bool) -> int:
-        """Skip an interpolation hole `{...}`, including nested braces and strings."""
-        text = self.text
-        depth = 0
-        while index < len(text):
-            character = text[index]
-            if character == "{":
-                depth += 1
-            elif character == "}":
-                depth -= 1
-                if depth == 0:
-                    return index + 1
-            elif character in '"@$':
-                saved = self.position
-                self.position = index
-                literal = self._string_literal()
-                index = self.position if literal is not None else index + 1
-                self.position = saved
-                continue
-            elif character == "\n" and not multiline:
-                return index
-            index += 1
-        return index
-
-    def _finish(
-        self,
-        content_start: int,
-        index: int,
-        decoded: list[str],
-        line: int,
-        verbatim: bool,
-        interpolated: bool,
-        raw: bool,
-        holes: bool,
-    ) -> StringLiteral:
-        self.position = index + 1
-        return StringLiteral(
-            content_start=content_start,
-            content_end=index,
-            value="".join(decoded),
-            line=line,
-            verbatim=verbatim,
-            interpolated=interpolated,
-            raw=raw,
-            has_holes=holes,
-        )
+    return [path.relative_to(project_root).as_posix() for path in walk_files(project_root)]

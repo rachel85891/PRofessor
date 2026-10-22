@@ -60,7 +60,9 @@ runner:
   restore_timeout_seconds: 300
   build_timeout_seconds: 300
   readiness_timeout_seconds: 30
-  probe_timeout_seconds: 5
+  # The first request to a freshly started app can take several seconds on a busy machine,
+  # and a probe that times out counts as "no answer", so leave room.
+  probe_timeout_seconds: 10
   readiness_poll_seconds: 0.5
   # Port the app listens on inside its container (ASPNETCORE_HTTP_PORTS).
   app_port: 8080

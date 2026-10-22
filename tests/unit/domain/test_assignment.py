@@ -64,6 +64,18 @@ def test_probe_rejects_path_without_leading_slash() -> None:
         builders.probe(path="api/products")
 
 
+def test_probe_candidate_paths_are_the_path_then_the_alternatives() -> None:
+    probe = builders.probe(path="/api/users", path_alternatives=("/api/user", "/api/people"))
+
+    assert probe.candidate_paths == ("/api/users", "/api/user", "/api/people")
+    assert builders.probe(path="/api/users").candidate_paths == ("/api/users",)
+
+
+def test_probe_rejects_alternative_without_leading_slash() -> None:
+    with pytest.raises(ValidationError, match="path_alternatives"):
+        builders.probe(path_alternatives=("/api/user", "api/users"))
+
+
 def test_probe_rejects_unknown_method() -> None:
     with pytest.raises(ValidationError):
         builders.probe(method="FETCH")

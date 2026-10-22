@@ -36,6 +36,8 @@ class NotEvaluatedReason(StrEnum):
     BUILD_FAILED = "build_failed"
     RUN_NOT_HEALTHY = "run_not_healthy"
     ENVIRONMENT_ISSUE = "environment_issue"
+    ROUTE_NOT_FOUND = "route_not_found"
+    """None of a probe's paths is declared in the student's code, so it was not sent."""
 
 
 class NotEvaluated(DomainModel):
