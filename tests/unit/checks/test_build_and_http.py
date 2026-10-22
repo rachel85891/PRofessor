@@ -17,6 +17,9 @@ from hw_checker.domain import (
     HttpMethod,
     HttpProbe,
     NotEvaluatedReason,
+    PathFixKind,
+    PathNotRewrittenReason,
+    PathRewrite,
     ProbeResult,
     Requirement,
     RequirementKind,
@@ -273,6 +276,46 @@ def test_startup_crash_parsing() -> None:
     assert first_startup_crash("all good") is None
 
 
+REWRITTEN = PathRewrite(
+    file_path="Store.cs",
+    line=4,
+    kind=PathFixKind.ABSOLUTE,
+    original="C:\\Projects\\Shop\\users.txt",
+    rewritten="users.txt",
+)
+UNRESOLVED = PathRewrite(
+    file_path="Store.cs",
+    line=9,
+    kind=PathFixKind.ABSOLUTE,
+    original="C:\\Projects\\Shop\\orders.txt",
+    not_rewritten_reason=PathNotRewrittenReason.NO_MATCH,
+)
+
+
+def with_paths(execution: ExecutionResult, *rewrites: PathRewrite) -> ExecutionResult:
+    return execution.model_copy(update={"path_rewrites": rewrites})
+
+
+def test_startup_crash_with_an_unresolved_path_is_not_evaluated() -> None:
+    execution = with_paths(startup_crash(STARTUP_LOG), REWRITTEN, UNRESOLVED)
+
+    outcome = evaluate_build(check_input(BUILD_REQUIREMENT, execution))
+
+    assert outcome is NotEvaluatedReason.ENVIRONMENT_ISSUE
+
+
+def test_startup_crash_with_every_path_rewritten_is_a_finding() -> None:
+    execution = with_paths(startup_crash(STARTUP_LOG), REWRITTEN)
+
+    assert len(_findings(evaluate_build(check_input(BUILD_REQUIREMENT, execution)))) == 1
+
+
+def test_compile_error_is_a_finding_even_with_an_unresolved_path() -> None:
+    execution = with_paths(failure(FailureKind.BUILD_FAILED), UNRESOLVED)
+
+    assert len(_findings(evaluate_build(check_input(BUILD_REQUIREMENT, execution)))) == 1
+
+
 def _findings(outcome: tuple[Finding, ...] | NotEvaluatedReason) -> tuple[Finding, ...]:
     assert isinstance(outcome, tuple)
     return outcome
@@ -333,6 +376,42 @@ def test_http_requirement_not_evaluated_without_a_healthy_run(
     execution: ExecutionResult | None, reason: NotEvaluatedReason
 ) -> None:
     assert evaluate_http(check_input(HTTP_REQUIREMENT, execution)) is reason
+
+
+def test_failing_probe_with_an_unresolved_path_is_not_evaluated() -> None:
+    execution = with_paths(
+        run_ok(result(GET_ALL, 500), result(GET_MISSING, 404), result(CREATE, 201)),
+        REWRITTEN,
+        UNRESOLVED,
+    )
+
+    outcome = evaluate_http(check_input(HTTP_REQUIREMENT, execution))
+
+    assert outcome is NotEvaluatedReason.ENVIRONMENT_ISSUE
+
+
+def test_passing_probes_with_an_unresolved_path_still_pass() -> None:
+    execution = with_paths(
+        run_ok(result(GET_ALL, 200), result(GET_MISSING, 404), result(CREATE, 201)), UNRESOLVED
+    )
+
+    assert evaluate_http(check_input(HTTP_REQUIREMENT, execution)) == ()
+
+
+def test_unhealthy_run_with_an_unresolved_path_is_an_environment_issue() -> None:
+    execution = with_paths(failure(FailureKind.STARTUP_FAILED), UNRESOLVED)
+
+    outcome = evaluate_http(check_input(HTTP_REQUIREMENT, execution))
+
+    assert outcome is NotEvaluatedReason.ENVIRONMENT_ISSUE
+
+
+def test_failing_probe_with_every_path_rewritten_is_a_finding() -> None:
+    execution = with_paths(
+        run_ok(result(GET_ALL, 500), result(GET_MISSING, 404), result(CREATE, 201)), REWRITTEN
+    )
+
+    assert len(_findings(evaluate_http(check_input(HTTP_REQUIREMENT, execution)))) == 1
 
 
 def test_probes_of_other_requirements_are_ignored() -> None:

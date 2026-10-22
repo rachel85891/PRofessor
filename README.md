@@ -1,6 +1,6 @@
 # HW Checker
 
-HW Checker is a Python LangGraph agent that checks homework for a .NET 9 Web API course. It builds and runs each student's repo, checks it against the requirements of every assignment so far, and writes a Hebrew report for the reviewer. After manual approval it can also propose fixes as a PR.
+HW Checker is a Python LangGraph agent that checks homework for a .NET 10 Web API course. It builds and runs each student's repo, checks it against the requirements of every assignment so far, and writes a Hebrew report for the reviewer. After manual approval it can also propose fixes as a PR.
 
 "HW Checker" is a working name; the final project name is still open.
 
@@ -8,7 +8,7 @@ HW Checker is a Python LangGraph agent that checks homework for a .NET 9 Web API
 
 - Windows with PowerShell or Git Bash
 - [Docker Desktop](https://www.docker.com/products/docker-desktop/)
-- [.NET 9 SDK](https://dotnet.microsoft.com/download/dotnet/9.0)
+- [.NET 10 SDK](https://dotnet.microsoft.com/download/dotnet/10.0)
 - Python 3.12 (uv installs it if it is missing)
 - [uv](https://docs.astral.sh/uv/)
 

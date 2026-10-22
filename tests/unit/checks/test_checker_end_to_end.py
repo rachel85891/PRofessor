@@ -60,7 +60,7 @@ ASSIGNMENT = Assignment(
     order=1,
     title="Products controller",
     requirements=(
-        structure("hw01-r1", "file_exists", glob="**/Controllers/ProductsController.cs"),
+        structure("hw01-r1", "file_exists", glob="**/Controllers/UsersController.cs"),
         structure("hw01-r2", "folder_exists", path="Models"),
         structure("hw01-r3", "file_exists", glob="**/Services/*.cs"),
         Requirement(

@@ -16,6 +16,8 @@ def evaluate_http(check_input: CheckInput) -> tuple[Finding, ...] | NotEvaluated
 
     Only a successful run is judged, so a build failure never cascades into HTTP findings.
     A probe passes when its status is in the probe's `allowed_statuses`, and only then.
+    When a hard-coded path could not be adapted to the container, an unhealthy run or a
+    failing probe may be our environment's fault, so it is not evaluated instead.
     """
     execution = check_input.execution
     if execution is None:
@@ -28,6 +30,8 @@ def evaluate_http(check_input: CheckInput) -> tuple[Finding, ...] | NotEvaluated
             return NotEvaluatedReason.BUILD_FAILED
         return NotEvaluatedReason.ENVIRONMENT_ISSUE  # a build timeout or environment problem
     if execution.run_status is not StepStatus.SUCCEEDED:
+        if execution.has_unresolved_paths:
+            return NotEvaluatedReason.ENVIRONMENT_ISSUE
         return NotEvaluatedReason.RUN_NOT_HEALTHY
     results = [
         result
@@ -40,6 +44,8 @@ def evaluate_http(check_input: CheckInput) -> tuple[Finding, ...] | NotEvaluated
     failed = [result for result in results if not result.passed]
     if not failed:
         return ()
+    if execution.has_unresolved_paths:
+        return NotEvaluatedReason.ENVIRONMENT_ISSUE
     lines = [_describe(result) for result in failed]
     probes = Localized(
         he="\n".join(line.he for line in lines), en="\n".join(line.en for line in lines)

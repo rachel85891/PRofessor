@@ -102,7 +102,8 @@ def _run_failure(
     kind = execution.failure_kind
     if kind is FailureKind.DB_UNREACHABLE:
         return ()  # the app started; reaching the database is not what `build` checks
-    if kind is not FailureKind.STARTUP_FAILED:
+    if kind is not FailureKind.STARTUP_FAILED or execution.has_unresolved_paths:
+        # A crash with a hard-coded path we could not adapt may be our environment's fault.
         return NotEvaluatedReason.ENVIRONMENT_ISSUE
     crash = first_startup_crash(execution.logs_excerpt)
     if crash is None:

@@ -6,7 +6,11 @@ from pathlib import Path
 
 import pytest
 
-from hw_checker.adapters.docker_runner.archive import ArchiveTooLargeError, build_work_archive
+from hw_checker.adapters.docker_runner.archive import (
+    ArchiveTooLargeError,
+    build_project_archive,
+    build_work_archive,
+)
 
 UID = GID = 1654
 
@@ -122,3 +126,26 @@ def test_excluded_folders_do_not_count_towards_the_size_limit(repo: Path) -> Non
     (repo / "bin" / "huge.dll").write_bytes(b"\0" * 50_000)
 
     assert build_work_archive(repo, UID, GID, max_total_bytes=10_000, max_file_bytes=10_000)
+
+
+def test_project_archive_puts_the_folder_under_project(repo: Path) -> None:
+    write(repo, "users.txt", '{"id":1}\n')
+
+    archive = build_project_archive(repo, UID, GID)
+
+    assert set(members(archive.data)) == {
+        "project",
+        "project/Api.csproj",
+        "project/users.txt",
+        "project/Controllers",
+        "project/Controllers/ProductsController.cs",
+        "project/Nested",
+    }
+    assert all(m.uid == UID and m.gid == GID for m in members(archive.data).values())
+
+
+def test_project_archive_applies_the_size_limits(repo: Path) -> None:
+    write(repo, "big.txt", "x" * 2000)
+
+    with pytest.raises(ArchiveTooLargeError, match=r"big\.txt"):
+        build_project_archive(repo, UID, GID, max_file_bytes=1000)

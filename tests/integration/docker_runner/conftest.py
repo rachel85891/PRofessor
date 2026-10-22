@@ -1,5 +1,6 @@
 """Fixtures for DockerCodeRunner integration tests: real Docker, an isolated label prefix."""
 
+import json
 import shutil
 from collections.abc import Callable, Iterator
 from pathlib import Path
@@ -12,7 +13,11 @@ from hw_checker.adapters.docker_runner.runner_config import ContainerLimits, Doc
 from hw_checker.config.settings import RunnerSettings, StepLimits
 from hw_checker.domain import ExecutionRequest, HttpMethod, HttpProbe
 
-FIXTURE = Path(__file__).parents[2] / "fixtures" / "sample_webapi"
+FIXTURES = Path(__file__).parents[2] / "fixtures"
+FIXTURE = FIXTURES / "sample_webapi"
+ABSOLUTE_PATH_FIXTURE = FIXTURES / "sample_webapi_absolute_path"
+PROJECT = Path("WebApi") / "WebApi"
+"""Where the sample fixture's Web project sits, relative to the fixture root."""
 PREFIX = "hw-checker-it"
 CACHE_VOLUME = "hw-checker-it-nuget"
 
@@ -47,29 +52,44 @@ def runner_config() -> DockerRunnerConfig:
     )
 
 
+def probe(
+    requirement_id: str, method: HttpMethod, path: str, status: int, body: str | None = None
+) -> HttpProbe:
+    return HttpProbe(
+        requirement_id=requirement_id,
+        assignment_id="hw01",
+        method=method,
+        path=path,
+        body=body,
+        expected_status=status,
+    )
+
+
+TEST_PASSWORD = "pw123"  # pragma: allowlist secret
+"""A made-up password for the fixture's login endpoint."""
+
+
+def user_body(user_name: str, password: str, **names: str) -> str:
+    """A JSON body for the users API, with the field names student projects use."""
+    return json.dumps({"userName": user_name, "password": password, **names})
+
+
+NEW_USER = user_body("newuser", TEST_PASSWORD, firstName="New", lastName="User")
 SAMPLE_PROBES = (
-    HttpProbe(
-        requirement_id="hw01-r1",
-        assignment_id="hw01",
-        method=HttpMethod.GET,
-        path="/api/products",
-        expected_status=200,
-    ),
-    HttpProbe(
-        requirement_id="hw01-r2",
-        assignment_id="hw01",
-        method=HttpMethod.GET,
-        path="/api/products/999",
-        expected_status=404,
-    ),
-    HttpProbe(
-        requirement_id="hw01-r3",
-        assignment_id="hw01",
-        method=HttpMethod.POST,
-        path="/api/products",
-        body='{"name":"Desk","price":250}',
-        expected_status=201,
-    ),
+    probe("hw01-r1", HttpMethod.GET, "/api/users", 200),
+    probe("hw01-r2", HttpMethod.GET, "/api/users/3", 404),
+    probe("hw01-r3", HttpMethod.POST, "/api/users", 201, NEW_USER),
+    probe("hw01-r3", HttpMethod.GET, "/api/users/3", 200),
+    probe("hw01-r4", HttpMethod.POST, "/api/users/login", 200, user_body("newuser", TEST_PASSWORD)),
+    probe("hw01-r4", HttpMethod.POST, "/api/users/login", 401, user_body("newuser", "wrong")),
+    probe("hw01-r5", HttpMethod.PUT, "/api/users/3", 204, NEW_USER.replace("New", "Renamed")),
+    probe("hw01-r5", HttpMethod.DELETE, "/api/users/3", 204),
+    probe("hw01-r5", HttpMethod.GET, "/api/users/3", 404),
+)
+ABSOLUTE_PATH_PROBES = (
+    probe("hw01-r1", HttpMethod.GET, "/api/users", 200),
+    probe("hw01-r1", HttpMethod.POST, "/api/users", 201, user_body("u2", TEST_PASSWORD)),
+    probe("hw01-r1", HttpMethod.GET, "/api/users/2", 200),
 )
 
 
@@ -103,9 +123,13 @@ def leftovers(engine: SdkDockerEngine) -> list[Resource]:
 def sample_copy(tmp_path: Path) -> Callable[..., Path]:
     """Copy the sample API into tmp_path, optionally changing one file."""
 
-    def copy(name: str = "repo", edit: Callable[[Path], None] | None = None) -> Path:
+    def copy(
+        name: str = "repo",
+        edit: Callable[[Path], None] | None = None,
+        source: Path = FIXTURE,
+    ) -> Path:
         target = tmp_path / name
-        shutil.copytree(FIXTURE, target, ignore=shutil.ignore_patterns("bin", "obj"))
+        shutil.copytree(source, target, ignore=shutil.ignore_patterns("bin", "obj"))
         if edit is not None:
             edit(target)
         return target
@@ -114,13 +138,16 @@ def sample_copy(tmp_path: Path) -> Callable[..., Path]:
 
 
 def make_request(
-    working_copy: Path, logs_dir: Path, repo_id: str = "it__sample"
+    working_copy: Path,
+    logs_dir: Path,
+    repo_id: str = "it__sample",
+    probes: tuple[HttpProbe, ...] = SAMPLE_PROBES,
 ) -> ExecutionRequest:
     return ExecutionRequest(
         run_id="it-run",
         repo_id=repo_id,
         working_copy=working_copy,
-        probes=SAMPLE_PROBES,
+        probes=probes,
         logs_dir=logs_dir,
     )
 

@@ -4,7 +4,7 @@ Oct 20, 2026 · @no name
 
 ## 1. Overview, goals and non-goals
 
-The system is a LangGraph-based agent that, twice a week, checks the homework of about 40 second-year students in a .NET 9 Web API course, reports what is present and what is missing, and proposes fixes as a PR to each student's repo after manual approval. A first version must be in use at the start of next week; the system will keep evolving while in use and will later be handed over to another developer.
+The system is a LangGraph-based agent that, twice a week, checks the homework of about 40 second-year students in a .NET 10 Web API course, reports what is present and what is missing, and proposes fixes as a PR to each student's repo after manual approval. A first version must be in use at the start of next week; the system will keep evolving while in use and will later be handed over to another developer.
 
 **Course context.** Students build a single project incrementally over the semester; each assignment adds a few dozen lines of code. Most work in fixed pairs, but each has their own repo. AI use is forbidden, and the expected code level is relatively basic. At some point the projects use SQL Server, first through a direct connection (ADO.NET) and later through EF Core.
 
@@ -23,7 +23,7 @@ The system is a LangGraph-based agent that, twice a week, checks the homework of
 - Automatic disqualification on suspected AI use.
 - A final grade without human oversight.
 - Multiple users, permissions, and server-side automatic scheduling.
-- Support for languages or frameworks other than .NET 9 Web API.
+- Support for languages or frameworks other than .NET 10 Web API.
 
 ## 2. Requirements
 
@@ -53,7 +53,7 @@ The table lists the functional requirements and their priority for the first ver
 - **Precision:** every finding carries evidence (file, line, quote) and a reference to a requirement.
 - **Safety:** student code runs only in an isolated container; secrets live only in `.env`.
 - **Cost:** a cheap model for simple checks, a strong model for the judge and fixes; model choice in configuration.
-- **Environment:** Windows, Docker Desktop, .NET 9 SDK, Python 3.12.
+- **Environment:** Windows, Docker Desktop, .NET 10 SDK, Python 3.12.
 
 ## 3. Layered architecture and dependency rules
 
@@ -291,7 +291,7 @@ lenient_notes:
 
 ## 9. Running code in Docker with SQL Server
 
-Each repo is built and run in an isolated .NET 9 container, against one shared SQL Server container with a separate database per repo. This is the highest-risk stage, so it starts with an isolated spike before the full implementation.
+Each repo is built and run in an isolated .NET 10 container, against one shared SQL Server container with a separate database per repo. This is the highest-risk stage, so it starts with an isolated spike before the full implementation.
 
 **Flow per repo**
 
