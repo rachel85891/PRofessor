@@ -3,16 +3,28 @@ from datetime import UTC, datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
+from alembic import command
 from alembic.autogenerate import compare_metadata
+from alembic.config import Config
 from alembic.migration import MigrationContext
 from sqlalchemy import delete, inspect, select, text
 
-from hw_checker.adapters.storage_sqlite import migrate
+from hw_checker.adapters.storage_sqlite import SqlStorage, mapping, migrate
 from hw_checker.adapters.storage_sqlite.database import Database, sqlite_file
+from hw_checker.adapters.storage_sqlite.migrate import MIGRATIONS_DIR
 from hw_checker.adapters.storage_sqlite.schema import Base, FindingRow, RepoRunRow, RunRow
 from hw_checker.domain.errors import StorageError
+from tests.unit.storage import builders
 
-TABLES = {"runs", "repo_runs", "findings", "judged_findings", "proposals", "review_decisions"}
+TABLES = {
+    "runs",
+    "repo_runs",
+    "findings",
+    "not_evaluated",
+    "judged_findings",
+    "proposals",
+    "review_decisions",
+}
 
 
 def url_for(path: Path) -> str:
@@ -51,9 +63,78 @@ def test_migrate_is_idempotent(tmp_path: Path) -> None:
     try:
         with db.engine.connect() as connection:
             versions = connection.execute(text("SELECT version_num FROM alembic_version")).all()
-        assert versions == [("0001",)]
+        assert versions == [("0002",)]
     finally:
         db.dispose()
+
+
+def run_alembic(url: str, action: str, revision: str) -> None:
+    """Upgrade or downgrade to one revision, as `migrate()` does for the head."""
+    config = Config()
+    config.set_main_option("script_location", str(MIGRATIONS_DIR))
+    db = Database(url)
+    try:
+        with db.engine.begin() as connection:
+            config.attributes["connection"] = connection
+            getattr(command, action)(config, revision)
+    finally:
+        db.dispose()
+
+
+def test_migrate_upgrades_a_0001_database_and_keeps_its_rows(tmp_path: Path) -> None:
+    url = url_for(tmp_path / "hw.db")
+    run_alembic(url, "upgrade", "0001")
+    run = builders.full_run()
+    old_repo_run = builders.proposal_repo_run()
+    db = Database(url)
+    try:
+        with db.session("seed 0001") as session:
+            run_record = RunRow(run_id=run.run_id)
+            mapping.fill_run_row(run_record, run)
+            session.add(run_record)
+            session.flush()
+            repo_record = RepoRunRow(repo_run_id=old_repo_run.repo_run_id, run_id=run.run_id)
+            mapping.fill_repo_run_row(repo_record, old_repo_run)
+            session.add(repo_record)
+            session.flush()
+            session.add_all(mapping.finding_rows(old_repo_run))
+    finally:
+        db.dispose()
+
+    migrate(url)
+
+    storage = SqlStorage(url)
+    try:
+        (loaded,) = storage.runs.get(run.run_id).repo_runs
+        assert loaded == old_repo_run.model_copy(update={"judged_findings": ()})
+        assert loaded.assignment_results[0].not_evaluated == ()
+        storage.runs.save(run)
+        assert storage.runs.get(run.run_id).repo_runs[1:] == run.repo_runs[:2]
+    finally:
+        storage.close()
+
+
+def test_downgrade_to_0001_drops_only_the_not_evaluated_table(tmp_path: Path) -> None:
+    url = url_for(tmp_path / "hw.db")
+    migrate(url)
+    storage = SqlStorage(url)
+    try:
+        storage.runs.save(builders.full_run())
+    finally:
+        storage.close()
+
+    run_alembic(url, "downgrade", "0001")
+
+    db = Database(url)
+    try:
+        tables = set(inspect(db.engine).get_table_names())
+        assert "not_evaluated" not in tables
+        assert tables >= TABLES - {"not_evaluated"}
+        with db.session("count") as session:
+            assert len(session.scalars(select(RepoRunRow)).all()) == 3
+    finally:
+        db.dispose()
+    migrate(url)
 
 
 def test_migrated_schema_matches_the_table_models(database: Database) -> None:

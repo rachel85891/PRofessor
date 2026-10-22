@@ -1,4 +1,5 @@
-"""SQLAlchemy table models for runs, repo runs, findings, proposals and review decisions.
+"""SQLAlchemy table models for runs, repo runs, findings, not-evaluated requirements,
+proposals and review decisions.
 
 Columns that are filtered or sorted on are real columns; nested value objects are stored as
 JSON written with the domain models' own JSON serialization. Only portable types are used.
@@ -108,6 +109,21 @@ class FindingRow(_FindingColumns, Base):
         ID_TYPE, ForeignKey("repo_runs.repo_run_id", ondelete="CASCADE"), index=True
     )
     result_assignment_id: Mapped[str] = mapped_column(ID_TYPE)
+
+
+class NotEvaluatedRow(Base):
+    """A requirement that could not be checked in one assignment result, and why."""
+
+    __tablename__ = "not_evaluated"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    repo_run_id: Mapped[str] = mapped_column(
+        ID_TYPE, ForeignKey("repo_runs.repo_run_id", ondelete="CASCADE"), index=True
+    )
+    result_assignment_id: Mapped[str] = mapped_column(ID_TYPE)
+    position: Mapped[int] = mapped_column(Integer)
+    requirement_id: Mapped[str] = mapped_column(ID_TYPE)
+    reason: Mapped[str] = mapped_column(String(32), index=True)
 
 
 class JudgedFindingRow(_FindingColumns, Base):

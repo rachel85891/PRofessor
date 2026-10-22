@@ -67,6 +67,18 @@ BUILD_FAILED_NO_DETAIL = MessageTemplate(
     en="The project does not build. The build log has the details.",
 )
 
+STARTUP_CRASHED = MessageTemplate(
+    name="STARTUP_CRASHED",
+    he="הפרויקט נבנה, אבל קורס בעלייה. החריגה: {exception}",
+    en="The project builds but crashes on startup. The exception: {exception}",
+)
+
+STARTUP_CRASHED_NO_DETAIL = MessageTemplate(
+    name="STARTUP_CRASHED_NO_DETAIL",
+    he="הפרויקט נבנה, אבל קורס בעלייה. הפרטים נמצאים ביומן ההרצה.",
+    en="The project builds but crashes on startup. The run log has the details.",
+)
+
 HTTP_PROBES_FAILED = MessageTemplate(
     name="HTTP_PROBES_FAILED",
     he="בקשות HTTP שלא החזירו את הסטטוס הצפוי:\n{probes}",
@@ -93,6 +105,8 @@ ALL_TEMPLATES: tuple[MessageTemplate, ...] = (
     FOLDER_MISSING,
     BUILD_FAILED,
     BUILD_FAILED_NO_DETAIL,
+    STARTUP_CRASHED,
+    STARTUP_CRASHED_NO_DETAIL,
     HTTP_PROBES_FAILED,
     PROBE_WRONG_STATUS,
     PROBE_NO_ANSWER,
