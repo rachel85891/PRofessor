@@ -55,7 +55,8 @@ Unknown fields are rejected, so a typo such as `chek` is reported instead of bei
 | `method` | yes | `GET`, `POST`, `PUT`, `PATCH`, `DELETE`, `HEAD` or `OPTIONS` (uppercase). |
 | `path` | yes | Starts with `/`, for example `/api/products/1`. |
 | `path_alternatives` | no | Other paths a correct solution may use, each starting with `/`. The task does not fix route names, so one student writes `/api/users` and another `/api/user`. The checker reads the routes declared in the student's code and sends the probe to the first of `path`, then `path_alternatives`, that the code declares for the probe's method. If none is declared, the probe is not sent and the requirement is "not evaluated" (reason `route_not_found`), with the student's routes shown to the reviewer. |
-| `body` | no | The request body: either written as YAML fields (converted to JSON) or as JSON text in quotes. |
+| `body` | no | The request body: either written as YAML fields (converted to JSON) or as JSON text in quotes. It says what the request *means*; the checker adapts it to each student's own model (see "Bodies and student models" below). |
+| `capture` | no | A value to take from the response for later probes: `capture: {name: userId, from: body:id}` (a top-level field of the JSON response, upper and lower case ignored) or `from: location` (the last part of the `Location` header). Later probes use it as `{userId}` in their `path`, `path_alternatives` or body text. |
 | `expected_status` | yes | The status code a correct solution returns, 100–599. |
 | `allowed_statuses` | no | All status codes that count as correct. Must include `expected_status`. If omitted, only `expected_status` counts. |
 | `notes` | no | A note for the reviewer. |
@@ -146,6 +147,52 @@ When route names are up to the student, list the other names as `path_alternativ
           password: pw123
         expected_status: 200
 ```
+
+**Chained probes.** Ids differ between students, because each data file holds different users. To create a user and then read it back, update it, log in with it and delete it, capture the id from the create response and use it as `{name}`. Probes run in the order they are written, across requirements:
+
+```yaml
+  - id: hw01-r3
+    kind: http
+    title: POST creates a user
+    severity: critical
+    probes:
+      - method: POST
+        path: /api/users
+        path_alternatives: [/api/user]
+        body: {userName: newuser, password: pw123}
+        expected_status: 201
+        allowed_statuses: [201, 200]
+        capture: {name: userId, from: body:id}
+  - id: hw01-r4
+    kind: http
+    title: The created user can be read back
+    severity: major
+    probes:
+      - method: GET
+        path: /api/users/{userId}
+        path_alternatives: [/api/user/{userId}]
+        expected_status: 200
+  - id: hw01-r5
+    kind: http
+    title: Login with the created user
+    severity: major
+    probes:
+      - method: POST
+        path: /api/users/login
+        path_alternatives: [/api/user/login]
+        body: {"userName|email": newuser, password: pw123}
+        expected_status: 200
+```
+
+A `{name}` must be captured by an earlier probe of the same file, or the file is rejected. If a capture fails (the response has no JSON, no such field, or no `Location`), the probes that need it are not sent, and their requirements are "not evaluated" (reason `dependency_failed`), never failed; the probe that could not capture is judged on its own. A captured value is text: in a body, a field the student's model declares as a number receives it as a number.
+
+**Bodies and student models.** Students define their own classes for request bodies, so the checker reads the model of the action a probe reaches and adapts the body to it:
+
+- Each body key is matched to a field of the model, upper and lower case ignored. A value is converted when that is safe (`"12345"` becomes `12345` for an `int` field).
+- A key may list alternatives, `"userName|email"` (quote it in YAML): the value goes to every listed field the model has. It is a mismatch only when none of them exists.
+- When no field has a key's name, the one field whose name contains it is used, ignoring case, `_`, `-` and digits: `password` matches `LogInPassword`, `l_password` or `logpassword`. When several fields contain it (`name` in `FirstName` and `LastName`), nothing is guessed.
+- Required fields the body does not mention get placeholder values; an e-mail field gets an e-mail address.
+- A failing probe whose body had a key that fits no field (or a value that could not be converted) is "not evaluated" (reason `body_mismatch`), with the details shown to the reviewer.
 
 **build**: The project builds and starts without crashing. No other fields are needed.
 
