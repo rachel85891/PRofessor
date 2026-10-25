@@ -3,23 +3,34 @@ import uuid
 
 import pytest
 
-from hw_checker.adapters.docker_runner.body_adapter import adapt_body, convert_value, dummy_value
+from hw_checker.adapters.docker_runner.body_adapter import (
+    adapt_body,
+    convert_value,
+    dummy_value,
+    normalize_name,
+)
 from hw_checker.adapters.docker_runner.body_models import BodyModel, BodyProperty, ModelUnavailable
 from hw_checker.domain import BodyFieldOutcome
 
-MATCHED, CONVERTED, FILLED, UNMATCHED, NOT_CONVERTIBLE = (
+MATCHED, CONVERTED, FILLED, UNMATCHED, NOT_CONVERTIBLE, BY_CONTAINS = (
     BodyFieldOutcome.MATCHED,
     BodyFieldOutcome.CONVERTED,
     BodyFieldOutcome.FILLED,
     BodyFieldOutcome.UNMATCHED,
     BodyFieldOutcome.NOT_CONVERTIBLE,
+    BodyFieldOutcome.MATCHED_BY_CONTAINS,
 )
 
 
 def prop(
-    name: str, type_name: str, *, nullable: bool = False, required: bool = False
+    name: str,
+    type_name: str,
+    *,
+    nullable: bool = False,
+    required: bool = False,
+    email: bool = False,
 ) -> BodyProperty:
-    return BodyProperty(name, type_name, nullable, required)
+    return BodyProperty(name, type_name, nullable, required, email)
 
 
 USER = BodyModel(
@@ -76,7 +87,7 @@ def test_keys_match_properties_ignoring_case() -> None:
 
 def test_mismatch_is_reported_only_for_unmatched_or_unconvertible_fields() -> None:
     _, filled_only = adapt_body('{"userName":"u","password":1}', USER)
-    _, unmatched = adapt_body('{"userName":"u","pass":1}', USER)
+    _, unmatched = adapt_body('{"userName":"u","pwd":1}', USER)
     _, unconvertible = adapt_body('{"userName":"u","password":"secret"}', USER)
 
     assert not filled_only.mismatched
@@ -179,3 +190,124 @@ def test_body_that_is_not_an_object_is_sent_as_written(body: str, reason: str) -
 
     assert sent == body
     assert not adaptation.adapted and reason in adaptation.reason
+
+
+# ---------------------------------------------------------------- alternatives and lenient names
+
+
+def notes_of(
+    body: dict[str, object], model: BodyModel
+) -> list[tuple[str, str | None, str | None, BodyFieldOutcome]]:
+    _, adaptation = adapt_body(json.dumps(body), model)
+    return [(n.field, n.alternative, n.property_name, n.outcome) for n in adaptation.notes]
+
+
+FAKE = "pw"
+"""A made-up password value."""
+EMAIL_LOGIN = BodyModel(
+    "Login", (prop("Email", "string", required=True), prop("Password", "string"))
+)
+BOTH = BodyModel("Account", (prop("UserName", "string"), prop("Email", "string")))
+
+
+def test_an_alternative_key_goes_to_the_one_field_the_model_has() -> None:
+    sent, adaptation = adapt_body('{"userName|email":"a@b.c","password":"pw"}', EMAIL_LOGIN)
+
+    assert json.loads(sent) == {"email": "a@b.c", "password": FAKE}
+    assert [(n.field, n.alternative, n.property_name) for n in adaptation.notes] == [
+        ("userName|email", "email", "Email"),
+        ("password", None, "Password"),
+    ]
+    assert not adaptation.mismatched
+
+
+def test_an_alternative_key_goes_to_every_field_the_model_has() -> None:
+    sent, _ = adapt_body('{"userName|email":"a@b.c"}', BOTH)
+
+    assert json.loads(sent) == {"userName": "a@b.c", "email": "a@b.c"}
+    assert notes_of({"userName|email": "a@b.c"}, BOTH) == [
+        ("userName|email", "userName", "UserName", MATCHED),
+        ("userName|email", "email", "Email", MATCHED),
+    ]
+
+
+def test_an_alternative_key_with_no_field_is_unmatched_and_not_sent() -> None:
+    sent, adaptation = adapt_body('{"login|nick":"x"}', EMAIL_LOGIN)
+
+    assert "login|nick" not in json.loads(sent)
+    assert (adaptation.notes[0].field, adaptation.notes[0].outcome) == ("login|nick", UNMATCHED)
+    assert adaptation.mismatched
+
+
+@pytest.mark.parametrize(
+    "property_name", ["LogInPassword", "l_password", "logpassword", "Password2"]
+)
+def test_password_matches_a_property_that_contains_it(property_name: str) -> None:
+    model = BodyModel("Login", (prop("LogInEmail", "string"), prop(property_name, "string")))
+
+    sent, adaptation = adapt_body('{"password":"pw"}', model)
+
+    (note,) = adaptation.notes
+    assert (note.property_name, note.outcome) == (property_name, BY_CONTAINS)
+    assert json.loads(sent) == {property_name[0].lower() + property_name[1:]: "pw"}
+    assert not adaptation.mismatched
+
+
+def test_email_matches_by_contains_inside_an_alternative_key() -> None:
+    model = BodyModel(
+        "Login",
+        (
+            prop("logemail", "string", required=True, email=True),
+            prop("logpassword", "string", required=True),
+        ),
+    )
+
+    sent, adaptation = adapt_body('{"userName|email":"a@b.c","password":"pw"}', model)
+
+    assert json.loads(sent) == {
+        "logemail": "a@b.c",
+        "logpassword": FAKE,
+    }
+    assert [(n.alternative, n.property_name, n.outcome) for n in adaptation.notes] == [
+        ("email", "logemail", BY_CONTAINS),
+        (None, "logpassword", BY_CONTAINS),
+    ]
+
+
+def test_several_containing_properties_are_never_guessed_between() -> None:
+    model = BodyModel("Person", (prop("FirstName", "string"), prop("LastName", "string")))
+
+    _, adaptation = adapt_body('{"name":"Dana"}', model)
+
+    (note,) = adaptation.notes
+    assert note.outcome is UNMATCHED
+    assert note.candidates == ("FirstName", "LastName")
+    assert adaptation.mismatched
+
+
+def test_an_exact_name_wins_over_containing_ones() -> None:
+    model = BodyModel("Person", (prop("Name", "string"), prop("LastName", "string")))
+
+    assert notes_of({"name": "Dana"}, model) == [("name", None, "Name", MATCHED)]
+
+
+@pytest.mark.parametrize(
+    ("name", "normalized"),
+    [("LogInPassword", "loginpassword"), ("l_password", "lpassword"), ("e-mail2", "email")],
+)
+def test_names_are_normalized(name: str, normalized: str) -> None:
+    assert normalize_name(name) == normalized
+
+
+@pytest.mark.parametrize(
+    ("property_", "dummy"),
+    [
+        (prop("Contact", "string", email=True), "probe-contact@example.com"),
+        (prop("LogInEmail", "string"), "probe-loginemail@example.com"),
+        (prop("user_e_mail", "string"), "probe-user_e_mail@example.com"),
+        (prop("Mailbox", "string"), "probe-mailbox"),
+        (prop("Name", "string"), "probe-name"),
+    ],
+)
+def test_email_properties_get_an_email_dummy(property_: BodyProperty, dummy: str) -> None:
+    assert dummy_value(property_) == dummy

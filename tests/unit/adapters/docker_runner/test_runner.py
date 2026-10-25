@@ -6,10 +6,12 @@ from urllib.parse import urlsplit
 
 import pytest
 
-from hw_checker.adapters.docker_runner.engine import EngineError, Mount
+from hw_checker.adapters.docker_runner.engine import EngineError, ExecResult, Mount
 from hw_checker.adapters.docker_runner.runner import DockerCodeRunner
 from hw_checker.adapters.docker_runner.runner_config import DockerRunnerConfig
 from hw_checker.domain import (
+    CaptureFailure,
+    CaptureResult,
     ExecutionRequest,
     FailureKind,
     HttpMethod,
@@ -415,6 +417,82 @@ def test_probe_body_is_adapted_to_the_students_model(repo: Path, tmp_path: Path)
     ]
 
 
+CHAIN_CONTROLLER = (
+    '[Route("api/[controller]")]\npublic class UsersController : ControllerBase\n{\n'
+    "    [HttpPost]\n    public IActionResult Post([FromBody] Account a) => Ok();\n"
+    '    [HttpGet("{id}")]\n    public IActionResult Get(int id) => Ok();\n'
+    '    [HttpPut("{id}")]\n    public IActionResult Put(int id, [FromBody] Account a) => Ok();\n'
+    "}\npublic class Account\n{\n    public int Id { get; set; }\n"
+    "    public string UserName { get; set; }\n}\n"
+)
+
+
+def chained(method: HttpMethod, path: str, body: str | None = None, **extra: object) -> HttpProbe:
+    return HttpProbe.model_validate(
+        {
+            "requirement_id": "hw01-r1",
+            "assignment_id": "hw01",
+            "method": method,
+            "path": path,
+            "body": body,
+            "expected_status": 200,
+        }
+        | extra
+    )
+
+
+CHAIN = (
+    chained(
+        HttpMethod.POST,
+        "/api/users",
+        '{"userName":"newuser"}',
+        capture={"name": "userId", "source": "body:id"},
+    ),
+    chained(HttpMethod.GET, "/api/users/{userId}"),
+    chained(HttpMethod.PUT, "/api/users/{userId}", '{"id":"{userId}","userName":"renamed"}'),
+)
+
+
+def test_a_captured_id_is_used_by_later_probes(repo: Path, tmp_path: Path) -> None:
+    (repo / "Controllers" / "ProductsController.cs").write_text(CHAIN_CONTROLLER, encoding="utf-8")
+    engine = FakeEngine(
+        probe_responses={("POST", "/api/users"): (201, {}, '{"id":7,"userName":"newuser"}')}
+    )
+
+    result = runner(engine).execute(request(repo, tmp_path, probes=CHAIN))
+
+    post, get, put = result.probe_results
+    assert post.capture == CaptureResult(name="userId", value="7")
+    assert (get.sent_path, put.sent_path) == ("/api/users/7", "/api/users/7")
+    # The captured text "7" becomes a number for the model's int Id.
+    assert put.sent_body == '{"id":7,"userName":"renamed"}'
+    urls = [command[command.index("--") + 1] for command in engine.exec_commands]
+    assert sum(url.endswith("/api/users/7") for url in urls) == 2
+
+
+def test_a_failed_capture_stops_the_probes_that_need_it(repo: Path, tmp_path: Path) -> None:
+    (repo / "Controllers" / "ProductsController.cs").write_text(CHAIN_CONTROLLER, encoding="utf-8")
+    then_capture = chained(
+        HttpMethod.GET, "/api/users/{userId}", capture={"name": "again", "source": "body:id"}
+    )
+    needs_again = chained(HttpMethod.GET, "/api/users/{again}")
+    engine = FakeEngine(probe_responses={("POST", "/api/users"): (200, {}, "")})
+
+    result = runner(engine).execute(
+        request(repo, tmp_path, probes=(CHAIN[0], then_capture, needs_again))
+    )
+
+    post, dependent, second = result.probe_results
+    assert post.capture == CaptureResult(name="userId", failure=CaptureFailure.NO_JSON)
+    assert post.actual_status == 200 and post.passed
+    assert dependent.route_resolution is RouteResolution.DEPENDENCY_MISSING
+    assert dependent.capture == CaptureResult(name="again", failure=CaptureFailure.NOT_SENT)
+    assert dependent.error == "needs userId, which no earlier probe captured"
+    assert second.route_resolution is RouteResolution.DEPENDENCY_MISSING
+    urls = [command[command.index("--") + 1] for command in engine.exec_commands]
+    assert not any("/api/users/" in url for url in urls), "dependent probes were sent"
+
+
 def test_without_a_route_table_the_body_is_sent_as_written(repo: Path, tmp_path: Path) -> None:
     body = '{"name":"Desk","price":250}'
     engine = FakeEngine(probe_statuses=STATUSES)
@@ -491,6 +569,49 @@ def test_probes_run_in_order_with_body_and_content_type(repo: Path, tmp_path: Pa
     assert post[post.index("--header") + 1] == "Content-Type: application/json"
     assert post[post.index("--data-raw") + 1] == '{"name":"Desk","price":250}'
     assert "--header" not in probe_commands[0]
+
+
+def test_probe_records_a_short_response_excerpt(repo: Path, tmp_path: Path) -> None:
+    long_body = '{"id":3,"bio":"' + "x" * 1000 + '"}'
+    engine = FakeEngine(
+        probe_responses={
+            ("POST", "/api/products"): (201, {"Location": "/api/products/3"}, long_body)
+        }
+    )
+
+    result = runner(engine).execute(request(repo, tmp_path))
+
+    post = result.probe_results[2]
+    assert post.actual_status == 201
+    assert len(post.response_excerpt) == 500 and post.response_excerpt.startswith('{"id":3')
+    assert result.probe_results[0].response_excerpt == ""
+
+
+def test_sidecar_cuts_the_response_at_the_configured_size(repo: Path, tmp_path: Path) -> None:
+    engine = FakeEngine()
+
+    runner(engine).execute(request(repo, tmp_path))
+
+    command = engine.exec_commands[-1]
+    assert command[:2] == ("sh", "-c")
+    assert command[2] == 'set -o pipefail; curl "$@" | head -c 65536'
+    assert command[4:8] == ("--silent", "--globoff", "--dump-header", "-")
+
+
+def test_body_cut_short_still_gives_the_status(repo: Path, tmp_path: Path) -> None:
+    engine = FakeEngine()
+    original = engine.exec
+
+    def cut(container: str, command: tuple[str, ...]) -> ExecResult:
+        answer = original(container, command)
+        return ExecResult(23, answer.output + "partial \x00 binary")  # curl's write error
+
+    engine.exec = cut  # type: ignore[method-assign]
+
+    result = runner(engine).execute(request(repo, tmp_path))
+
+    assert result.failure_kind is None
+    assert [r.actual_status for r in result.probe_results] == [200, 200, 200]
 
 
 def test_probe_that_gets_no_answer_records_an_error(repo: Path, tmp_path: Path) -> None:

@@ -1,0 +1,79 @@
+"""Chained probes: values captured from one response and filled into later probes.
+
+"Create a user, then read it back" needs the id the app assigned, and ids differ between
+students. A probe can capture a value (`body:<field>` or `location`), and later probes use it
+as `{name}` in their path or in string values of their body. Values are used as text; the
+body adaptation converts them to the model's types afterwards.
+"""
+
+import json
+from urllib.parse import quote, urlsplit
+
+from hw_checker.adapters.docker_runner.http_response import HttpResponse
+from hw_checker.domain import CaptureFailure, CaptureResult, ProbeCapture
+from hw_checker.domain.assignment import VARIABLE_USE
+from hw_checker.domain.execution import MAX_CAPTURED_CHARS
+
+
+def fill_path(path: str, variables: dict[str, str]) -> str:
+    """`path` with each `{name}` replaced by its URL-encoded value."""
+    return VARIABLE_USE.sub(lambda match: quote(variables[match[1]], safe=""), path)
+
+
+def fill_body(body: str, variables: dict[str, str]) -> str:
+    """`body` (JSON text) with each `{name}` replaced by its value, escaped for a JSON string."""
+    return VARIABLE_USE.sub(lambda match: json.dumps(variables[match[1]])[1:-1], body)
+
+
+def capture_value(capture: ProbeCapture, response: HttpResponse | None) -> CaptureResult:
+    """The value `capture` takes from `response`, or why there is none."""
+    if response is None:
+        return CaptureResult(name=capture.name, failure=CaptureFailure.NO_RESPONSE)
+    field = capture.body_field
+    if field is None:
+        return _from_location(capture.name, response)
+    return _from_body(capture.name, field, response.body)
+
+
+def not_sent(capture: ProbeCapture | None) -> CaptureResult | None:
+    """The capture result of a probe that was not sent."""
+    if capture is None:
+        return None
+    return CaptureResult(name=capture.name, failure=CaptureFailure.NOT_SENT)
+
+
+def _from_location(name: str, response: HttpResponse) -> CaptureResult:
+    location = response.header("location")
+    segments = [] if not location else urlsplit(location).path.rstrip("/").split("/")
+    if not segments or not segments[-1]:
+        return CaptureResult(name=name, failure=CaptureFailure.NO_LOCATION)
+    return CaptureResult(name=name, value=segments[-1])
+
+
+def _from_body(name: str, field: str, body: str) -> CaptureResult:
+    try:
+        data = json.loads(body)
+    except ValueError:
+        return CaptureResult(name=name, failure=CaptureFailure.NO_JSON)
+    if not isinstance(data, dict):
+        return CaptureResult(name=name, failure=CaptureFailure.NO_JSON)
+    key = field if field in data else next((k for k in data if k.lower() == field.lower()), None)
+    if key is None:
+        return CaptureResult(name=name, failure=CaptureFailure.FIELD_MISSING)
+    value = data[key]
+    text = _as_text(value)
+    if text is None or len(text) > MAX_CAPTURED_CHARS:
+        return CaptureResult(name=name, failure=CaptureFailure.NOT_A_VALUE)
+    return CaptureResult(name=name, value=text)
+
+
+def _as_text(value: object) -> str | None:
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, str):
+        return value
+    if isinstance(value, int):
+        return str(value)
+    if isinstance(value, float):
+        return str(int(value)) if value.is_integer() else repr(value)
+    return None

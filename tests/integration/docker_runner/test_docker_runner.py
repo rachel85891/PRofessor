@@ -14,9 +14,13 @@ from hw_checker.checks.deterministic.checker import DeterministicRequirementChec
 from hw_checker.checks.registry import CheckRegistry
 from hw_checker.domain import (
     Assignment,
+    CaptureFailure,
+    CaptureResult,
     ExecutionResult,
     FailureKind,
+    Finding,
     HttpMethod,
+    HttpProbe,
     NotEvaluated,
     NotEvaluatedReason,
     PathFixKind,
@@ -32,18 +36,24 @@ from tests.integration.docker_runner.conftest import (
     ABSOLUTE_PATH_FIXTURE,
     ABSOLUTE_PATH_PROBES,
     CACHE_VOLUME,
+    CHAINED_PROBES,
     CUSTOM_MODEL_FIXTURE,
     CUSTOM_MODEL_PROBES,
     ITEMS_PROBES,
+    LOGIN_VARIANT_FIXTURES,
+    NO_ID_FIXTURE,
+    NO_ID_PROBES,
     OLDER_FRAMEWORK_FIXTURES,
     PREFIX,
     PROJECT,
     SAMPLE_PROBES,
+    TEST_PASSWORD,
     TWO_CONTROLLERS_FIXTURE,
     TWO_CONTROLLERS_PROBES,
     USER_SIGNIN_FIXTURE,
     USER_SIGNIN_PROBES,
     leftovers,
+    login_variant_probes,
     make_request,
     replace_in,
     runner_config,
@@ -112,6 +122,9 @@ def test_sample_api_writes_and_reads_its_text_file_and_answers_every_probe(
         ("UsersController",),
     )
     assert result.path_rewrites == ()
+    created = result.probe_results[2]
+    assert '"userName":"newuser"' in created.response_excerpt, describe(result)
+    assert result.probe_results[3].response_excerpt.startswith('{"id":3')
     assert result.routes is not None and result.routes.usable
     assert {(r.method, r.template) for r in result.routes.routes} == {
         (HttpMethod.GET, "api/Users"),
@@ -390,6 +403,97 @@ def test_probe_bodies_are_adapted_to_the_students_model(
     assert checked.not_evaluated == (
         NotEvaluated(requirement_id="hw01-r2", reason=NotEvaluatedReason.BODY_MISMATCH),
     )
+    assert_nothing_left(engine)
+
+
+def evaluate(
+    probes: tuple[HttpProbe, ...], repo: Path, result: ExecutionResult
+) -> tuple[tuple[Finding, ...], tuple[NotEvaluated, ...]]:
+    """Run the real deterministic checks over one http requirement per requirement id."""
+    ids = list(dict.fromkeys(p.requirement_id for p in probes))
+    requirements = tuple(
+        Requirement(
+            id=requirement_id,
+            title=requirement_id,
+            severity=Severity.MAJOR,
+            kind=RequirementKind.HTTP,
+            http_probes=tuple(p for p in probes if p.requirement_id == requirement_id),
+        )
+        for requirement_id in ids
+    )
+    assignment = Assignment(id="hw01", order=1, title="Users", requirements=requirements)
+    checker = DeterministicRequirementChecker(CheckRegistry(builtin_checks()))
+    checked = DeterministicCheckService(checker).evaluate(assignment, repo, result)
+    return checked.findings, checked.not_evaluated
+
+
+def test_chained_create_read_update_login_delete_scenario(
+    docker_runner: DockerCodeRunner,
+    engine: SdkDockerEngine,
+    sample_copy: SampleCopy,
+    tmp_path: Path,
+) -> None:
+    repo = sample_copy()
+
+    result = docker_runner.execute(make_request(repo, tmp_path / "logs", probes=CHAINED_PROBES))
+
+    assert [(r.probe.method.value, r.sent_path, r.actual_status) for r in result.probe_results] == [
+        ("POST", "/api/users", 201),
+        ("GET", "/api/users/3", 200),
+        ("PUT", "/api/users/3", 204),
+        ("POST", "/api/users/login", 200),
+        ("POST", "/api/users/login", 401),
+        ("DELETE", "/api/users/3", 204),
+        ("GET", "/api/users/3", 404),
+    ], describe(result)
+    assert result.probe_results[0].capture == CaptureResult(name="userId", value="3")
+    assert evaluate(CHAINED_PROBES, repo, result) == ((), ())
+    assert_nothing_left(engine)
+
+
+def test_a_post_without_an_id_gives_dependency_failed_not_findings(
+    docker_runner: DockerCodeRunner,
+    engine: SdkDockerEngine,
+    sample_copy: SampleCopy,
+    tmp_path: Path,
+) -> None:
+    repo = sample_copy(source=NO_ID_FIXTURE)
+
+    result = docker_runner.execute(make_request(repo, tmp_path / "logs", probes=NO_ID_PROBES))
+
+    post, read = result.probe_results
+    assert post.actual_status == 200, describe(result)
+    assert post.capture == CaptureResult(name="userId", failure=CaptureFailure.NO_JSON)
+    assert read.route_resolution is RouteResolution.DEPENDENCY_MISSING
+    assert evaluate(NO_ID_PROBES, repo, result) == (
+        (),
+        (NotEvaluated(requirement_id="hw01-r2", reason=NotEvaluatedReason.DEPENDENCY_FAILED),),
+    )
+    assert_nothing_left(engine)
+
+
+@pytest.mark.parametrize("resource", sorted(LOGIN_VARIANT_FIXTURES))
+def test_login_with_field_alternatives_fits_each_login_model(
+    docker_runner: DockerCodeRunner,
+    engine: SdkDockerEngine,
+    sample_copy: SampleCopy,
+    tmp_path: Path,
+    resource: str,
+) -> None:
+    repo = sample_copy(source=LOGIN_VARIANT_FIXTURES[resource])
+    probes = login_variant_probes(resource)
+
+    result = docker_runner.execute(make_request(repo, tmp_path / "logs", probes=probes))
+
+    assert [r.actual_status for r in result.probe_results] == [201, 200, 401], describe(result)
+    login = result.probe_results[1]
+    assert login.body_adaptation is not None and not login.body_adaptation.mismatched
+    if resource == "customers":
+        assert login.sent_body == (
+            f'{{"logInEmail":"newuser@example.com","logInPassword":"{TEST_PASSWORD}"}}'
+        )
+        assert {n.outcome.value for n in login.body_adaptation.notes} == {"matched_by_contains"}
+    assert evaluate(probes, repo, result) == ((), ())
     assert_nothing_left(engine)
 
 

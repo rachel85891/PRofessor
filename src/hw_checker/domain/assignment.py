@@ -1,5 +1,6 @@
 """Assignment models: assignments, requirements, HTTP probes, severity and kinds."""
 
+import re
 from collections.abc import Mapping
 from enum import StrEnum
 from types import MappingProxyType
@@ -96,6 +97,26 @@ CheckParams = Annotated[
 ProbePath = Annotated[str, StringConstraints(pattern=r"^/")]
 """A request path; it starts with `/`."""
 
+VARIABLE_NAME_PATTERN = r"[A-Za-z_][A-Za-z0-9_]*"
+VARIABLE_USE = re.compile(r"\{(" + VARIABLE_NAME_PATTERN + r")\}")
+"""`{name}` in a probe's path or body: a value captured by an earlier probe."""
+
+
+class ProbeCapture(DomainModel):
+    """A value a probe takes from its response, for later probes to use as `{name}`.
+
+    `source` is `body:<field>` (a top-level field of a JSON response, matched ignoring case)
+    or `location` (the last path segment of the `Location` header).
+    """
+
+    name: Annotated[str, StringConstraints(pattern=rf"^{VARIABLE_NAME_PATTERN}$")]
+    source: Annotated[str, StringConstraints(pattern=rf"^(body:{VARIABLE_NAME_PATTERN}|location)$")]
+
+    @property
+    def body_field(self) -> str | None:
+        """The response field for a `body:<field>` source; None for `location`."""
+        return self.source.removeprefix("body:") if self.source.startswith("body:") else None
+
 
 class HttpProbe(DomainModel):
     """One HTTP request against the running app and the statuses that count as a pass.
@@ -112,6 +133,7 @@ class HttpProbe(DomainModel):
     method: HttpMethod
     path: ProbePath
     path_alternatives: tuple[ProbePath, ...] = ()
+    capture: ProbeCapture | None = None
     body: str | None = None
     expected_status: HttpStatusCode
     allowed_statuses: tuple[HttpStatusCode, ...] = Field(default=(), validate_default=True)
@@ -121,6 +143,14 @@ class HttpProbe(DomainModel):
     def candidate_paths(self) -> tuple[str, ...]:
         """`path` and then `path_alternatives`, in the order they are tried."""
         return (self.path, *self.path_alternatives)
+
+    @property
+    def variables_used(self) -> tuple[str, ...]:
+        """The `{name}` variables in the paths and body, each once, in order of appearance."""
+        found: list[str] = []
+        for text in (*self.candidate_paths, self.body or ""):
+            found += [name for name in VARIABLE_USE.findall(text) if name not in found]
+        return tuple(found)
 
     @field_validator("allowed_statuses")
     @classmethod

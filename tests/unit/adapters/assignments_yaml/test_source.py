@@ -161,6 +161,59 @@ def test_path_alternative_without_leading_slash_is_reported(tmp_path: Path) -> N
     assert "path_alternatives" in message
 
 
+CHAINED = """\
+id: hw02
+order: 2
+title: Users
+requirements:
+  - id: hw02-r1
+    kind: http
+    title: Create a user
+    severity: critical
+    probes:
+      - method: POST
+        path: /api/users
+        body: {userName: newuser}
+        expected_status: 201
+        capture: {name: userId, from: body:id}
+  - id: hw02-r2
+    kind: http
+    title: Read it back
+    severity: major
+    probes:
+      - method: GET
+        path: /api/users/{userId}
+        expected_status: 200
+"""
+
+
+def test_capture_loads_and_later_probes_may_use_it(tmp_path: Path) -> None:
+    _, hw02 = load(tmp_path, {"_general": GENERAL, "hw02": CHAINED}).load_all()
+
+    create, read = (requirement.http_probes[0] for requirement in hw02.requirements)
+    assert create.capture is not None
+    assert (create.capture.name, create.capture.source) == ("userId", "body:id")
+    assert read.variables_used == ("userId",)
+
+
+def test_variable_used_before_it_is_captured_names_the_requirement(tmp_path: Path) -> None:
+    swapped = CHAINED.replace("path: /api/users/{userId}", "path: /api/users/{orderId}")
+
+    message = problems_of(load(tmp_path, {"_general": GENERAL, "hw02": swapped}))
+
+    assert "requirement 'hw02-r2', probe 1: {orderId} is used before any probe captures it" in (
+        message
+    )
+
+
+def test_invalid_capture_source_is_reported(tmp_path: Path) -> None:
+    broken = CHAINED.replace("from: body:id", "from: header:Location")
+
+    message = problems_of(load(tmp_path, {"_general": GENERAL, "hw02": broken}))
+
+    assert "requirement 'hw02-r1'" in message and "capture" in message
+
+
 def test_probe_body_mapping_becomes_compact_json(tmp_path: Path) -> None:
     _, hw01, _ = load(tmp_path, {"_general": GENERAL, "hw01": HW01, "hw02": HW02}).load_all()
 

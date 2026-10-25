@@ -92,6 +92,9 @@ runner:
   # a larger repo is not run and is flagged for manual review.
   max_archive_mb: 200
   max_file_mb: 50
+  # The most of each probe response (headers and body) read back; larger bodies are cut,
+  # never failed.
+  max_response_kb: 64
   # Full build and run logs, per run and repo; relative to workspace_dir.
   logs_root: logs
 

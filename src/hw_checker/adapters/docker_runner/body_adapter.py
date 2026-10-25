@@ -5,11 +5,17 @@ password 12345"); each student's model decides its shape. Every body key is matc
 model property ignoring case, values are converted to the property's type when that is
 safe, required properties the body does not mention get deterministic dummy values, and
 every step is recorded, so the reviewer sees exactly what was sent and why.
+
+A key may list alternatives, `userName|email`: the value goes to every alternative the model
+has. A key (or alternative) with no property of that name falls back to lenient matching:
+with case, `_`, `-` and digits ignored, the one property whose name contains it
+(`password` for `LogInPassword`); several such properties are never guessed between.
 """
 
 import json
 import re
 import uuid
+from dataclasses import dataclass
 from datetime import date, datetime
 
 from hw_checker.adapters.docker_runner.body_models import BodyModel, BodyProperty, ModelUnavailable
@@ -22,6 +28,8 @@ DATE_TYPES = frozenset({"DateTime", "DateTimeOffset", "DateOnly"})
 DUMMY_DATE = date(2025, 1, 1)
 """A fixed date rather than today, so reruns send the same body."""
 
+ALTERNATIVE_SEPARATOR = "|"
+_IGNORED_IN_NAMES = re.compile(r"[_\-\d]")
 _INTEGER_TEXT = re.compile(r"^\s*-?\d+\s*$")
 _NUMBER_TEXT = re.compile(r"^\s*-?\d+(\.\d+)?\s*$")
 _NOT_CONVERTIBLE = object()
@@ -45,29 +53,44 @@ def adapt_body(body: str, model: BodyModel | ModelUnavailable) -> tuple[str, Bod
         return body, BodyAdaptation(
             adapted=False, model=model.class_name, reason="body is not a JSON object"
         )
-    by_name = {prop.name.lower(): prop for prop in model.properties}
     sent: dict[str, object] = {}
     notes: list[BodyFieldNote] = []
     covered: set[str] = set()
     for key, value in intended.items():
-        prop = by_name.get(key.lower())
-        if prop is None:
-            sent[key] = value
-            notes.append(BodyFieldNote(field=key, outcome=BodyFieldOutcome.UNMATCHED))
-            continue
-        covered.add(prop.name)
-        converted = convert_value(value, prop)
-        if converted is _NOT_CONVERTIBLE:
-            sent[key] = dummy_value(prop)
-            outcome = BodyFieldOutcome.NOT_CONVERTIBLE
-        else:
-            sent[key] = converted
-            outcome = (
-                BodyFieldOutcome.MATCHED
-                if _same_json(converted, value)
-                else BodyFieldOutcome.CONVERTED
+        has_alternatives = ALTERNATIVE_SEPARATOR in key
+        matches, candidates = match_key(key, model.properties)
+        if not matches:
+            if not has_alternatives:
+                sent[key] = value  # a plain key is kept, as it may still bind
+            notes.append(
+                BodyFieldNote(field=key, outcome=BodyFieldOutcome.UNMATCHED, candidates=candidates)
             )
-        notes.append(BodyFieldNote(field=key, property_name=prop.name, outcome=outcome))
+            continue
+        for match in matches:
+            prop = match.prop
+            covered.add(prop.name)
+            name = key if not (has_alternatives or match.by_contains) else _json_name(prop.name)
+            converted = convert_value(value, prop)
+            if converted is _NOT_CONVERTIBLE:
+                sent[name] = dummy_value(prop)
+                outcome = BodyFieldOutcome.NOT_CONVERTIBLE
+            else:
+                sent[name] = converted
+                outcome = (
+                    BodyFieldOutcome.MATCHED_BY_CONTAINS
+                    if match.by_contains
+                    else BodyFieldOutcome.MATCHED
+                    if _same_json(converted, value)
+                    else BodyFieldOutcome.CONVERTED
+                )
+            notes.append(
+                BodyFieldNote(
+                    field=key,
+                    property_name=prop.name,
+                    outcome=outcome,
+                    alternative=match.alternative if has_alternatives else None,
+                )
+            )
     for prop in model.properties:
         if prop.required and prop.name not in covered:
             sent[_json_name(prop.name)] = dummy_value(prop)
@@ -78,6 +101,53 @@ def adapt_body(body: str, model: BodyModel | ModelUnavailable) -> tuple[str, Bod
             )
     text = json.dumps(sent, ensure_ascii=False, separators=(",", ":"))
     return text, BodyAdaptation(adapted=True, model=model.class_name, notes=tuple(notes))
+
+
+@dataclass(frozen=True)
+class KeyMatch:
+    """A property a body key (or one of its alternatives) was matched to."""
+
+    alternative: str
+    prop: BodyProperty
+    by_contains: bool
+
+
+def match_key(
+    key: str, properties: tuple[BodyProperty, ...]
+) -> tuple[list[KeyMatch], tuple[str, ...]]:
+    """The properties `key` matches, each once, and the candidates of unresolved alternatives.
+
+    Each alternative of `a|b|c` matches a property of the same name, ignoring case; failing
+    that, the single property whose normalized name contains the alternative's normalized
+    name. When several properties contain it, it matches nothing and they are returned as
+    candidates.
+    """
+    by_name = {prop.name.lower(): prop for prop in properties}
+    matches: list[KeyMatch] = []
+    candidates: list[str] = []
+    for alternative in (part.strip() for part in key.split(ALTERNATIVE_SEPARATOR)):
+        if not alternative:
+            continue
+        exact = by_name.get(alternative.lower())
+        if exact is not None:
+            found = [KeyMatch(alternative, exact, by_contains=False)]
+        else:
+            wanted = normalize_name(alternative)
+            containing = [p for p in properties if wanted and wanted in normalize_name(p.name)]
+            if len(containing) > 1:
+                candidates += [p.name for p in containing if p.name not in candidates]
+            found = (
+                [KeyMatch(alternative, containing[0], by_contains=True)]
+                if len(containing) == 1
+                else []
+            )
+        matches += [m for m in found if all(m.prop != other.prop for other in matches)]
+    return matches, tuple(candidates)
+
+
+def normalize_name(name: str) -> str:
+    """A name in lower case without `_`, `-` and digits, for lenient matching."""
+    return _IGNORED_IN_NAMES.sub("", name.lower())
 
 
 def convert_value(value: object, prop: BodyProperty) -> object:
@@ -128,6 +198,8 @@ def convert_value(value: object, prop: BodyProperty) -> object:
 def dummy_value(prop: BodyProperty) -> object:
     """A deterministic, type-appropriate value for a property the body cannot fill."""
     kind = prop.type_name
+    if kind == "string" and (prop.email or "email" in normalize_name(prop.name)):
+        return f"probe-{prop.name.lower()}@example.com"  # passes [EmailAddress]
     if kind == "string":
         return f"probe-{prop.name.lower()}"
     if kind == "char":

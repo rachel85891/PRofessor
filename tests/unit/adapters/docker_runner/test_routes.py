@@ -340,6 +340,10 @@ def test_combine_templates(
         ("api/Users", "/api/users?page=2", True),
         ("", "/", True),
         ("", "/api", False),
+        ("api/Users/{id}", "/api/users/{userId}", True),
+        ("api/Users/login", "/api/users/{userId}", True),
+        ("api/Users/{id}", "/api/users/{userId}/orders", False),
+        ("api/Users/{id}/orders", "/api/{kind}/7/orders", True),
     ],
 )
 def test_template_matching(template: str, path: str, matches: bool) -> None:

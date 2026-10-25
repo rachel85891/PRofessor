@@ -54,6 +54,10 @@ class DockerRunnerConfig:
     resolve_grace_seconds: float = 5.0
     """How long the sidecar may fail to resolve the app's name before it is an environment
     failure instead of a slow start."""
+    max_response_bytes: int = 65_536
+    """The most of a probe response (headers and body) read from the sidecar."""
+    """How long the sidecar may fail to resolve the app's name before it is an environment
+    failure instead of a slow start."""
 
     def __post_init__(self) -> None:
         durations = (
@@ -67,8 +71,8 @@ class DockerRunnerConfig:
         )
         if any(duration <= 0 for duration in durations):
             raise ValueError("runner timeouts and poll intervals must be positive")
-        if self.max_archive_bytes < 1 or self.max_file_bytes < 1:
-            raise ValueError("archive size limits must be positive")
+        if self.max_archive_bytes < 1 or self.max_file_bytes < 1 or self.max_response_bytes < 1:
+            raise ValueError("archive and response size limits must be positive")
         if self.course_framework not in self.framework_images:
             raise ValueError(f"no images for the course framework {self.course_framework}")
 

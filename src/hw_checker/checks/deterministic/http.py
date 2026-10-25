@@ -29,7 +29,9 @@ def evaluate_http(check_input: CheckInput) -> tuple[Finding, ...] | NotEvaluated
     requirement not evaluated (`route_not_found`): the route may just be named differently.
     A failing probe whose body did not fit the student's model (a field matched no property
     or could not be converted) is not evaluated either (`body_mismatch`): the request, not
-    the student's code, may be what failed.
+    the student's code, may be what failed. A probe that was not sent because an earlier
+    probe failed to capture a value it needs gives `dependency_failed`: the earlier probe
+    is judged on its own, so the failure is never counted twice.
     """
     execution = check_input.execution
     if execution is None:
@@ -55,6 +57,8 @@ def evaluate_http(check_input: CheckInput) -> tuple[Finding, ...] | NotEvaluated
         return NotEvaluatedReason.ENVIRONMENT_ISSUE  # the runner did not probe this requirement
     if any(result.route_resolution is RouteResolution.ROUTE_NOT_FOUND for result in results):
         return NotEvaluatedReason.ROUTE_NOT_FOUND
+    if any(result.route_resolution is RouteResolution.DEPENDENCY_MISSING for result in results):
+        return NotEvaluatedReason.DEPENDENCY_FAILED
     failed = [result for result in results if not result.passed]
     if not failed:
         return ()

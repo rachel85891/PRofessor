@@ -232,6 +232,23 @@ def test_comments_and_strings_do_not_add_properties() -> None:
     )
 
 
+def test_email_address_attribute_is_read() -> None:
+    text = (
+        "public class LoginModel\n{\n"
+        '    [Required, EmailAddress]\n    public string LogInEmail { get; set; } = "";\n'
+        '    [Required]\n    public string LogInPassword { get; set; } = "";\n}\n'
+    )
+    project = ProjectSources({"Login.cs": mask_source(text)}, nullable=False)
+
+    assert project.model("LoginModel") == BodyModel(
+        "LoginModel",
+        (
+            BodyProperty("LogInEmail", "string", False, True, email=True),
+            BodyProperty("LogInPassword", "string", False, True),
+        ),
+    )
+
+
 def test_reading_the_project_folder_skips_bin_and_obj(tmp_path: Path) -> None:
     project = tmp_path / "repo" / "Api"
     (project / "Models").mkdir(parents=True)

@@ -60,6 +60,7 @@ _PROPERTY_HEADER = re.compile(
     r"(?P<name>[A-Za-z_]\w*)\s*$"
 )
 _REQUIRED_ATTRIBUTE = re.compile(r"\[\s*(?:[\w.]*\.)?Required(?:Attribute)?\b")
+_EMAIL_ATTRIBUTE = re.compile(r"[\[,]\s*(?:[\w.]*\.)?EmailAddress(?:Attribute)?\b")
 _PARAMETER = re.compile(
     r"^\s*(?P<attributes>(?:\[[^\]]*\]\s*)*)(?:(?:this|ref|in|out|params)\s+)?"
     r"(?P<type>[A-Za-z_][\w.]*(?:<[^<>;{}]*>)?(?:\[\])?\??)\s+(?P<name>[A-Za-z_]\w*)"
@@ -80,6 +81,8 @@ class BodyProperty:
     nullable: bool
     required: bool
     """`required`, `[Required]`, or (with `<Nullable>enable`) a non-nullable reference type."""
+    email: bool = False
+    """The property has `[EmailAddress]`, so only an e-mail address passes validation."""
 
 
 @dataclass(frozen=True)
@@ -257,7 +260,8 @@ def _property(header: str, nullable_context: bool) -> BodyProperty | None:
         or bool(_REQUIRED_ATTRIBUTE.search(match["attributes"]))
         or (nullable_context and is_reference and not nullable)
     )
-    return BodyProperty(match["name"], type_name, nullable, required)
+    email = bool(_EMAIL_ATTRIBUTE.search(match["attributes"]))
+    return BodyProperty(match["name"], type_name, nullable, required, email)
 
 
 def _action_parameters(text: str, line: int, action: str) -> list[str] | None:

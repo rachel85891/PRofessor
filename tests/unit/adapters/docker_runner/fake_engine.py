@@ -44,12 +44,17 @@ class FakeEngine:
     `app` is "ready", "crash" (exits with 139) or "hang". `fail_on` maps "operation" or
     "operation:kind" to an exception to raise there. The first `resolve_failures` requests
     from the sidecar fail as curl does when it cannot resolve the host (exit 6).
+    `probe_responses` maps (method, path) to a (status, headers, body) response; otherwise
+    the status comes from `probe_statuses` (200 by default) with no headers and no body.
     """
 
     exit_codes: dict[str, int | None] = field(default_factory=dict)
     logs_by_kind: dict[str, str] = field(default_factory=dict)
     app: str = "ready"
     probe_statuses: dict[tuple[str, str], int] = field(default_factory=dict)
+    probe_responses: dict[tuple[str, str], tuple[int, dict[str, str], str]] = field(
+        default_factory=dict
+    )
     images_present: bool = True
     cache_present: bool = True
     cache_volume: str = "hw-checker-test-nuget"
@@ -167,7 +172,11 @@ class FakeEngine:
         method = command[command.index("--request") + 1]
         url = command[command.index("--") + 1]
         path = "/" + url.split("/", 3)[3] if url.count("/") >= 3 else "/"
-        return ExecResult(0, str(self.probe_statuses.get((method, path), 200)))
+        status, headers, body = self.probe_responses.get(
+            (method, path), (self.probe_statuses.get((method, path), 200), {}, "")
+        )
+        header_lines = "".join(f"{name}: {value}\r\n" for name, value in headers.items())
+        return ExecResult(0, f"HTTP/1.1 {status} Status\r\n{header_lines}\r\n{body}")
 
     def remove_container(self, container: str) -> None:
         item = self.containers.get(container)

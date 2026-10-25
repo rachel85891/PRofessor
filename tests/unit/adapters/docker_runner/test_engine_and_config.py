@@ -97,7 +97,7 @@ def test_config_rejects_non_positive_durations(field: str) -> None:
 
 
 def test_config_rejects_non_positive_archive_limits() -> None:
-    with pytest.raises(ValueError, match="archive size limits"):
+    with pytest.raises(ValueError, match="size limits must be positive"):
         config(max_file_bytes=0)
 
 
