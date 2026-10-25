@@ -42,6 +42,7 @@ from hw_checker.adapters.docker_runner.engine import (
 )
 from hw_checker.adapters.docker_runner.excerpt import excerpt_log
 from hw_checker.adapters.docker_runner.host_paths import PathPlan, plan_path_fixes
+from hw_checker.adapters.docker_runner.http_response import HttpResponse, excerpt, parse_response
 from hw_checker.adapters.docker_runner.routes import (
     ControllerChoice,
     ProbeRoute,
@@ -473,8 +474,8 @@ class _Execution:
         deadline = self.clock() + self.config.readiness_timeout_seconds
         unresolved_since: float | None = None
         while True:
-            status, error = self._http_status(sidecar, "GET", f"{base_url}/", None)
-            if status is not None:
+            response, error = self._http_request(sidecar, "GET", f"{base_url}/", None)
+            if response is not None:
                 return StepOutcome(RunnerStep.RUN, ready=True)
             if error == CURL_ERRORS[CURL_RESOLVE_ERROR]:
                 unresolved_since = self.clock() if unresolved_since is None else unresolved_since
@@ -503,7 +504,8 @@ class _Execution:
                 route_resolution=resolution,
             )
         body, adaptation = self._probe_body(probe, route)
-        status, error = self._http_status(sidecar, probe.method.value, base_url + path, body)
+        response, error = self._http_request(sidecar, probe.method.value, base_url + path, body)
+        status = None if response is None else response.status
         return ProbeResult(
             probe=probe,
             actual_status=status,
@@ -514,6 +516,7 @@ class _Execution:
             controller=route.controller,
             sent_body=body,
             body_adaptation=adaptation,
+            response_excerpt="" if response is None else excerpt(response.body),
         )
 
     def _probe_body(
@@ -528,18 +531,23 @@ class _Execution:
             )
         return adapt_body(probe.body, self.project_sources.body_model(route.route))
 
-    def _http_status(
+    def _http_request(
         self, sidecar: str, method: str, url: str, body: str | None
-    ) -> tuple[int | None, str]:
-        """Send one request from the sidecar; return the status (None if no answer) and an error."""
-        command = [
-            "curl",
+    ) -> tuple[HttpResponse | None, str]:
+        """Send one request from the sidecar; return the response (None if no answer) and an
+        error.
+
+        curl prints the headers and then the body, cut at `max_response_bytes` by `head`, so
+        a large or binary body never fails the probe. Arguments reach curl through `"$@"`, so
+        nothing in them is interpreted by the shell.
+        """
+        curl = [
             "--silent",
             "--globoff",
+            "--dump-header",
+            "-",
             "--output",
-            "/dev/null",
-            "--write-out",
-            "%{http_code}",
+            "-",
             "--max-time",
             str(self.config.probe_timeout_seconds),
             "--request",
@@ -547,12 +555,14 @@ class _Execution:
         ]
         if body is not None:
             # --data-raw never treats a leading "@" as a file name.
-            command += ["--header", "Content-Type: application/json", "--data-raw", body]
-        command += ["--", url]
-        result = self.engine.exec(sidecar, tuple(command))
-        text = result.output.strip()
-        if text.isdigit() and int(text) >= 100:
-            return int(text), ""
+            curl += ["--header", "Content-Type: application/json", "--data-raw", body]
+        curl += ["--", url]
+        script = f'set -o pipefail; curl "$@" | head -c {self.config.max_response_bytes}'
+        result = self.engine.exec(sidecar, ("sh", "-c", script, "sh", *curl))
+        response = parse_response(result.output)
+        if response is not None:
+            # A body cut by `head` makes curl exit with a write error; the response is fine.
+            return response, ""
         return None, CURL_ERRORS.get(result.exit_code, f"no answer (curl exit {result.exit_code})")
 
     # ------------------------------------------------------------------ steps and specs

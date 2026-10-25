@@ -112,6 +112,9 @@ def test_sample_api_writes_and_reads_its_text_file_and_answers_every_probe(
         ("UsersController",),
     )
     assert result.path_rewrites == ()
+    created = result.probe_results[2]
+    assert '"userName":"newuser"' in created.response_excerpt, describe(result)
+    assert result.probe_results[3].response_excerpt.startswith('{"id":3')
     assert result.routes is not None and result.routes.usable
     assert {(r.method, r.template) for r in result.routes.routes} == {
         (HttpMethod.GET, "api/Users"),

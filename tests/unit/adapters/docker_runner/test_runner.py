@@ -6,7 +6,7 @@ from urllib.parse import urlsplit
 
 import pytest
 
-from hw_checker.adapters.docker_runner.engine import EngineError, Mount
+from hw_checker.adapters.docker_runner.engine import EngineError, ExecResult, Mount
 from hw_checker.adapters.docker_runner.runner import DockerCodeRunner
 from hw_checker.adapters.docker_runner.runner_config import DockerRunnerConfig
 from hw_checker.domain import (
@@ -491,6 +491,49 @@ def test_probes_run_in_order_with_body_and_content_type(repo: Path, tmp_path: Pa
     assert post[post.index("--header") + 1] == "Content-Type: application/json"
     assert post[post.index("--data-raw") + 1] == '{"name":"Desk","price":250}'
     assert "--header" not in probe_commands[0]
+
+
+def test_probe_records_a_short_response_excerpt(repo: Path, tmp_path: Path) -> None:
+    long_body = '{"id":3,"bio":"' + "x" * 1000 + '"}'
+    engine = FakeEngine(
+        probe_responses={
+            ("POST", "/api/products"): (201, {"Location": "/api/products/3"}, long_body)
+        }
+    )
+
+    result = runner(engine).execute(request(repo, tmp_path))
+
+    post = result.probe_results[2]
+    assert post.actual_status == 201
+    assert len(post.response_excerpt) == 500 and post.response_excerpt.startswith('{"id":3')
+    assert result.probe_results[0].response_excerpt == ""
+
+
+def test_sidecar_cuts_the_response_at_the_configured_size(repo: Path, tmp_path: Path) -> None:
+    engine = FakeEngine()
+
+    runner(engine).execute(request(repo, tmp_path))
+
+    command = engine.exec_commands[-1]
+    assert command[:2] == ("sh", "-c")
+    assert command[2] == 'set -o pipefail; curl "$@" | head -c 65536'
+    assert command[4:8] == ("--silent", "--globoff", "--dump-header", "-")
+
+
+def test_body_cut_short_still_gives_the_status(repo: Path, tmp_path: Path) -> None:
+    engine = FakeEngine()
+    original = engine.exec
+
+    def cut(container: str, command: tuple[str, ...]) -> ExecResult:
+        answer = original(container, command)
+        return ExecResult(23, answer.output + "partial \x00 binary")  # curl's write error
+
+    engine.exec = cut  # type: ignore[method-assign]
+
+    result = runner(engine).execute(request(repo, tmp_path))
+
+    assert result.failure_kind is None
+    assert [r.actual_status for r in result.probe_results] == [200, 200, 200]
 
 
 def test_probe_that_gets_no_answer_records_an_error(repo: Path, tmp_path: Path) -> None:

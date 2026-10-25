@@ -15,6 +15,9 @@ MAX_LOGS_EXCERPT_CHARS = 8000
 MAX_PROBE_ERROR_CHARS = 500
 """Upper bound for the short error text of a single probe."""
 
+MAX_RESPONSE_EXCERPT_CHARS = 500
+"""Upper bound for the start of a probe's response body kept for the reviewer."""
+
 MAX_PATH_TEXT_CHARS = 1000
 """Upper bound for a path text recorded from student code."""
 
@@ -127,6 +130,8 @@ class ProbeResult(DomainModel):
     controller: str | None = None
     sent_body: str | None = Field(default=None, max_length=MAX_BODY_CHARS)
     body_adaptation: BodyAdaptation | None = None
+    response_excerpt: str = Field(default="", max_length=MAX_RESPONSE_EXCERPT_CHARS)
+    """The start of the response body, for the reviewer; it may hold student data."""
 
     @property
     def body_mismatched(self) -> bool:

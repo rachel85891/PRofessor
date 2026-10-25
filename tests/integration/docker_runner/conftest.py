@@ -64,6 +64,7 @@ def runner_config() -> DockerRunnerConfig:
         label_prefix=PREFIX,
         max_archive_bytes=settings.max_archive_mb * 1024 * 1024,
         max_file_bytes=settings.max_file_mb * 1024 * 1024,
+        max_response_bytes=settings.max_response_kb * 1024,
     )
 
 

@@ -273,6 +273,7 @@ def test_runner_defaults_load_from_the_repo_config(tmp_path: Path) -> None:
     assert runner.readiness_timeout_seconds == 30
     assert runner.probe_timeout_seconds == 10
     assert runner.resolve_grace_seconds == 5
+    assert runner.max_response_kb == 64
     assert runner.app_port == 8080
     assert runner.logs_root == Path("logs")
 

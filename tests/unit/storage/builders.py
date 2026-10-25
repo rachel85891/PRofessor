@@ -106,6 +106,7 @@ def successful_execution() -> ExecutionResult:
                 route_resolution=RouteResolution.RESOLVED,
                 controller="ProductController",
                 sent_body='{"name":"שולחן","price":250,"sku":"probe-sku"}',
+                response_excerpt='{"id":7,"name":"שולחן"}',
                 body_adaptation=BodyAdaptation(
                     adapted=True,
                     model="Product",
