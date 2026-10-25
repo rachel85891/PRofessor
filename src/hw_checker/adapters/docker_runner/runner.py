@@ -252,8 +252,16 @@ class _Execution:
         self.routes = extract_route_table(self.request.working_copy, discovery.folder)
         self.controllers = choose_primary_controller(self.request.probes, self.routes)
         result = self._prepare_build_run(discovery, plan)
-        # Every result after this point records the detected paths and the route table.
-        return result.model_copy(update={"path_rewrites": plan.rewrites, "routes": self.routes})
+        # Every result after this point records the detected paths, the route table and the
+        # controller choice.
+        return result.model_copy(
+            update={
+                "path_rewrites": plan.rewrites,
+                "routes": self.routes,
+                "primary_controller": self.controllers.primary,
+                "serving_controllers": self.controllers.serving,
+            }
+        )
 
     def _prepare_build_run(self, discovery: WebProject, plan: PathPlan) -> ExecutionResult:
         limits = (self.config.max_archive_bytes, self.config.max_file_bytes)
@@ -293,7 +301,8 @@ class _Execution:
             RunnerStep.PREPARE,
             f"Web project: {discovery.path}\n"
             + _describe_paths(plan.rewrites)
-            + _describe_routes(self.routes),
+            + _describe_routes(self.routes)
+            + _describe_controllers(self.routes, self.controllers),
         )
         if plan.rewrites:
             rewritten = sum(1 for rewrite in plan.rewrites if rewrite.rewritten is not None)
@@ -459,6 +468,7 @@ class _Execution:
             error=error[:MAX_PROBE_ERROR_CHARS],
             sent_path=path,
             route_resolution=resolution,
+            controller=route.controller,
         )
 
     def _http_status(
@@ -713,3 +723,15 @@ def _describe_routes(routes: RouteTable | None) -> str:
         for item in routes.unsupported
     ]
     return "".join(lines)
+
+
+def _describe_controllers(routes: RouteTable | None, choice: ControllerChoice) -> str:
+    """The controllers that could serve probes, and the one the probes are steered to."""
+    if routes is None or not routes.usable:
+        return ""
+    if choice.primary is None:
+        return "controllers serving probes: none\n"
+    return (
+        f"controllers serving probes: {', '.join(choice.serving)}; "
+        f"probes sent to {choice.primary} when it serves them\n"
+    )

@@ -319,3 +319,34 @@ def test_probe_result_defaults_keep_older_results_valid() -> None:
     )
 
     assert (result.sent_path, result.route_resolution) == (None, RouteResolution.UNAVAILABLE)
+    assert result.controller is None
+
+
+def test_older_execution_without_controller_fields_still_loads() -> None:
+    execution = ExecutionResult.model_validate(
+        {"build_status": "succeeded", "run_status": "succeeded", "probe_results": []}
+    )
+
+    assert (execution.primary_controller, execution.serving_controllers) == (None, ())
+
+
+def test_only_a_resolved_probe_has_a_controller() -> None:
+    probe = builders.probe(path="/api/users")
+
+    with pytest.raises(ValidationError, match="only a probe resolved"):
+        ProbeResult(
+            probe=probe,
+            passed=False,
+            route_resolution=RouteResolution.ROUTE_NOT_FOUND,
+            controller="UsersController",
+        )
+
+
+def test_primary_controller_must_be_one_that_can_serve() -> None:
+    with pytest.raises(ValidationError, match="primary_controller"):
+        ExecutionResult(
+            build_status=StepStatus.SUCCEEDED,
+            run_status=StepStatus.SUCCEEDED,
+            primary_controller="UsersController",
+            serving_controllers=("UserController",),
+        )

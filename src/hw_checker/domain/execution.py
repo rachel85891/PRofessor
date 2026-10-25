@@ -64,7 +64,8 @@ class ProbeResult(DomainModel):
 
     The probe carries the requirement and assignment it belongs to. `sent_path` is the
     candidate path the request went to (None when it was not sent, and for results
-    recorded before path alternatives existed).
+    recorded before path alternatives existed). `controller` is the class whose declared
+    route the path matched (None when no route was used, and for older results).
     """
 
     probe: HttpProbe
@@ -73,6 +74,7 @@ class ProbeResult(DomainModel):
     error: str = Field(default="", max_length=MAX_PROBE_ERROR_CHARS)
     sent_path: str | None = None
     route_resolution: RouteResolution = RouteResolution.UNAVAILABLE
+    controller: str | None = None
 
     @property
     def requirement_id(self) -> str:
@@ -99,6 +101,8 @@ class ProbeResult(DomainModel):
             raise ValueError("a probe whose route was not found is never sent")
         if self.sent_path is not None and self.sent_path not in self.probe.candidate_paths:
             raise ValueError("sent_path must be one of the probe's candidate paths")
+        if self.controller is not None and self.route_resolution is not RouteResolution.RESOLVED:
+            raise ValueError("only a probe resolved to a declared route has a controller")
         return self
 
 
@@ -202,6 +206,10 @@ class ExecutionResult(DomainModel):
     """Paths in the student's code that were adapted (or could not be) to run in Docker."""
     routes: RouteTable | None = None
     """The routes declared in the student's code; None when they were not read."""
+    primary_controller: str | None = None
+    """The controller probes were steered to: the one that could serve the most probes."""
+    serving_controllers: tuple[str, ...] = ()
+    """Every controller that could serve at least one probe, sorted by name."""
 
     @property
     def steps(self) -> tuple[StepStatus, StepStatus, StepStatus]:
@@ -233,6 +241,14 @@ class ExecutionResult(DomainModel):
             first_failed = self.steps.index(StepStatus.FAILED)
             if any(step is not StepStatus.SKIPPED for step in self.steps[first_failed + 1 :]):
                 raise ValueError("steps after a failed step must be skipped")
+        return self
+
+    @model_validator(mode="after")
+    def _primary_controller_can_serve(self) -> Self:
+        if self.primary_controller is not None and (
+            self.primary_controller not in self.serving_controllers
+        ):
+            raise ValueError("primary_controller must be one of serving_controllers")
         return self
 
     @model_validator(mode="after")

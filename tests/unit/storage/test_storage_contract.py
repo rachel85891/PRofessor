@@ -79,6 +79,11 @@ def test_route_table_and_probe_resolution_are_loaded_back(storage: Storage) -> N
         "route_not_found",
     ]
     assert execution.probe_results[0].sent_path == "/api/product"
+    assert [r.controller for r in execution.probe_results] == ["ProductController", None, None]
+    assert (execution.primary_controller, execution.serving_controllers) == (
+        "ProductController",
+        ("ProductController", "ProductsController"),
+    )
 
 
 def test_saving_a_repo_run_replaces_its_not_evaluated_entries(storage: Storage) -> None:

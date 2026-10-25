@@ -316,6 +316,15 @@ def test_probes_are_sent_to_the_resolved_path_or_not_at_all(repo: Path, tmp_path
         ("/api/user/signin", RouteResolution.RESOLVED, 200),
         (None, RouteResolution.ROUTE_NOT_FOUND, None),
     ]
+    assert [r.controller for r in result.probe_results] == [
+        "UserController",
+        "UserController",
+        None,
+    ]
+    assert (result.primary_controller, result.serving_controllers) == (
+        "UserController",
+        ("UserController",),
+    )
     assert not result.probe_results[2].passed
 
 
@@ -349,11 +358,23 @@ def test_probes_are_steered_to_the_controller_serving_most(repo: Path, tmp_path:
     )
     engine = FakeEngine()
 
-    runner(engine).execute(request(repo, tmp_path, probes=probes))
+    result = runner(engine).execute(request(repo, tmp_path, probes=probes))
 
     urls = [command[command.index("--") + 1] for command in engine.exec_commands]
     sent = [urlsplit(url).path for url in urls if urlsplit(url).path != "/"]
     assert sent == ["/api/users", "/api/users/3", "/api/user/login"]
+    assert [r.controller for r in result.probe_results] == [
+        "UsersController",
+        "UsersController",
+        "UserController",
+    ]
+    assert result.primary_controller == "UsersController"
+    assert result.serving_controllers == ("UserController", "UsersController")
+    prepare_log = (tmp_path / "logs" / "prepare.log").read_text(encoding="utf-8")
+    assert (
+        "controllers serving probes: UserController, UsersController; "
+        "probes sent to UsersController when it serves them"
+    ) in prepare_log
 
 
 def test_without_routes_probes_go_to_their_first_path(repo: Path, tmp_path: Path) -> None:
@@ -361,9 +382,13 @@ def test_without_routes_probes_go_to_their_first_path(repo: Path, tmp_path: Path
 
     result = runner(engine).execute(request(repo, tmp_path))
 
-    assert [(r.sent_path, r.route_resolution) for r in result.probe_results] == [
-        (probe.path, RouteResolution.UNAVAILABLE) for probe in PROBES
+    assert [(r.sent_path, r.route_resolution, r.controller) for r in result.probe_results] == [
+        (probe.path, RouteResolution.UNAVAILABLE, None) for probe in PROBES
     ]
+    assert (result.primary_controller, result.serving_controllers) == (None, ())
+    assert "controllers serving probes" not in (tmp_path / "logs" / "prepare.log").read_text(
+        encoding="utf-8"
+    )
 
 
 def test_project_without_routes_records_an_empty_table(repo: Path, tmp_path: Path) -> None:
