@@ -262,7 +262,8 @@ def template_matches(template: str, path: str) -> bool:
     as `{id:int}` or not) matches any one segment; `{id?}` and `{id=1}` may also be absent
     at the end, and `{*rest}` matches whatever remains. A segment mixing text and
     parameters (such as `{email} {password}`) is compared as text. Leading and trailing
-    slashes, and the path's query string, are ignored.
+    slashes, and the path's query string, are ignored. A `{name}` segment in the request
+    path (a value captured by an earlier probe, not filled in yet) matches any one segment.
     """
     path_segments = _segments(path.split("?", 1)[0].split("#", 1)[0])
     template_segments = _segments(template)
@@ -279,7 +280,11 @@ def template_matches(template: str, path: str) -> bool:
             if inner.endswith("?") or "=" in inner:
                 continue
             return False
-        if index >= len(path_segments) or segment.casefold() != path_segments[index].casefold():
+        if index >= len(path_segments):
+            return False
+        if not _PARAMETER.match(path_segments[index]) and (
+            segment.casefold() != path_segments[index].casefold()
+        ):
             return False
         index += 1
     return index == len(path_segments)

@@ -76,6 +76,34 @@ def test_probe_rejects_alternative_without_leading_slash() -> None:
         builders.probe(path_alternatives=("/api/user", "api/users"))
 
 
+def test_probe_capture_and_the_variables_it_uses() -> None:
+    probe = builders.probe(
+        path="/api/users/{userId}",
+        path_alternatives=("/api/user/{userId}",),
+        body='{"id":"{userId}","owner":"{ownerId}"}',
+        capture={"name": "orderId", "source": "body:id"},
+    )
+
+    assert probe.variables_used == ("userId", "ownerId")
+    assert probe.capture is not None and probe.capture.body_field == "id"
+    assert builders.probe(capture={"name": "loc", "source": "location"}).capture.body_field is None  # type: ignore[union-attr]
+
+
+@pytest.mark.parametrize(
+    "capture",
+    [
+        {"name": "1id", "source": "body:id"},
+        {"name": "user id", "source": "body:id"},
+        {"name": "id", "source": "header:Location"},
+        {"name": "id", "source": "body:data.id"},
+        {"name": "id", "source": "body:"},
+    ],
+)
+def test_probe_capture_is_validated(capture: dict[str, str]) -> None:
+    with pytest.raises(ValidationError, match="capture"):
+        builders.probe(capture=capture)
+
+
 def test_probe_rejects_unknown_method() -> None:
     with pytest.raises(ValidationError):
         builders.probe(method="FETCH")

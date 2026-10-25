@@ -203,6 +203,7 @@ def test_not_evaluated_reasons() -> None:
         "environment_issue",
         "route_not_found",
         "body_mismatch",
+        "dependency_failed",
     }
 
 

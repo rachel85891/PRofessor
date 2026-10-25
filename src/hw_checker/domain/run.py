@@ -40,6 +40,8 @@ class NotEvaluatedReason(StrEnum):
     """None of a probe's paths is declared in the student's code, so it was not sent."""
     BODY_MISMATCH = "body_mismatch"
     """A failing probe's body had fields that do not fit the student's model."""
+    DEPENDENCY_FAILED = "dependency_failed"
+    """A probe needed a value an earlier probe failed to capture, so it was not sent."""
 
 
 class NotEvaluated(DomainModel):

@@ -6,11 +6,19 @@ when the entries are mapped to domain models.
 
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class _FileModel(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
+
+
+class CaptureEntry(_FileModel):
+    """A value a probe takes from its response: `name`, and `from` (`body:<field>` or
+    `location`)."""
+
+    name: str
+    source: str = Field(alias="from")
 
 
 class ProbeEntry(_FileModel):
@@ -19,6 +27,7 @@ class ProbeEntry(_FileModel):
     method: str
     path: str
     path_alternatives: list[str] = []
+    capture: CaptureEntry | None = None
     body: str | dict[str, Any] | list[Any] | None = None
     expected_status: int
     allowed_statuses: list[int] = []

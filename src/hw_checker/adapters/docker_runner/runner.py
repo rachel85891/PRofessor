@@ -43,6 +43,12 @@ from hw_checker.adapters.docker_runner.engine import (
 from hw_checker.adapters.docker_runner.excerpt import excerpt_log
 from hw_checker.adapters.docker_runner.host_paths import PathPlan, plan_path_fixes
 from hw_checker.adapters.docker_runner.http_response import HttpResponse, excerpt, parse_response
+from hw_checker.adapters.docker_runner.probe_variables import (
+    capture_value,
+    fill_body,
+    fill_path,
+    not_sent,
+)
 from hw_checker.adapters.docker_runner.routes import (
     ControllerChoice,
     ProbeRoute,
@@ -64,6 +70,7 @@ from hw_checker.domain import (
     HttpProbe,
     PathRewrite,
     ProbeResult,
+    RouteResolution,
     RouteTable,
     StepStatus,
 )
@@ -253,6 +260,8 @@ class _Execution:
     controllers: ControllerChoice = field(default_factory=lambda: ControllerChoice(None, ()))
     framework_images: FrameworkImages | None = None
     project_sources: ProjectSources | None = None
+    variables: dict[str, str] = field(default_factory=dict)
+    """Values captured by earlier probes of this execution, for `{name}` in later ones."""
 
     def run(self) -> ExecutionResult:
         self.request.logs_dir.mkdir(parents=True, exist_ok=True)
@@ -493,6 +502,15 @@ class _Execution:
             self.sleep(self.config.readiness_poll_seconds)
 
     def _probe(self, sidecar: str, base_url: str, probe: HttpProbe) -> ProbeResult:
+        missing = [name for name in probe.variables_used if name not in self.variables]
+        if missing:
+            return ProbeResult(
+                probe=probe,
+                passed=False,
+                error=f"needs {', '.join(missing)}, which no earlier probe captured",
+                route_resolution=RouteResolution.DEPENDENCY_MISSING,
+                capture=not_sent(probe.capture),
+            )
         route = resolve_probe_path(probe, self.routes, self.controllers.primary)
         path, resolution = route.path, route.resolution
         if path is None:
@@ -502,10 +520,15 @@ class _Execution:
                 passed=False,
                 error="no route declared in the code matches the probe's paths",
                 route_resolution=resolution,
+                capture=not_sent(probe.capture),
             )
+        path = fill_path(path, self.variables)
         body, adaptation = self._probe_body(probe, route)
         response, error = self._http_request(sidecar, probe.method.value, base_url + path, body)
         status = None if response is None else response.status
+        captured = None if probe.capture is None else capture_value(probe.capture, response)
+        if captured is not None and captured.value is not None:
+            self.variables[captured.name] = captured.value
         return ProbeResult(
             probe=probe,
             actual_status=status,
@@ -517,6 +540,7 @@ class _Execution:
             sent_body=body,
             body_adaptation=adaptation,
             response_excerpt="" if response is None else excerpt(response.body),
+            capture=captured,
         )
 
     def _probe_body(
@@ -525,11 +549,12 @@ class _Execution:
         """The body to send: the probe's intended body adapted to the action's model."""
         if probe.body is None:
             return None, None
+        body = fill_body(probe.body, self.variables)
         if route.route is None or self.project_sources is None:
-            return probe.body, BodyAdaptation(
+            return body, BodyAdaptation(
                 adapted=False, reason="the probe's route was not resolved against the code"
             )
-        return adapt_body(probe.body, self.project_sources.body_model(route.route))
+        return adapt_body(body, self.project_sources.body_model(route.route))
 
     def _http_request(
         self, sidecar: str, method: str, url: str, body: str | None

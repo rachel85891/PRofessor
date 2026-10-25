@@ -495,6 +495,17 @@ def test_passing_probe_with_a_mismatched_body_still_passes() -> None:
     assert evaluate_http(check_input(HTTP_REQUIREMENT, execution)) == ()
 
 
+def test_probe_with_a_missing_dependency_makes_the_requirement_not_evaluated() -> None:
+    dependent = ProbeResult(
+        probe=GET_MISSING, passed=False, route_resolution=RouteResolution.DEPENDENCY_MISSING
+    )
+    execution = run_ok(result(GET_ALL, 500), dependent, result(CREATE, 500))
+
+    outcome = evaluate_http(check_input(HTTP_REQUIREMENT, execution))
+
+    assert outcome is NotEvaluatedReason.DEPENDENCY_FAILED
+
+
 def test_probes_of_other_requirements_are_ignored() -> None:
     other = HttpProbe(
         requirement_id="hw01-r9",

@@ -77,11 +77,17 @@ def test_route_table_and_probe_resolution_are_loaded_back(storage: Storage) -> N
         "resolved",
         "unavailable",
         "route_not_found",
+        "dependency_missing",
     ]
     assert execution.probe_results[0].sent_path == "/api/product"
     assert execution.probe_results == builders.successful_execution().probe_results
     assert execution.probe_results[0].body_mismatched
-    assert [r.controller for r in execution.probe_results] == ["ProductController", None, None]
+    assert [r.controller for r in execution.probe_results] == [
+        "ProductController",
+        None,
+        None,
+        None,
+    ]
     assert (execution.target_framework, execution.framework_outdated) == ("net8.0", True)
     assert (execution.primary_controller, execution.serving_controllers) == (
         "ProductController",

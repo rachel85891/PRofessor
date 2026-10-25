@@ -14,9 +14,13 @@ from hw_checker.checks.deterministic.checker import DeterministicRequirementChec
 from hw_checker.checks.registry import CheckRegistry
 from hw_checker.domain import (
     Assignment,
+    CaptureFailure,
+    CaptureResult,
     ExecutionResult,
     FailureKind,
+    Finding,
     HttpMethod,
+    HttpProbe,
     NotEvaluated,
     NotEvaluatedReason,
     PathFixKind,
@@ -32,9 +36,12 @@ from tests.integration.docker_runner.conftest import (
     ABSOLUTE_PATH_FIXTURE,
     ABSOLUTE_PATH_PROBES,
     CACHE_VOLUME,
+    CHAINED_PROBES,
     CUSTOM_MODEL_FIXTURE,
     CUSTOM_MODEL_PROBES,
     ITEMS_PROBES,
+    NO_ID_FIXTURE,
+    NO_ID_PROBES,
     OLDER_FRAMEWORK_FIXTURES,
     PREFIX,
     PROJECT,
@@ -392,6 +399,72 @@ def test_probe_bodies_are_adapted_to_the_students_model(
     assert checked.findings == ()
     assert checked.not_evaluated == (
         NotEvaluated(requirement_id="hw01-r2", reason=NotEvaluatedReason.BODY_MISMATCH),
+    )
+    assert_nothing_left(engine)
+
+
+def evaluate(
+    probes: tuple[HttpProbe, ...], repo: Path, result: ExecutionResult
+) -> tuple[tuple[Finding, ...], tuple[NotEvaluated, ...]]:
+    """Run the real deterministic checks over one http requirement per requirement id."""
+    ids = list(dict.fromkeys(p.requirement_id for p in probes))
+    requirements = tuple(
+        Requirement(
+            id=requirement_id,
+            title=requirement_id,
+            severity=Severity.MAJOR,
+            kind=RequirementKind.HTTP,
+            http_probes=tuple(p for p in probes if p.requirement_id == requirement_id),
+        )
+        for requirement_id in ids
+    )
+    assignment = Assignment(id="hw01", order=1, title="Users", requirements=requirements)
+    checker = DeterministicRequirementChecker(CheckRegistry(builtin_checks()))
+    checked = DeterministicCheckService(checker).evaluate(assignment, repo, result)
+    return checked.findings, checked.not_evaluated
+
+
+def test_chained_create_read_update_login_delete_scenario(
+    docker_runner: DockerCodeRunner,
+    engine: SdkDockerEngine,
+    sample_copy: SampleCopy,
+    tmp_path: Path,
+) -> None:
+    repo = sample_copy()
+
+    result = docker_runner.execute(make_request(repo, tmp_path / "logs", probes=CHAINED_PROBES))
+
+    assert [(r.probe.method.value, r.sent_path, r.actual_status) for r in result.probe_results] == [
+        ("POST", "/api/users", 201),
+        ("GET", "/api/users/3", 200),
+        ("PUT", "/api/users/3", 204),
+        ("POST", "/api/users/login", 200),
+        ("POST", "/api/users/login", 401),
+        ("DELETE", "/api/users/3", 204),
+        ("GET", "/api/users/3", 404),
+    ], describe(result)
+    assert result.probe_results[0].capture == CaptureResult(name="userId", value="3")
+    assert evaluate(CHAINED_PROBES, repo, result) == ((), ())
+    assert_nothing_left(engine)
+
+
+def test_a_post_without_an_id_gives_dependency_failed_not_findings(
+    docker_runner: DockerCodeRunner,
+    engine: SdkDockerEngine,
+    sample_copy: SampleCopy,
+    tmp_path: Path,
+) -> None:
+    repo = sample_copy(source=NO_ID_FIXTURE)
+
+    result = docker_runner.execute(make_request(repo, tmp_path / "logs", probes=NO_ID_PROBES))
+
+    post, read = result.probe_results
+    assert post.actual_status == 200, describe(result)
+    assert post.capture == CaptureResult(name="userId", failure=CaptureFailure.NO_JSON)
+    assert read.route_resolution is RouteResolution.DEPENDENCY_MISSING
+    assert evaluate(NO_ID_PROBES, repo, result) == (
+        (),
+        (NotEvaluated(requirement_id="hw01-r2", reason=NotEvaluatedReason.DEPENDENCY_FAILED),),
     )
     assert_nothing_left(engine)
 

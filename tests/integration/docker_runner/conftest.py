@@ -15,13 +15,14 @@ from hw_checker.adapters.docker_runner.runner_config import (
     FrameworkImages,
 )
 from hw_checker.config.settings import RunnerSettings, StepLimits
-from hw_checker.domain import ExecutionRequest, HttpMethod, HttpProbe
+from hw_checker.domain import ExecutionRequest, HttpMethod, HttpProbe, ProbeCapture
 
 FIXTURES = Path(__file__).parents[2] / "fixtures"
 FIXTURE = FIXTURES / "sample_webapi"
 ABSOLUTE_PATH_FIXTURE = FIXTURES / "sample_webapi_absolute_path"
 USER_SIGNIN_FIXTURE = FIXTURES / "sample_webapi_user_signin"
 TWO_CONTROLLERS_FIXTURE = FIXTURES / "sample_webapi_two_controllers"
+NO_ID_FIXTURE = FIXTURES / "sample_webapi_no_id"
 CUSTOM_MODEL_FIXTURE = FIXTURES / "sample_webapi_custom_model"
 OLDER_FRAMEWORK_FIXTURES = {
     "net8.0": FIXTURES / "sample_webapi_net80",
@@ -75,7 +76,10 @@ def probe(
     status: int,
     body: str | None = None,
     alternatives: tuple[str, ...] = (),
+    capture: str | None = None,
+    allowed: tuple[int, ...] = (),
 ) -> HttpProbe:
+    """A probe; `capture` is "<name> from <source>", for example "userId from body:id"."""
     return HttpProbe(
         requirement_id=requirement_id,
         assignment_id="hw01",
@@ -84,6 +88,10 @@ def probe(
         path_alternatives=alternatives,
         body=body,
         expected_status=status,
+        allowed_statuses=allowed,
+        capture=None
+        if capture is None
+        else ProbeCapture(name=capture.split()[0], source=capture.split()[-1]),
     )
 
 
@@ -256,3 +264,37 @@ CUSTOM_MODEL_PROBES = (
 )
 """Against `sample_webapi_custom_model`: the register body needs adapting (the password is a
 number there, and Name is required); the login model has Email instead of UserName."""
+
+
+CHAINED_PROBES = (
+    probe("hw01-r1", HttpMethod.POST, "/api/users", 201, NEW_USER, capture="userId from body:id"),
+    probe("hw01-r2", HttpMethod.GET, "/api/users/{userId}", 200),
+    probe(
+        "hw01-r3",
+        HttpMethod.PUT,
+        "/api/users/{userId}",
+        204,
+        NEW_USER.replace("New", "Renamed"),
+    ),
+    probe("hw01-r4", HttpMethod.POST, "/api/users/login", 200, user_body("newuser", TEST_PASSWORD)),
+    probe("hw01-r4", HttpMethod.POST, "/api/users/login", 401, user_body("newuser", "wrong")),
+    probe("hw01-r5", HttpMethod.DELETE, "/api/users/{userId}", 204),
+    probe("hw01-r5", HttpMethod.GET, "/api/users/{userId}", 404),
+)
+"""Create, read back, update, log in (right and wrong), delete and read again, chained
+through the id the app assigned."""
+
+NO_ID_PROBES = (
+    probe(
+        "hw01-r1",
+        HttpMethod.POST,
+        "/api/users",
+        201,
+        user_body("newuser", TEST_PASSWORD),
+        capture="userId from body:id",
+        allowed=(201, 200),
+    ),
+    probe("hw01-r2", HttpMethod.GET, "/api/users/{userId}", 200),
+)
+"""Against `sample_webapi_no_id`: the POST answers without the id, so the read-back
+cannot be sent."""

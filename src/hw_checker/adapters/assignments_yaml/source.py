@@ -113,6 +113,8 @@ class YamlAssignmentSource:
         requirements = _load_requirements(data, assignment_id, label, problems)
         if parsed is None or requirements is None:
             return None
+        if not _variables_are_captured_first(requirements, label, problems):
+            return None
         if parsed.id != folder.name:
             problems.append(
                 f"{label}: id '{parsed.id}' does not match the folder name '{folder.name}'. "
@@ -122,6 +124,28 @@ class YamlAssignmentSource:
             parsed, requirements, label, hashlib.sha256(raw).hexdigest(), problems
         )
         return None if assignment is None else _LoadedFile(label=label, assignment=assignment)
+
+
+def _variables_are_captured_first(
+    requirements: list[Requirement], label: str, problems: list[str]
+) -> bool:
+    """Every `{name}` a probe uses must be captured by an earlier probe of the file."""
+    captured: set[str] = set()
+    found = False
+    for requirement in requirements:
+        for number, probe in enumerate(requirement.http_probes, start=1):
+            for name in probe.variables_used:
+                if name not in captured:
+                    found = True
+                    problems.append(
+                        f"{label}: requirement '{requirement.id}', probe {number}: "
+                        f"{{{name}}} is used before any probe captures it. Add "
+                        f"'capture: {{name: {name}, from: body:id}}' to an earlier probe, "
+                        "or remove the braces."
+                    )
+            if probe.capture is not None:
+                captured.add(probe.capture.name)
+    return not found
 
 
 def _parse_yaml(raw: bytes, label: str, problems: list[str]) -> dict[str, Any] | None:
@@ -231,6 +255,9 @@ def _probe_data(probe: ProbeEntry, requirement_id: str, assignment_id: str) -> d
         "method": probe.method,
         "path": probe.path,
         "path_alternatives": probe.path_alternatives,
+        "capture": None
+        if probe.capture is None
+        else {"name": probe.capture.name, "source": probe.capture.source},
         "body": _body_text(probe.body),
         "expected_status": probe.expected_status,
         "allowed_statuses": probe.allowed_statuses,

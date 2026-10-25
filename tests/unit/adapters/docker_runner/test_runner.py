@@ -10,6 +10,8 @@ from hw_checker.adapters.docker_runner.engine import EngineError, ExecResult, Mo
 from hw_checker.adapters.docker_runner.runner import DockerCodeRunner
 from hw_checker.adapters.docker_runner.runner_config import DockerRunnerConfig
 from hw_checker.domain import (
+    CaptureFailure,
+    CaptureResult,
     ExecutionRequest,
     FailureKind,
     HttpMethod,
@@ -413,6 +415,82 @@ def test_probe_body_is_adapted_to_the_students_model(repo: Path, tmp_path: Path)
         ("email", "unmatched"),
         ("Name", "filled"),
     ]
+
+
+CHAIN_CONTROLLER = (
+    '[Route("api/[controller]")]\npublic class UsersController : ControllerBase\n{\n'
+    "    [HttpPost]\n    public IActionResult Post([FromBody] Account a) => Ok();\n"
+    '    [HttpGet("{id}")]\n    public IActionResult Get(int id) => Ok();\n'
+    '    [HttpPut("{id}")]\n    public IActionResult Put(int id, [FromBody] Account a) => Ok();\n'
+    "}\npublic class Account\n{\n    public int Id { get; set; }\n"
+    "    public string UserName { get; set; }\n}\n"
+)
+
+
+def chained(method: HttpMethod, path: str, body: str | None = None, **extra: object) -> HttpProbe:
+    return HttpProbe.model_validate(
+        {
+            "requirement_id": "hw01-r1",
+            "assignment_id": "hw01",
+            "method": method,
+            "path": path,
+            "body": body,
+            "expected_status": 200,
+        }
+        | extra
+    )
+
+
+CHAIN = (
+    chained(
+        HttpMethod.POST,
+        "/api/users",
+        '{"userName":"newuser"}',
+        capture={"name": "userId", "source": "body:id"},
+    ),
+    chained(HttpMethod.GET, "/api/users/{userId}"),
+    chained(HttpMethod.PUT, "/api/users/{userId}", '{"id":"{userId}","userName":"renamed"}'),
+)
+
+
+def test_a_captured_id_is_used_by_later_probes(repo: Path, tmp_path: Path) -> None:
+    (repo / "Controllers" / "ProductsController.cs").write_text(CHAIN_CONTROLLER, encoding="utf-8")
+    engine = FakeEngine(
+        probe_responses={("POST", "/api/users"): (201, {}, '{"id":7,"userName":"newuser"}')}
+    )
+
+    result = runner(engine).execute(request(repo, tmp_path, probes=CHAIN))
+
+    post, get, put = result.probe_results
+    assert post.capture == CaptureResult(name="userId", value="7")
+    assert (get.sent_path, put.sent_path) == ("/api/users/7", "/api/users/7")
+    # The captured text "7" becomes a number for the model's int Id.
+    assert put.sent_body == '{"id":7,"userName":"renamed"}'
+    urls = [command[command.index("--") + 1] for command in engine.exec_commands]
+    assert sum(url.endswith("/api/users/7") for url in urls) == 2
+
+
+def test_a_failed_capture_stops_the_probes_that_need_it(repo: Path, tmp_path: Path) -> None:
+    (repo / "Controllers" / "ProductsController.cs").write_text(CHAIN_CONTROLLER, encoding="utf-8")
+    then_capture = chained(
+        HttpMethod.GET, "/api/users/{userId}", capture={"name": "again", "source": "body:id"}
+    )
+    needs_again = chained(HttpMethod.GET, "/api/users/{again}")
+    engine = FakeEngine(probe_responses={("POST", "/api/users"): (200, {}, "")})
+
+    result = runner(engine).execute(
+        request(repo, tmp_path, probes=(CHAIN[0], then_capture, needs_again))
+    )
+
+    post, dependent, second = result.probe_results
+    assert post.capture == CaptureResult(name="userId", failure=CaptureFailure.NO_JSON)
+    assert post.actual_status == 200 and post.passed
+    assert dependent.route_resolution is RouteResolution.DEPENDENCY_MISSING
+    assert dependent.capture == CaptureResult(name="again", failure=CaptureFailure.NOT_SENT)
+    assert dependent.error == "needs userId, which no earlier probe captured"
+    assert second.route_resolution is RouteResolution.DEPENDENCY_MISSING
+    urls = [command[command.index("--") + 1] for command in engine.exec_commands]
+    assert not any("/api/users/" in url for url in urls), "dependent probes were sent"
 
 
 def test_without_a_route_table_the_body_is_sent_as_written(repo: Path, tmp_path: Path) -> None:

@@ -7,6 +7,8 @@ from hw_checker.domain import (
     BodyAdaptation,
     BodyFieldNote,
     BodyFieldOutcome,
+    CaptureFailure,
+    CaptureResult,
     ExecutionRequest,
     ExecutionResult,
     FailureKind,
@@ -388,3 +390,47 @@ def test_older_probe_result_without_body_fields_still_loads() -> None:
         None,
         False,
     )
+
+
+def test_capture_result_has_a_value_or_a_failure() -> None:
+    assert CaptureResult(name="userId", value="3").failure is None
+    with pytest.raises(ValidationError, match="either a value or a failure"):
+        CaptureResult(name="userId")
+    with pytest.raises(ValidationError, match="either a value or a failure"):
+        CaptureResult(name="userId", value="3", failure=CaptureFailure.NO_JSON)
+
+
+def test_sent_path_may_fill_the_candidates_variables() -> None:
+    probe = builders.probe(path="/api/users/{userId}", path_alternatives=("/api/user/{userId}",))
+
+    def sent(path: str) -> ProbeResult:
+        return ProbeResult(
+            probe=probe,
+            actual_status=200,
+            passed=True,
+            sent_path=path,
+            route_resolution=RouteResolution.RESOLVED,
+        )
+
+    assert sent("/api/user/3").sent_path == "/api/user/3"
+    with pytest.raises(ValidationError, match="candidate paths"):
+        sent("/api/users/3/orders")
+    with pytest.raises(ValidationError, match="candidate paths"):
+        sent("/api/people/3")
+
+
+def test_probe_with_a_missing_dependency_was_never_sent() -> None:
+    probe = builders.probe(path="/api/users/{userId}")
+
+    unsent = ProbeResult(
+        probe=probe, passed=False, route_resolution=RouteResolution.DEPENDENCY_MISSING
+    )
+
+    assert unsent.sent_path is None
+    with pytest.raises(ValidationError, match="never sent"):
+        ProbeResult(
+            probe=probe,
+            actual_status=200,
+            passed=True,
+            route_resolution=RouteResolution.DEPENDENCY_MISSING,
+        )

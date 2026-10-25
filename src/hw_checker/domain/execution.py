@@ -1,12 +1,13 @@
 """Execution models: the outcome of building, running and probing a repo (design §5, §9)."""
 
+import re
 from enum import StrEnum
 from pathlib import Path
 from typing import Self
 
 from pydantic import Field, model_validator
 
-from hw_checker.domain.assignment import HttpMethod, HttpProbe
+from hw_checker.domain.assignment import VARIABLE_USE, HttpMethod, HttpProbe
 from hw_checker.domain.base import DomainModel, HttpStatusCode, Identifier, NonBlankStr
 
 MAX_LOGS_EXCERPT_CHARS = 8000
@@ -17,6 +18,9 @@ MAX_PROBE_ERROR_CHARS = 500
 
 MAX_RESPONSE_EXCERPT_CHARS = 500
 """Upper bound for the start of a probe's response body kept for the reviewer."""
+
+MAX_CAPTURED_CHARS = 500
+"""Upper bound for a value captured from a response."""
 
 MAX_PATH_TEXT_CHARS = 1000
 """Upper bound for a path text recorded from student code."""
@@ -99,6 +103,33 @@ class BodyAdaptation(DomainModel):
         return any(note.outcome in MISMATCH_OUTCOMES for note in self.notes)
 
 
+class CaptureFailure(StrEnum):
+    """Why a probe could not capture its value."""
+
+    NOT_SENT = "not_sent"
+    NO_RESPONSE = "no_response"
+    NO_JSON = "no_json"
+    """The response body is not a JSON object."""
+    FIELD_MISSING = "field_missing"
+    NOT_A_VALUE = "not_a_value"
+    """The field holds null, an object, a list, or a text too long to use."""
+    NO_LOCATION = "no_location"
+
+
+class CaptureResult(DomainModel):
+    """The value a probe captured for `{name}`, or why it could not."""
+
+    name: NonBlankStr
+    value: str | None = Field(default=None, max_length=MAX_CAPTURED_CHARS)
+    failure: CaptureFailure | None = None
+
+    @model_validator(mode="after")
+    def _value_or_failure(self) -> Self:
+        if (self.value is None) == (self.failure is None):
+            raise ValueError("a capture has either a value or a failure")
+        return self
+
+
 class RouteResolution(StrEnum):
     """How the path a probe was sent to was chosen from its candidate paths."""
 
@@ -108,6 +139,13 @@ class RouteResolution(StrEnum):
     """No candidate matches a declared route, so the probe was not sent."""
     UNAVAILABLE = "unavailable"
     """The route table was empty or incomplete, so the probe was sent to its first path."""
+    DEPENDENCY_MISSING = "dependency_missing"
+    """The probe uses a `{name}` that no earlier probe captured, so it was not sent."""
+
+
+NOT_SENT_RESOLUTIONS = frozenset(
+    {RouteResolution.ROUTE_NOT_FOUND, RouteResolution.DEPENDENCY_MISSING}
+)
 
 
 class ProbeResult(DomainModel):
@@ -119,6 +157,8 @@ class ProbeResult(DomainModel):
     route the path matched (None when no route was used, and for older results).
     `sent_body` is the body that was actually sent, after `body_adaptation` adapted the
     probe's intended body to the student's model (both None for a probe without a body).
+    `sent_path` and `sent_body` have captured `{name}` values filled in; `capture` is what
+    this probe captured for later probes, or why it could not.
     """
 
     probe: HttpProbe
@@ -132,6 +172,7 @@ class ProbeResult(DomainModel):
     body_adaptation: BodyAdaptation | None = None
     response_excerpt: str = Field(default="", max_length=MAX_RESPONSE_EXCERPT_CHARS)
     """The start of the response body, for the reviewer; it may hold student data."""
+    capture: CaptureResult | None = None
 
     @property
     def body_mismatched(self) -> bool:
@@ -157,19 +198,32 @@ class ProbeResult(DomainModel):
 
     @model_validator(mode="after")
     def _unsent_probe_has_no_answer(self) -> Self:
-        if self.route_resolution is RouteResolution.ROUTE_NOT_FOUND and (
+        if self.route_resolution in NOT_SENT_RESOLUTIONS and (
             self.sent_path is not None or self.actual_status is not None
         ):
-            raise ValueError("a probe whose route was not found is never sent")
-        if self.sent_path is not None and self.sent_path not in self.probe.candidate_paths:
+            raise ValueError(
+                "a probe whose route was not found or whose dependency is missing is never sent"
+            )
+        if self.sent_path is not None and not any(
+            _fills_candidate(self.sent_path, candidate) for candidate in self.probe.candidate_paths
+        ):
             raise ValueError("sent_path must be one of the probe's candidate paths")
         if self.controller is not None and self.route_resolution is not RouteResolution.RESOLVED:
             raise ValueError("only a probe resolved to a declared route has a controller")
-        if self.sent_body is not None and (
-            self.route_resolution is RouteResolution.ROUTE_NOT_FOUND
-        ):
+        if self.sent_body is not None and self.route_resolution in NOT_SENT_RESOLUTIONS:
             raise ValueError("a probe that was not sent has no sent_body")
         return self
+
+
+def _fills_candidate(sent_path: str, candidate: str) -> bool:
+    """True when `sent_path` is `candidate` with its `{name}` variables filled in."""
+    parts: list[str] = []
+    last = 0
+    for match in VARIABLE_USE.finditer(candidate):
+        parts += [re.escape(candidate[last : match.start()]), "[^/?#]+"]
+        last = match.end()
+    parts.append(re.escape(candidate[last:]))
+    return re.fullmatch("".join(parts), sent_path) is not None
 
 
 class PathFixKind(StrEnum):
