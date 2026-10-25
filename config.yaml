@@ -46,10 +46,22 @@ runner:
   # Images pinned by digest, so a patch release never changes results mid-semester.
   # Update the digests at the start of each semester, and when a .NET security patch is
   # announced: docker pull <image>, then docker image inspect <image> --format "{{index .RepoDigests 0}}".
-  # .NET 10 only: student projects target net10.0, and discovery flags any other framework
-  # for review. Pinned 2026-10-22: SDK 10.0.402, ASP.NET Core runtime 10.0.13.
-  sdk_image: mcr.microsoft.com/dotnet/sdk:10.0@sha256:747cbade5bfd918a175ac32f8f1d931edec2c7d0d5397a3de72eaef1ac1f66d2
-  runtime_image: mcr.microsoft.com/dotnet/aspnet:10.0@sha256:8af87eba5e7cdafb1514d7388be287365da97c132509e84dfe252ffd552398ca
+  # One SDK/runtime pair per supported target framework; a project on another framework is
+  # flagged for review. Pinned 2026-10-25: SDK 8.0.426 / runtime 8.0.32, SDK 9.0.319 /
+  # runtime 9.0.21, SDK 10.0.402 / runtime 10.0.13.
+  framework_images:
+    net8.0:
+      sdk: mcr.microsoft.com/dotnet/sdk:8.0@sha256:738f72aff955d5c5690e06b6fc8ecd1b90ead564099a257ac528ff720b8da85f
+      runtime: mcr.microsoft.com/dotnet/aspnet:8.0@sha256:74a1d7c07211a7e8a2e35ff3c70ed8e4e1d6451a1ff7cf7bdf526f9eafa23023
+    net9.0:
+      sdk: mcr.microsoft.com/dotnet/sdk:9.0@sha256:d9ad72f6b3eb5d61adb158db510ae1c3098c12c92d23ab8da833418275f1c652
+      runtime: mcr.microsoft.com/dotnet/aspnet:9.0@sha256:88fcfc1b81c43afa15ba3c138c57d77f77c1cb5118ae9d7024c94e82e2895aa5
+    net10.0:
+      sdk: mcr.microsoft.com/dotnet/sdk:10.0@sha256:747cbade5bfd918a175ac32f8f1d931edec2c7d0d5397a3de72eaef1ac1f66d2
+      runtime: mcr.microsoft.com/dotnet/aspnet:10.0@sha256:8af87eba5e7cdafb1514d7388be287365da97c132509e84dfe252ffd552398ca
+  # The course's framework. A project on an older one still runs, and the student is asked
+  # to move it (never a finding).
+  course_framework: net10.0
   probe_image: curlimages/curl:8.10.1@sha256:d9b4541e214bcd85196d6e92e2753ac6d0ea699f0af5741f8c6cccbfcf00ef4b
   # Resource limits per step (ADR 0015 measurements: publish peaks near 180 MB and 2 CPUs).
   restore_limits: {memory_mb: 1024, cpus: 2, pids: 512}

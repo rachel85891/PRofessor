@@ -116,6 +116,8 @@ def successful_execution() -> ExecutionResult:
             ),
         ),
         primary_controller="ProductController",
+        target_framework="net8.0",
+        framework_outdated=True,
         serving_controllers=("ProductController", "ProductsController"),
         routes=RouteTable(
             routes=(

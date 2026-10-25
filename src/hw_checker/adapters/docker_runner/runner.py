@@ -29,6 +29,7 @@ from hw_checker.adapters.docker_runner.discovery import (
     DiscoveryFailure,
     WebProject,
     discover_web_project,
+    is_older_framework,
 )
 from hw_checker.adapters.docker_runner.engine import (
     ContainerSpec,
@@ -45,7 +46,11 @@ from hw_checker.adapters.docker_runner.routes import (
     extract_route_table,
     resolve_probe_path,
 )
-from hw_checker.adapters.docker_runner.runner_config import ContainerLimits, DockerRunnerConfig
+from hw_checker.adapters.docker_runner.runner_config import (
+    ContainerLimits,
+    DockerRunnerConfig,
+    FrameworkImages,
+)
 from hw_checker.config.logging_setup import log_context
 from hw_checker.domain import (
     ExecutionRequest,
@@ -180,7 +185,7 @@ class DockerCodeRunner:
         helper = self._engine.create_container(
             ContainerSpec(
                 name=f"{self._config.label_prefix}-cache-init-{uuid.uuid4().hex[:8]}",
-                image=self._config.runtime_image,
+                image=self._config.helper_image,
                 command=("true",),
                 labels={
                     self._config.label_prefix: "1",
@@ -241,6 +246,7 @@ class _Execution:
     suffix: str = field(default_factory=lambda: uuid.uuid4().hex[:8])
     routes: RouteTable | None = None
     controllers: ControllerChoice = field(default_factory=lambda: ControllerChoice(None, ()))
+    framework_images: FrameworkImages | None = None
 
     def run(self) -> ExecutionResult:
         self.request.logs_dir.mkdir(parents=True, exist_ok=True)
@@ -255,8 +261,17 @@ class _Execution:
         discovery = discover_web_project(self.request.working_copy)
         if isinstance(discovery, DiscoveryFailure):
             return self._prepare_failed(discovery.message, project_found=False)
-        if (problem := discovery.framework_problem()) is not None:
-            return self._prepare_failed(f"not run, flagged for review: {problem}")
+        framework = {
+            "target_framework": discovery.target_framework,
+            "framework_outdated": is_older_framework(
+                discovery.framework, self.config.course_framework
+            ),
+        }
+        if (problem := discovery.framework_problem(self.config.framework_images)) is not None:
+            result = self._prepare_failed(f"not run, flagged for review: {problem}")
+            return result.model_copy(update=framework)
+        assert discovery.framework is not None  # framework_problem rejects a missing one
+        self.framework_images = self.config.framework_images[discovery.framework]
         plan = plan_path_fixes(self.request.working_copy, discovery.folder)
         self.routes = extract_route_table(self.request.working_copy, discovery.folder)
         self.controllers = choose_primary_controller(self.request.probes, self.routes)
@@ -269,6 +284,7 @@ class _Execution:
                 "routes": self.routes,
                 "primary_controller": self.controllers.primary,
                 "serving_controllers": self.controllers.serving,
+                **framework,
             }
         )
 
@@ -308,7 +324,7 @@ class _Execution:
             return self._prepare_failed(f"cannot copy the code into Docker: {error}", engine=True)
         self._write_log(
             RunnerStep.PREPARE,
-            f"Web project: {discovery.path}\n"
+            f"Web project: {discovery.path} ({discovery.framework})\n"
             + _describe_paths(plan.rewrites)
             + _describe_routes(self.routes)
             + _describe_controllers(self.routes, self.controllers),
@@ -327,7 +343,7 @@ class _Execution:
             RunnerStep.RESTORE,
             self._step_spec(
                 "restore",
-                self.config.sdk_image,
+                self._images().sdk,
                 ("dotnet", "restore", project),
                 work_volume,
                 cache_read_only=False,
@@ -342,7 +358,7 @@ class _Execution:
             RunnerStep.BUILD,
             self._step_spec(
                 "build",
-                self.config.sdk_image,
+                self._images().sdk,
                 ("dotnet", "publish", project, "--no-restore", "-c", "Release", "-o", OUTPUT_DIR),
                 work_volume,
                 cache_read_only=True,
@@ -379,7 +395,7 @@ class _Execution:
         helper = self.engine.create_container(
             ContainerSpec(
                 name=self._name("copy"),
-                image=self.config.runtime_image,
+                image=self.config.helper_image,
                 command=("true",),
                 labels=self._labels("copy"),
                 user=self.config.user,
@@ -583,7 +599,7 @@ class _Execution:
         }
         return ContainerSpec(
             name=name,
-            image=self.config.runtime_image,
+            image=self._images().runtime,
             command=("dotnet", f"{OUTPUT_DIR}/{assembly_name}.dll"),
             labels=self._labels("app"),
             user=self.config.user,
@@ -655,6 +671,11 @@ class _Execution:
         )
 
     # ------------------------------------------------------------------ helpers
+
+    def _images(self) -> FrameworkImages:
+        if self.framework_images is None:
+            raise RuntimeError("the project's framework images are chosen during prepare")
+        return self.framework_images
 
     def _name(self, kind: str) -> str:
         raw = f"{self.config.label_prefix}-{self.request.run_id}-{self.request.repo_id}-{kind}"

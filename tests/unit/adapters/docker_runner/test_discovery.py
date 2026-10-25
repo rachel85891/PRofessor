@@ -6,7 +6,11 @@ from hw_checker.adapters.docker_runner.discovery import (
     DiscoveryFailure,
     WebProject,
     discover_web_project,
+    framework_version,
+    is_older_framework,
 )
+
+SUPPORTED = ("net8.0", "net9.0", "net10.0")
 
 WEB = '<Project Sdk="Microsoft.NET.Sdk.Web"><PropertyGroup>{props}</PropertyGroup></Project>'
 LIBRARY = '<Project Sdk="Microsoft.NET.Sdk"><PropertyGroup /></Project>'
@@ -174,7 +178,7 @@ def test_target_framework_is_read(tmp_path: Path) -> None:
 
     assert result == WebProject("Api/Api.csproj", "Api", target_framework="net10.0")
     assert isinstance(result, WebProject)
-    assert result.framework_problem() is None
+    assert result.framework_problem(SUPPORTED) is None
     assert result.folder == "Api"
 
 
@@ -191,16 +195,44 @@ def test_target_frameworks_plural_is_read(tmp_path: Path) -> None:
 @pytest.mark.parametrize(
     ("framework", "problem"),
     [
-        ("net9.0", "Api.csproj targets net9.0; only net10.0 is supported"),
-        ("net10.0-windows", "Api.csproj targets net10.0-windows; only net10.0 is supported"),
+        ("net8.0", None),
+        ("net9.0", None),
         ("NET10.0", None),
-        (None, "no <TargetFramework> found in Api.csproj; only net10.0 is supported"),
+        ("net7.0", "Api.csproj targets net7.0; supported: net8.0, net9.0, net10.0"),
+        (
+            "net10.0-windows",
+            "Api.csproj targets net10.0-windows; supported: net8.0, net9.0, net10.0",
+        ),
+        (None, "no <TargetFramework> found in Api.csproj; supported: net8.0, net9.0, net10.0"),
     ],
 )
-def test_only_net10_is_supported(framework: str | None, problem: str | None) -> None:
+def test_supported_frameworks_come_from_the_mapping(
+    framework: str | None, problem: str | None
+) -> None:
     project = WebProject("Api.csproj", "Api", target_framework=framework)
 
-    assert project.framework_problem() == problem
+    assert project.framework_problem(SUPPORTED) == problem
+
+
+@pytest.mark.parametrize(
+    ("framework", "older"),
+    [
+        ("net8.0", True),
+        ("net9.0", True),
+        ("net10.0", False),
+        ("net11.0", False),
+        ("net10.0-windows", False),
+        (None, False),
+    ],
+)
+def test_older_than_the_course_framework(framework: str | None, older: bool) -> None:
+    assert is_older_framework(framework, "net10.0") is older
+
+
+def test_framework_version() -> None:
+    assert framework_version("net8.0") == (8, 0)
+    assert framework_version("net10.0") == (10, 0)
+    assert framework_version("netcoreapp3.1") is None
 
 
 def test_folder_names_with_bidi_marks_and_hebrew_are_found(tmp_path: Path) -> None:

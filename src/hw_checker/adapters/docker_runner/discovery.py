@@ -6,14 +6,14 @@ Only reads `.csproj` files as XML text; nothing from the repo is executed or eva
 import os
 import re
 import xml.etree.ElementTree as ElementTree
+from collections.abc import Collection
 from dataclasses import dataclass
 from pathlib import Path
 
 WEB_SDK = "microsoft.net.sdk.web"
 EXCLUDED_DIRS = frozenset({"bin", "obj", ".git"})
 MAX_PROJECT_FILE_BYTES = 1_000_000
-SUPPORTED_FRAMEWORK = "net10.0"
-"""The only target framework the pinned images build and run (.NET 10 only)."""
+_FRAMEWORK_VERSION = re.compile(r"^net(?P<major>\d+)\.(?P<minor>\d+)$")
 _SAFE_ASSEMBLY_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 
 
@@ -35,19 +35,33 @@ class WebProject:
         """The folder holding the project file, relative to the working copy ("" at the root)."""
         return self.path.rpartition("/")[0]
 
-    def framework_problem(self) -> str | None:
-        """Why the pinned images cannot build this project, or None when they can."""
-        if self.target_framework is None:
-            return (
-                f"no <TargetFramework> found in {self.path}; "
-                f"only {SUPPORTED_FRAMEWORK} is supported"
-            )
-        if self.target_framework.strip().lower() != SUPPORTED_FRAMEWORK:
-            return (
-                f"{self.path} targets {self.target_framework.strip()}; "
-                f"only {SUPPORTED_FRAMEWORK} is supported"
-            )
+    @property
+    def framework(self) -> str | None:
+        """The target framework in lower case, without surrounding spaces."""
+        return None if self.target_framework is None else self.target_framework.strip().lower()
+
+    def framework_problem(self, supported: Collection[str]) -> str | None:
+        """Why no pinned images can build this project, or None when some can."""
+        names = ", ".join(supported)
+        written = self.target_framework
+        if written is None:
+            return f"no <TargetFramework> found in {self.path}; supported: {names}"
+        if written.strip().lower() not in supported:
+            return f"{self.path} targets {written.strip()}; supported: {names}"
         return None
+
+
+def framework_version(framework: str) -> tuple[int, int] | None:
+    """`net8.0` gives (8, 0); anything else (such as `net10.0-windows`) gives None."""
+    match = _FRAMEWORK_VERSION.match(framework)
+    return None if match is None else (int(match["major"]), int(match["minor"]))
+
+
+def is_older_framework(framework: str | None, course_framework: str) -> bool:
+    """True when `framework` is a plain .NET version older than the course's."""
+    version = None if framework is None else framework_version(framework)
+    course = framework_version(course_framework)
+    return version is not None and course is not None and version < course
 
 
 @dataclass(frozen=True)

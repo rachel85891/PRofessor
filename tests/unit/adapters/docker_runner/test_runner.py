@@ -19,6 +19,7 @@ from hw_checker.domain import (
 )
 from hw_checker.domain.errors import ExecutionEnvironmentError
 from tests.unit.adapters.docker_runner.fake_engine import FakeClock, FakeEngine
+from tests.unit.adapters.docker_runner.test_engine_and_config import DIGEST
 from tests.unit.adapters.docker_runner.test_engine_and_config import config as base_config
 
 WEB_PROJECT = (
@@ -624,7 +625,7 @@ def test_project_not_found_creates_nothing(tmp_path: Path) -> None:
 @pytest.mark.parametrize(
     ("framework", "message"),
     [
-        ("<TargetFramework>net9.0</TargetFramework>", "Shop.Api.csproj targets net9.0"),
+        ("<TargetFramework>net7.0</TargetFramework>", "Shop.Api.csproj targets net7.0"),
         ("<TargetFrameworks>net8.0;net10.0</TargetFrameworks>", "targets net8.0;net10.0"),
         ("", "no <TargetFramework> found in Shop.Api.csproj"),
     ],
@@ -644,8 +645,50 @@ def test_other_target_framework_fails_prepare_without_docker(
     assert result.failure_kind is FailureKind.ENVIRONMENT_ERROR
     assert result.steps == (StepStatus.FAILED, StepStatus.SKIPPED, StepStatus.SKIPPED)
     assert message in result.logs_excerpt
-    assert "only net10.0 is supported" in result.logs_excerpt
+    assert "supported: net8.0, net9.0, net10.0" in result.logs_excerpt
     assert engine.calls == []
+
+
+@pytest.mark.parametrize(
+    ("framework", "tag", "outdated"),
+    [("net8.0", "8.0", True), ("net9.0", "9.0", True), ("net10.0", "10.0", False)],
+)
+def test_project_is_built_and_run_with_the_images_of_its_framework(
+    repo: Path, tmp_path: Path, framework: str, tag: str, outdated: bool
+) -> None:
+    (repo / "Shop.Api.csproj").write_text(
+        '<Project Sdk="Microsoft.NET.Sdk.Web"><PropertyGroup>'
+        f"<TargetFramework>{framework}</TargetFramework></PropertyGroup></Project>",
+        encoding="utf-8",
+    )
+    engine = FakeEngine()
+
+    result = runner(engine).execute(request(repo, tmp_path))
+
+    assert result.failure_kind is None
+    (restore,) = engine.specs("restore")
+    (build,) = engine.specs("build")
+    (app,) = engine.specs("app")
+    assert restore.image == build.image == f"mcr.microsoft.com/dotnet/sdk:{tag}@{DIGEST}"
+    assert app.image == f"mcr.microsoft.com/dotnet/aspnet:{tag}@{DIGEST}"
+    assert all(spec.image.endswith(f"aspnet:10.0@{DIGEST}") for spec in engine.specs("copy"))
+    assert (result.target_framework, result.framework_outdated) == (framework, outdated)
+    prepare_log = (tmp_path / "logs" / "prepare.log").read_text(encoding="utf-8")
+    assert f"Web project: Shop.Api.csproj ({framework})" in prepare_log
+
+
+def test_failed_build_still_records_the_framework(repo: Path, tmp_path: Path) -> None:
+    (repo / "Shop.Api.csproj").write_text(
+        '<Project Sdk="Microsoft.NET.Sdk.Web"><PropertyGroup>'
+        "<TargetFramework>net8.0</TargetFramework></PropertyGroup></Project>",
+        encoding="utf-8",
+    )
+    engine = FakeEngine(exit_codes={"build": 1}, logs_by_kind={"build": BUILD_ERROR})
+
+    result = runner(engine).execute(request(repo, tmp_path))
+
+    assert result.failure_kind is FailureKind.BUILD_FAILED
+    assert (result.target_framework, result.framework_outdated) == ("net8.0", True)
 
 
 def test_oversized_repo_fails_prepare_without_docker(repo: Path, tmp_path: Path) -> None:

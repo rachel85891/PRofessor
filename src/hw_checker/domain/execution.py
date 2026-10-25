@@ -208,6 +208,11 @@ class ExecutionResult(DomainModel):
     """The routes declared in the student's code; None when they were not read."""
     primary_controller: str | None = None
     """The controller probes were steered to: the one that could serve the most probes."""
+    target_framework: str | None = None
+    """The project's `<TargetFramework>` (for example `net8.0`); None when it was not read."""
+    framework_outdated: bool = False
+    """True when the project targets a .NET version older than the course's. The project is
+    still built and run; the student is asked to move it, and it never lowers the grade."""
     serving_controllers: tuple[str, ...] = ()
     """Every controller that could serve at least one probe, sorted by name."""
 

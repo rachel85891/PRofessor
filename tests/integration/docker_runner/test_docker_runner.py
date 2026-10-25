@@ -32,6 +32,8 @@ from tests.integration.docker_runner.conftest import (
     ABSOLUTE_PATH_FIXTURE,
     ABSOLUTE_PATH_PROBES,
     CACHE_VOLUME,
+    ITEMS_PROBES,
+    OLDER_FRAMEWORK_FIXTURES,
     PREFIX,
     PROJECT,
     SAMPLE_PROBES,
@@ -144,6 +146,26 @@ def test_long_run_and_repo_ids_do_not_affect_probing(
 
     assert result.steps == (StepStatus.SUCCEEDED,) * 3, describe(result)
     assert all_passed(result), describe(result)
+    assert_nothing_left(engine)
+
+
+@pytest.mark.parametrize("framework", sorted(OLDER_FRAMEWORK_FIXTURES))
+def test_older_framework_builds_runs_and_is_marked(
+    docker_runner: DockerCodeRunner,
+    engine: SdkDockerEngine,
+    sample_copy: SampleCopy,
+    tmp_path: Path,
+    framework: str,
+) -> None:
+    repo = sample_copy(source=OLDER_FRAMEWORK_FIXTURES[framework])
+
+    result = docker_runner.execute(make_request(repo, tmp_path / "logs", probes=ITEMS_PROBES))
+
+    assert result.steps == (StepStatus.SUCCEEDED,) * 3, describe(result)
+    assert statuses(result) == [("GET", "/api/items", 200), ("POST", "/api/items", 201)]
+    assert (result.target_framework, result.framework_outdated) == (framework, True)
+    prepare_log = (tmp_path / "logs" / "prepare.log").read_text(encoding="utf-8")
+    assert f"({framework})" in prepare_log
     assert_nothing_left(engine)
 
 
@@ -452,7 +474,7 @@ def test_sweep_removes_planted_leftovers_and_keeps_the_cache(
     engine.create_container(
         ContainerSpec(
             "hw-checker-it-planted-app",
-            config.runtime_image,
+            config.helper_image,
             ("true",),
             labels,
             config.user,

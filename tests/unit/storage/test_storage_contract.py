@@ -80,6 +80,7 @@ def test_route_table_and_probe_resolution_are_loaded_back(storage: Storage) -> N
     ]
     assert execution.probe_results[0].sent_path == "/api/product"
     assert [r.controller for r in execution.probe_results] == ["ProductController", None, None]
+    assert (execution.target_framework, execution.framework_outdated) == ("net8.0", True)
     assert (execution.primary_controller, execution.serving_controllers) == (
         "ProductController",
         ("ProductController", "ProductsController"),

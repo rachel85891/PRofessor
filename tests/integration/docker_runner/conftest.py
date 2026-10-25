@@ -9,7 +9,11 @@ import pytest
 
 from hw_checker.adapters.docker_runner.engine import Resource, SdkDockerEngine
 from hw_checker.adapters.docker_runner.runner import DockerCodeRunner
-from hw_checker.adapters.docker_runner.runner_config import ContainerLimits, DockerRunnerConfig
+from hw_checker.adapters.docker_runner.runner_config import (
+    ContainerLimits,
+    DockerRunnerConfig,
+    FrameworkImages,
+)
 from hw_checker.config.settings import RunnerSettings, StepLimits
 from hw_checker.domain import ExecutionRequest, HttpMethod, HttpProbe
 
@@ -18,6 +22,10 @@ FIXTURE = FIXTURES / "sample_webapi"
 ABSOLUTE_PATH_FIXTURE = FIXTURES / "sample_webapi_absolute_path"
 USER_SIGNIN_FIXTURE = FIXTURES / "sample_webapi_user_signin"
 TWO_CONTROLLERS_FIXTURE = FIXTURES / "sample_webapi_two_controllers"
+OLDER_FRAMEWORK_FIXTURES = {
+    "net8.0": FIXTURES / "sample_webapi_net80",
+    "net9.0": FIXTURES / "sample_webapi_net90",
+}
 PROJECT = Path("WebApi") / "WebApi"
 """Where the sample fixture's Web project sits, relative to the fixture root."""
 PREFIX = "hw-checker-it"
@@ -32,8 +40,11 @@ def runner_config() -> DockerRunnerConfig:
     """The real pinned images and limits, with short timeouts and test-only names."""
     settings = RunnerSettings()
     return DockerRunnerConfig(
-        sdk_image=settings.sdk_image,
-        runtime_image=settings.runtime_image,
+        framework_images={
+            version: FrameworkImages(sdk=images.sdk, runtime=images.runtime)
+            for version, images in settings.framework_images.items()
+        },
+        course_framework=settings.course_framework,
         probe_image=settings.probe_image,
         restore_limits=limits(settings.restore_limits),
         build_limits=limits(settings.build_limits),
@@ -225,3 +236,10 @@ TWO_CONTROLLERS_PROBES = (
 )
 """Against `sample_webapi_two_controllers`: every probe but the login can go to either
 controller by its candidates, and only UsersController holds the user the POST creates."""
+
+
+ITEMS_PROBES = (
+    probe("hw01-r1", HttpMethod.GET, "/api/items", 200),
+    probe("hw01-r1", HttpMethod.POST, "/api/items", 201, '{"title":"Second"}'),
+)
+"""Against the net8.0 and net9.0 fixtures."""
