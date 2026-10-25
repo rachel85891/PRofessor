@@ -4,6 +4,9 @@ import pytest
 from pydantic import ValidationError
 
 from hw_checker.domain import (
+    BodyAdaptation,
+    BodyFieldNote,
+    BodyFieldOutcome,
     ExecutionRequest,
     ExecutionResult,
     FailureKind,
@@ -328,6 +331,7 @@ def test_older_execution_without_controller_fields_still_loads() -> None:
     )
 
     assert (execution.primary_controller, execution.serving_controllers) == (None, ())
+    assert (execution.target_framework, execution.framework_outdated) == (None, False)
 
 
 def test_only_a_resolved_probe_has_a_controller() -> None:
@@ -350,3 +354,37 @@ def test_primary_controller_must_be_one_that_can_serve() -> None:
             primary_controller="UsersController",
             serving_controllers=("UserController",),
         )
+
+
+def test_body_adaptation_is_mismatched_only_for_unmatched_or_unconvertible_fields() -> None:
+    def adaptation(*outcomes: BodyFieldOutcome) -> BodyAdaptation:
+        notes = tuple(BodyFieldNote(field=f"f{i}", outcome=o) for i, o in enumerate(outcomes))
+        return BodyAdaptation(adapted=True, model="User", notes=notes)
+
+    assert not adaptation(BodyFieldOutcome.MATCHED, BodyFieldOutcome.FILLED).mismatched
+    assert not adaptation(BodyFieldOutcome.CONVERTED).mismatched
+    assert adaptation(BodyFieldOutcome.MATCHED, BodyFieldOutcome.UNMATCHED).mismatched
+    assert adaptation(BodyFieldOutcome.NOT_CONVERTIBLE).mismatched
+    assert not BodyAdaptation(adapted=False, reason="class User not found").mismatched
+
+
+def test_probe_that_was_not_sent_has_no_sent_body() -> None:
+    with pytest.raises(ValidationError, match="no sent_body"):
+        ProbeResult(
+            probe=builders.probe(),
+            passed=False,
+            route_resolution=RouteResolution.ROUTE_NOT_FOUND,
+            sent_body="{}",
+        )
+
+
+def test_older_probe_result_without_body_fields_still_loads() -> None:
+    result = ProbeResult.model_validate(
+        {"probe": builders.probe().model_dump(mode="json"), "actual_status": 200, "passed": True}
+    )
+
+    assert (result.sent_body, result.body_adaptation, result.body_mismatched) == (
+        None,
+        None,
+        False,
+    )

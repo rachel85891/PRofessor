@@ -19,6 +19,7 @@ from hw_checker.domain import (
 )
 from hw_checker.domain.errors import ExecutionEnvironmentError
 from tests.unit.adapters.docker_runner.fake_engine import FakeClock, FakeEngine
+from tests.unit.adapters.docker_runner.test_engine_and_config import DIGEST
 from tests.unit.adapters.docker_runner.test_engine_and_config import config as base_config
 
 WEB_PROJECT = (
@@ -377,6 +378,55 @@ def test_probes_are_steered_to_the_controller_serving_most(repo: Path, tmp_path:
     ) in prepare_log
 
 
+MODEL_CONTROLLER = (
+    '[Route("api/[controller]")]\npublic class UsersController : ControllerBase\n{\n'
+    "    [HttpPost]\n    public IActionResult Post([FromBody] Account a) => Ok();\n}\n"
+    "public class Account\n{\n"
+    "    public int Password { get; set; }\n"
+    "    public required string Name { get; set; }\n}\n"
+)
+
+
+def test_probe_body_is_adapted_to_the_students_model(repo: Path, tmp_path: Path) -> None:
+    (repo / "Controllers" / "ProductsController.cs").write_text(MODEL_CONTROLLER, encoding="utf-8")
+    create = HttpProbe(
+        requirement_id="hw01-r1",
+        assignment_id="hw01",
+        method=HttpMethod.POST,
+        path="/api/users",
+        body='{"password":"12345","email":"a@b.c"}',
+        expected_status=200,
+    )
+    engine = FakeEngine()
+
+    result = runner(engine).execute(request(repo, tmp_path, probes=(create,)))
+
+    (sent,) = [c for c in engine.exec_commands if "--data-raw" in c]
+    expected = '{"password":12345,"email":"a@b.c","name":"probe-name"}'
+    assert sent[sent.index("--data-raw") + 1] == expected
+    (probe_result,) = result.probe_results
+    assert probe_result.sent_body == expected
+    adaptation = probe_result.body_adaptation
+    assert adaptation is not None and adaptation.model == "Account"
+    assert [(n.field, n.outcome.value) for n in adaptation.notes] == [
+        ("password", "converted"),
+        ("email", "unmatched"),
+        ("Name", "filled"),
+    ]
+
+
+def test_without_a_route_table_the_body_is_sent_as_written(repo: Path, tmp_path: Path) -> None:
+    body = '{"name":"Desk","price":250}'
+    engine = FakeEngine(probe_statuses=STATUSES)
+
+    result = runner(engine).execute(request(repo, tmp_path))
+
+    post = result.probe_results[2]
+    assert post.sent_body == body
+    assert post.body_adaptation is not None and not post.body_adaptation.adapted
+    assert result.probe_results[0].body_adaptation is None  # a GET has no body
+
+
 def test_without_routes_probes_go_to_their_first_path(repo: Path, tmp_path: Path) -> None:
     engine = FakeEngine(probe_statuses=STATUSES)
 
@@ -491,6 +541,43 @@ def test_startup_crash_stops_readiness_early(repo: Path, tmp_path: Path) -> None
     assert engine.leftovers == 0
 
 
+def test_app_is_reached_through_its_short_network_alias(repo: Path, tmp_path: Path) -> None:
+    engine = FakeEngine()
+    long_ids = {"run_id": "round-2026-10-25-hw01-" + "x" * 30, "repo_id": "student__" + "y" * 40}
+
+    runner(engine).execute(request(repo, tmp_path, **long_ids))
+
+    (app,) = engine.specs("app")
+    (sidecar,) = engine.specs("probe")
+    assert len(app.name) > 63, "the container name alone would not resolve"
+    assert app.network_aliases == ("app",)
+    assert sidecar.network_aliases == ()
+    urls = {command[command.index("--") + 1] for command in engine.exec_commands}
+    assert all(url.startswith("http://app:8080/") for url in urls)
+
+
+def test_name_that_never_resolves_is_an_environment_error(repo: Path, tmp_path: Path) -> None:
+    engine = FakeEngine(resolve_failures=1_000)
+
+    result = runner(engine).execute(request(repo, tmp_path))
+
+    assert result.failure_kind is FailureKind.ENVIRONMENT_ERROR
+    assert result.steps == (StepStatus.SUCCEEDED, StepStatus.SUCCEEDED, StepStatus.FAILED)
+    # About 2 s of grace / 0.1 s poll, far fewer than the 5 s readiness timeout would take.
+    assert 20 <= len(engine.exec_commands) <= 22
+    assert "could not resolve 'app'" in (tmp_path / "logs" / "run.log").read_text(encoding="utf-8")
+    assert engine.leftovers == 0
+
+
+def test_name_that_resolves_within_the_grace_period_is_fine(repo: Path, tmp_path: Path) -> None:
+    engine = FakeEngine(resolve_failures=5, probe_statuses=STATUSES)
+
+    result = runner(engine).execute(request(repo, tmp_path))
+
+    assert result.failure_kind is None
+    assert all(r.passed for r in result.probe_results)
+
+
 def test_app_that_never_answers_times_out(repo: Path, tmp_path: Path) -> None:
     engine = FakeEngine(app="hang")
 
@@ -587,7 +674,7 @@ def test_project_not_found_creates_nothing(tmp_path: Path) -> None:
 @pytest.mark.parametrize(
     ("framework", "message"),
     [
-        ("<TargetFramework>net9.0</TargetFramework>", "Shop.Api.csproj targets net9.0"),
+        ("<TargetFramework>net7.0</TargetFramework>", "Shop.Api.csproj targets net7.0"),
         ("<TargetFrameworks>net8.0;net10.0</TargetFrameworks>", "targets net8.0;net10.0"),
         ("", "no <TargetFramework> found in Shop.Api.csproj"),
     ],
@@ -607,8 +694,50 @@ def test_other_target_framework_fails_prepare_without_docker(
     assert result.failure_kind is FailureKind.ENVIRONMENT_ERROR
     assert result.steps == (StepStatus.FAILED, StepStatus.SKIPPED, StepStatus.SKIPPED)
     assert message in result.logs_excerpt
-    assert "only net10.0 is supported" in result.logs_excerpt
+    assert "supported: net8.0, net9.0, net10.0" in result.logs_excerpt
     assert engine.calls == []
+
+
+@pytest.mark.parametrize(
+    ("framework", "tag", "outdated"),
+    [("net8.0", "8.0", True), ("net9.0", "9.0", True), ("net10.0", "10.0", False)],
+)
+def test_project_is_built_and_run_with_the_images_of_its_framework(
+    repo: Path, tmp_path: Path, framework: str, tag: str, outdated: bool
+) -> None:
+    (repo / "Shop.Api.csproj").write_text(
+        '<Project Sdk="Microsoft.NET.Sdk.Web"><PropertyGroup>'
+        f"<TargetFramework>{framework}</TargetFramework></PropertyGroup></Project>",
+        encoding="utf-8",
+    )
+    engine = FakeEngine()
+
+    result = runner(engine).execute(request(repo, tmp_path))
+
+    assert result.failure_kind is None
+    (restore,) = engine.specs("restore")
+    (build,) = engine.specs("build")
+    (app,) = engine.specs("app")
+    assert restore.image == build.image == f"mcr.microsoft.com/dotnet/sdk:{tag}@{DIGEST}"
+    assert app.image == f"mcr.microsoft.com/dotnet/aspnet:{tag}@{DIGEST}"
+    assert all(spec.image.endswith(f"aspnet:10.0@{DIGEST}") for spec in engine.specs("copy"))
+    assert (result.target_framework, result.framework_outdated) == (framework, outdated)
+    prepare_log = (tmp_path / "logs" / "prepare.log").read_text(encoding="utf-8")
+    assert f"Web project: Shop.Api.csproj ({framework})" in prepare_log
+
+
+def test_failed_build_still_records_the_framework(repo: Path, tmp_path: Path) -> None:
+    (repo / "Shop.Api.csproj").write_text(
+        '<Project Sdk="Microsoft.NET.Sdk.Web"><PropertyGroup>'
+        "<TargetFramework>net8.0</TargetFramework></PropertyGroup></Project>",
+        encoding="utf-8",
+    )
+    engine = FakeEngine(exit_codes={"build": 1}, logs_by_kind={"build": BUILD_ERROR})
+
+    result = runner(engine).execute(request(repo, tmp_path))
+
+    assert result.failure_kind is FailureKind.BUILD_FAILED
+    assert (result.target_framework, result.framework_outdated) == ("net8.0", True)
 
 
 def test_oversized_repo_fails_prepare_without_docker(repo: Path, tmp_path: Path) -> None:

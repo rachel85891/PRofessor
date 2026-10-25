@@ -52,7 +52,8 @@ def test_check_environment_pulls_missing_images_and_logs_it(
         runner(engine).check_environment()
 
     assert engine.pulled == list(config().images)
-    assert sum("Pulling missing image" in r.getMessage() for r in caplog.records) == 3
+    # Two images per framework (8, 9 and 10) and the probe image.
+    assert sum("Pulling missing image" in r.getMessage() for r in caplog.records) == 7
 
 
 def test_check_environment_reports_an_image_that_cannot_be_pulled() -> None:

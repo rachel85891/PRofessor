@@ -4,7 +4,11 @@ from typing import Any
 import pytest
 
 from hw_checker.adapters.docker_runner.engine import EngineError, SdkDockerEngine, digest_reference
-from hw_checker.adapters.docker_runner.runner_config import ContainerLimits, DockerRunnerConfig
+from hw_checker.adapters.docker_runner.runner_config import (
+    ContainerLimits,
+    DockerRunnerConfig,
+    FrameworkImages,
+)
 
 DIGEST = "sha256:" + "a" * 64
 
@@ -12,8 +16,14 @@ DIGEST = "sha256:" + "a" * 64
 def config(**overrides: Any) -> DockerRunnerConfig:
     limits = ContainerLimits(memory_mb=512, cpus=1, pids=64)
     values: dict[str, Any] = {
-        "sdk_image": f"mcr.microsoft.com/dotnet/sdk:9.0@{DIGEST}",
-        "runtime_image": f"mcr.microsoft.com/dotnet/aspnet:9.0@{DIGEST}",
+        "framework_images": {
+            version: FrameworkImages(
+                sdk=f"mcr.microsoft.com/dotnet/sdk:{version[3:]}@{DIGEST}",
+                runtime=f"mcr.microsoft.com/dotnet/aspnet:{version[3:]}@{DIGEST}",
+            )
+            for version in ("net8.0", "net9.0", "net10.0")
+        },
+        "course_framework": "net10.0",
         "probe_image": f"curlimages/curl:8.10.1@{DIGEST}",
         "restore_limits": limits,
         "build_limits": limits,
@@ -23,6 +33,7 @@ def config(**overrides: Any) -> DockerRunnerConfig:
         "build_timeout_seconds": 10,
         "readiness_timeout_seconds": 5,
         "probe_timeout_seconds": 2,
+        "resolve_grace_seconds": 2,
         "readiness_poll_seconds": 0.1,
         "app_port": 8080,
         "app_uid": 1654,
@@ -60,10 +71,20 @@ def test_config_exposes_user_and_images() -> None:
 
     assert runner_config.user == "1654:1654"
     assert runner_config.images == (
-        runner_config.sdk_image,
-        runner_config.runtime_image,
-        runner_config.probe_image,
+        f"mcr.microsoft.com/dotnet/sdk:8.0@{DIGEST}",
+        f"mcr.microsoft.com/dotnet/aspnet:8.0@{DIGEST}",
+        f"mcr.microsoft.com/dotnet/sdk:9.0@{DIGEST}",
+        f"mcr.microsoft.com/dotnet/aspnet:9.0@{DIGEST}",
+        f"mcr.microsoft.com/dotnet/sdk:10.0@{DIGEST}",
+        f"mcr.microsoft.com/dotnet/aspnet:10.0@{DIGEST}",
+        f"curlimages/curl:8.10.1@{DIGEST}",
     )
+    assert runner_config.helper_image == f"mcr.microsoft.com/dotnet/aspnet:10.0@{DIGEST}"
+
+
+def test_config_needs_images_for_the_course_framework() -> None:
+    with pytest.raises(ValueError, match=r"course framework net11\.0"):
+        config(course_framework="net11.0")
 
 
 @pytest.mark.parametrize(

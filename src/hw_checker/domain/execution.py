@@ -21,6 +21,9 @@ MAX_PATH_TEXT_CHARS = 1000
 MAX_ROUTE_TEXT_CHARS = 500
 """Upper bound for a route template or a routing description recorded from student code."""
 
+MAX_BODY_CHARS = 10_000
+"""Upper bound for a recorded probe body."""
+
 
 class FailureKind(StrEnum):
     """Why a build or run failed (design §5). Choosing the kind is the runner's job."""
@@ -48,6 +51,51 @@ class StepStatus(StrEnum):
     SKIPPED = "skipped"
 
 
+class BodyFieldOutcome(StrEnum):
+    """What happened to one field when a probe body was adapted to the student's model."""
+
+    MATCHED = "matched"
+    """The body key matched a property (ignoring case) and its value already fit."""
+    CONVERTED = "converted"
+    """The value was converted to the property's type, for example "12345" to 12345."""
+    FILLED = "filled"
+    """A required property the body did not mention got a type-appropriate dummy value."""
+    UNMATCHED = "unmatched"
+    """The body key matches no property of the model; it was sent as written."""
+    NOT_CONVERTIBLE = "not_convertible"
+    """The value cannot be converted to the property's type; a dummy value was sent."""
+
+
+class BodyFieldNote(DomainModel):
+    """One field of an adapted probe body."""
+
+    field: NonBlankStr
+    """The body key, or for a filled field the property's name."""
+    property_name: str | None = None
+    outcome: BodyFieldOutcome
+
+
+MISMATCH_OUTCOMES = frozenset({BodyFieldOutcome.UNMATCHED, BodyFieldOutcome.NOT_CONVERTIBLE})
+
+
+class BodyAdaptation(DomainModel):
+    """How a probe's intended body was adapted to the model of the action it reached.
+
+    `adapted` is False when no model could be read (`reason` says why); the body was then
+    sent as written.
+    """
+
+    adapted: bool
+    model: str | None = None
+    reason: str = Field(default="", max_length=MAX_ROUTE_TEXT_CHARS)
+    notes: tuple[BodyFieldNote, ...] = ()
+
+    @property
+    def mismatched(self) -> bool:
+        """True when a body field matched no property or could not be converted."""
+        return any(note.outcome in MISMATCH_OUTCOMES for note in self.notes)
+
+
 class RouteResolution(StrEnum):
     """How the path a probe was sent to was chosen from its candidate paths."""
 
@@ -66,6 +114,8 @@ class ProbeResult(DomainModel):
     candidate path the request went to (None when it was not sent, and for results
     recorded before path alternatives existed). `controller` is the class whose declared
     route the path matched (None when no route was used, and for older results).
+    `sent_body` is the body that was actually sent, after `body_adaptation` adapted the
+    probe's intended body to the student's model (both None for a probe without a body).
     """
 
     probe: HttpProbe
@@ -75,6 +125,13 @@ class ProbeResult(DomainModel):
     sent_path: str | None = None
     route_resolution: RouteResolution = RouteResolution.UNAVAILABLE
     controller: str | None = None
+    sent_body: str | None = Field(default=None, max_length=MAX_BODY_CHARS)
+    body_adaptation: BodyAdaptation | None = None
+
+    @property
+    def body_mismatched(self) -> bool:
+        """True when the body sent had fields that do not fit the student's model."""
+        return self.body_adaptation is not None and self.body_adaptation.mismatched
 
     @property
     def requirement_id(self) -> str:
@@ -103,6 +160,10 @@ class ProbeResult(DomainModel):
             raise ValueError("sent_path must be one of the probe's candidate paths")
         if self.controller is not None and self.route_resolution is not RouteResolution.RESOLVED:
             raise ValueError("only a probe resolved to a declared route has a controller")
+        if self.sent_body is not None and (
+            self.route_resolution is RouteResolution.ROUTE_NOT_FOUND
+        ):
+            raise ValueError("a probe that was not sent has no sent_body")
         return self
 
 
@@ -208,6 +269,11 @@ class ExecutionResult(DomainModel):
     """The routes declared in the student's code; None when they were not read."""
     primary_controller: str | None = None
     """The controller probes were steered to: the one that could serve the most probes."""
+    target_framework: str | None = None
+    """The project's `<TargetFramework>` (for example `net8.0`); None when it was not read."""
+    framework_outdated: bool = False
+    """True when the project targets a .NET version older than the course's. The project is
+    still built and run; the student is asked to move it, and it never lowers the grade."""
     serving_controllers: tuple[str, ...] = ()
     """Every controller that could serve at least one probe, sorted by name."""
 

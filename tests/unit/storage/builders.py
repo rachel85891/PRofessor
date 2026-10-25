@@ -6,6 +6,9 @@ from pathlib import Path
 from hw_checker.domain import (
     AssignmentResult,
     AssignmentVersion,
+    BodyAdaptation,
+    BodyFieldNote,
+    BodyFieldOutcome,
     DeclaredRoute,
     Evidence,
     ExecutionResult,
@@ -102,6 +105,23 @@ def successful_execution() -> ExecutionResult:
                 sent_path="/api/product",
                 route_resolution=RouteResolution.RESOLVED,
                 controller="ProductController",
+                sent_body='{"name":"שולחן","price":250,"sku":"probe-sku"}',
+                body_adaptation=BodyAdaptation(
+                    adapted=True,
+                    model="Product",
+                    notes=(
+                        BodyFieldNote(
+                            field="name", property_name="Name", outcome=BodyFieldOutcome.MATCHED
+                        ),
+                        BodyFieldNote(
+                            field="price", property_name="Price", outcome=BodyFieldOutcome.CONVERTED
+                        ),
+                        BodyFieldNote(field="colour", outcome=BodyFieldOutcome.UNMATCHED),
+                        BodyFieldNote(
+                            field="Sku", property_name="Sku", outcome=BodyFieldOutcome.FILLED
+                        ),
+                    ),
+                ),
             ),
             ProbeResult(
                 probe=probe("/api/products/1", 204),
@@ -116,6 +136,8 @@ def successful_execution() -> ExecutionResult:
             ),
         ),
         primary_controller="ProductController",
+        target_framework="net8.0",
+        framework_outdated=True,
         serving_controllers=("ProductController", "ProductsController"),
         routes=RouteTable(
             routes=(

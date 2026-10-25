@@ -27,6 +27,9 @@ def evaluate_http(check_input: CheckInput) -> tuple[Finding, ...] | NotEvaluated
     failing probe may be our environment's fault, so it is not evaluated instead. A probe
     that was not sent because none of its paths is declared in the code makes the whole
     requirement not evaluated (`route_not_found`): the route may just be named differently.
+    A failing probe whose body did not fit the student's model (a field matched no property
+    or could not be converted) is not evaluated either (`body_mismatch`): the request, not
+    the student's code, may be what failed.
     """
     execution = check_input.execution
     if execution is None:
@@ -55,6 +58,8 @@ def evaluate_http(check_input: CheckInput) -> tuple[Finding, ...] | NotEvaluated
     failed = [result for result in results if not result.passed]
     if not failed:
         return ()
+    if any(result.body_mismatched for result in failed):
+        return NotEvaluatedReason.BODY_MISMATCH
     if execution.has_unresolved_paths:
         return NotEvaluatedReason.ENVIRONMENT_ISSUE
     lines = [_describe(result) for result in failed]

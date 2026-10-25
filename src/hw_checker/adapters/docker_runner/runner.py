@@ -24,11 +24,14 @@ from hw_checker.adapters.docker_runner.archive import (
     build_work_archive,
     directory_archive,
 )
+from hw_checker.adapters.docker_runner.body_adapter import adapt_body
+from hw_checker.adapters.docker_runner.body_models import ProjectSources
 from hw_checker.adapters.docker_runner.classification import RunnerStep, StepOutcome, classify
 from hw_checker.adapters.docker_runner.discovery import (
     DiscoveryFailure,
     WebProject,
     discover_web_project,
+    is_older_framework,
 )
 from hw_checker.adapters.docker_runner.engine import (
     ContainerSpec,
@@ -41,13 +44,19 @@ from hw_checker.adapters.docker_runner.excerpt import excerpt_log
 from hw_checker.adapters.docker_runner.host_paths import PathPlan, plan_path_fixes
 from hw_checker.adapters.docker_runner.routes import (
     ControllerChoice,
+    ProbeRoute,
     choose_primary_controller,
     extract_route_table,
     resolve_probe_path,
 )
-from hw_checker.adapters.docker_runner.runner_config import ContainerLimits, DockerRunnerConfig
+from hw_checker.adapters.docker_runner.runner_config import (
+    ContainerLimits,
+    DockerRunnerConfig,
+    FrameworkImages,
+)
 from hw_checker.config.logging_setup import log_context
 from hw_checker.domain import (
+    BodyAdaptation,
     ExecutionRequest,
     ExecutionResult,
     FailureKind,
@@ -74,8 +83,17 @@ DOTNET_ENVIRONMENT = {
     "DOTNET_NOLOGO": "1",
 }
 TMPFS = {"/tmp": "size=64m"}
+APP_ALIAS = "app"
+"""The app's DNS name on its per-repo network. Container names can pass the 63-character
+DNS label limit (they include the run and repo ids), and then cannot be resolved; each repo
+has its own network, so a fixed short alias never collides."""
 CACHE_KIND = "cache"
-CURL_ERRORS = {6: "could not resolve the app", 7: "connection refused", 28: "timed out"}
+CURL_RESOLVE_ERROR = 6
+CURL_ERRORS = {
+    CURL_RESOLVE_ERROR: "could not resolve the app",
+    7: "connection refused",
+    28: "timed out",
+}
 _INVALID_NAME_CHARACTERS = re.compile(r"[^a-zA-Z0-9_.-]")
 
 Clock = Callable[[], float]
@@ -171,7 +189,7 @@ class DockerCodeRunner:
         helper = self._engine.create_container(
             ContainerSpec(
                 name=f"{self._config.label_prefix}-cache-init-{uuid.uuid4().hex[:8]}",
-                image=self._config.runtime_image,
+                image=self._config.helper_image,
                 command=("true",),
                 labels={
                     self._config.label_prefix: "1",
@@ -232,6 +250,8 @@ class _Execution:
     suffix: str = field(default_factory=lambda: uuid.uuid4().hex[:8])
     routes: RouteTable | None = None
     controllers: ControllerChoice = field(default_factory=lambda: ControllerChoice(None, ()))
+    framework_images: FrameworkImages | None = None
+    project_sources: ProjectSources | None = None
 
     def run(self) -> ExecutionResult:
         self.request.logs_dir.mkdir(parents=True, exist_ok=True)
@@ -246,11 +266,23 @@ class _Execution:
         discovery = discover_web_project(self.request.working_copy)
         if isinstance(discovery, DiscoveryFailure):
             return self._prepare_failed(discovery.message, project_found=False)
-        if (problem := discovery.framework_problem()) is not None:
-            return self._prepare_failed(f"not run, flagged for review: {problem}")
+        framework = {
+            "target_framework": discovery.target_framework,
+            "framework_outdated": is_older_framework(
+                discovery.framework, self.config.course_framework
+            ),
+        }
+        if (problem := discovery.framework_problem(self.config.framework_images)) is not None:
+            result = self._prepare_failed(f"not run, flagged for review: {problem}")
+            return result.model_copy(update=framework)
+        assert discovery.framework is not None  # framework_problem rejects a missing one
+        self.framework_images = self.config.framework_images[discovery.framework]
         plan = plan_path_fixes(self.request.working_copy, discovery.folder)
         self.routes = extract_route_table(self.request.working_copy, discovery.folder)
         self.controllers = choose_primary_controller(self.request.probes, self.routes)
+        self.project_sources = ProjectSources.read(
+            self.request.working_copy, discovery.folder, discovery.nullable
+        )
         result = self._prepare_build_run(discovery, plan)
         # Every result after this point records the detected paths, the route table and the
         # controller choice.
@@ -260,6 +292,7 @@ class _Execution:
                 "routes": self.routes,
                 "primary_controller": self.controllers.primary,
                 "serving_controllers": self.controllers.serving,
+                **framework,
             }
         )
 
@@ -299,7 +332,7 @@ class _Execution:
             return self._prepare_failed(f"cannot copy the code into Docker: {error}", engine=True)
         self._write_log(
             RunnerStep.PREPARE,
-            f"Web project: {discovery.path}\n"
+            f"Web project: {discovery.path} ({discovery.framework})\n"
             + _describe_paths(plan.rewrites)
             + _describe_routes(self.routes)
             + _describe_controllers(self.routes, self.controllers),
@@ -318,7 +351,7 @@ class _Execution:
             RunnerStep.RESTORE,
             self._step_spec(
                 "restore",
-                self.config.sdk_image,
+                self._images().sdk,
                 ("dotnet", "restore", project),
                 work_volume,
                 cache_read_only=False,
@@ -333,7 +366,7 @@ class _Execution:
             RunnerStep.BUILD,
             self._step_spec(
                 "build",
-                self.config.sdk_image,
+                self._images().sdk,
                 ("dotnet", "publish", project, "--no-restore", "-c", "Release", "-o", OUTPUT_DIR),
                 work_volume,
                 cache_read_only=True,
@@ -370,7 +403,7 @@ class _Execution:
         helper = self.engine.create_container(
             ContainerSpec(
                 name=self._name("copy"),
-                image=self.config.runtime_image,
+                image=self.config.helper_image,
                 command=("true",),
                 labels=self._labels("copy"),
                 user=self.config.user,
@@ -401,14 +434,10 @@ class _Execution:
             sidecar = self._create(self._probe_spec(network))
             self.engine.start(sidecar)
             self.engine.start(app)
-            outcome = self._wait_until_ready(
-                app, sidecar, f"http://{app_name}:{self.config.app_port}"
-            )
+            base_url = f"http://{APP_ALIAS}:{self.config.app_port}"
+            outcome = self._wait_until_ready(app, sidecar, base_url)
             probe_results = (
-                tuple(
-                    self._probe(sidecar, f"http://{app_name}:{self.config.app_port}", probe)
-                    for probe in self.request.probes
-                )
+                tuple(self._probe(sidecar, base_url, probe) for probe in self.request.probes)
                 if outcome.ready
                 else ()
             )
@@ -416,6 +445,11 @@ class _Execution:
         except EngineError as error:
             outcome = StepOutcome(RunnerStep.RUN, engine_error=True, log_text=str(error))
             probe_results, log = (), str(error)
+        if outcome.unresolved_host:
+            log += (
+                f"\n[runner] the probe sidecar could not resolve {APP_ALIAS!r} for more than "
+                f"{self.config.resolve_grace_seconds:g} s; this is an environment problem\n"
+            )
         self._log_step_end(RunnerStep.RUN, started, outcome)
         self._write_log(RunnerStep.RUN, log)
         kind = classify(dataclasses.replace(outcome, log_text=log))
@@ -437,9 +471,17 @@ class _Execution:
 
     def _wait_until_ready(self, app: str, sidecar: str, base_url: str) -> StepOutcome:
         deadline = self.clock() + self.config.readiness_timeout_seconds
+        unresolved_since: float | None = None
         while True:
-            if self._http_status(sidecar, "GET", f"{base_url}/", None)[0] is not None:
+            status, error = self._http_status(sidecar, "GET", f"{base_url}/", None)
+            if status is not None:
                 return StepOutcome(RunnerStep.RUN, ready=True)
+            if error == CURL_ERRORS[CURL_RESOLVE_ERROR]:
+                unresolved_since = self.clock() if unresolved_since is None else unresolved_since
+                if self.clock() - unresolved_since >= self.config.resolve_grace_seconds:
+                    return StepOutcome(RunnerStep.RUN, unresolved_host=True)
+            else:
+                unresolved_since = None
             state = self.engine.state(app)
             if not state.running:
                 return StepOutcome(
@@ -460,7 +502,8 @@ class _Execution:
                 error="no route declared in the code matches the probe's paths",
                 route_resolution=resolution,
             )
-        status, error = self._http_status(sidecar, probe.method.value, base_url + path, probe.body)
+        body, adaptation = self._probe_body(probe, route)
+        status, error = self._http_status(sidecar, probe.method.value, base_url + path, body)
         return ProbeResult(
             probe=probe,
             actual_status=status,
@@ -469,7 +512,21 @@ class _Execution:
             sent_path=path,
             route_resolution=resolution,
             controller=route.controller,
+            sent_body=body,
+            body_adaptation=adaptation,
         )
+
+    def _probe_body(
+        self, probe: HttpProbe, route: ProbeRoute
+    ) -> tuple[str | None, BodyAdaptation | None]:
+        """The body to send: the probe's intended body adapted to the action's model."""
+        if probe.body is None:
+            return None, None
+        if route.route is None or self.project_sources is None:
+            return probe.body, BodyAdaptation(
+                adapted=False, reason="the probe's route was not resolved against the code"
+            )
+        return adapt_body(probe.body, self.project_sources.body_model(route.route))
 
     def _http_status(
         self, sidecar: str, method: str, url: str, body: str | None
@@ -565,7 +622,7 @@ class _Execution:
         }
         return ContainerSpec(
             name=name,
-            image=self.config.runtime_image,
+            image=self._images().runtime,
             command=("dotnet", f"{OUTPUT_DIR}/{assembly_name}.dll"),
             labels=self._labels("app"),
             user=self.config.user,
@@ -578,6 +635,7 @@ class _Execution:
                 Mount(project_volume, DATA_MOUNT, read_only=False),
             ),
             network=network,
+            network_aliases=(APP_ALIAS,),
             environment=environment,
             read_only_root=True,
             tmpfs=TMPFS,
@@ -636,6 +694,11 @@ class _Execution:
         )
 
     # ------------------------------------------------------------------ helpers
+
+    def _images(self) -> FrameworkImages:
+        if self.framework_images is None:
+            raise RuntimeError("the project's framework images are chosen during prepare")
+        return self.framework_images
 
     def _name(self, kind: str) -> str:
         raw = f"{self.config.label_prefix}-{self.request.run_id}-{self.request.repo_id}-{kind}"

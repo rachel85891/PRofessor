@@ -154,11 +154,12 @@ def routes_in_source(
 @dataclass(frozen=True)
 class ProbeRoute:
     """Where a probe goes: the path (None when it is not sent), how it was chosen, and the
-    controller whose route it matched (None when no route was used)."""
+    controller and declared route it matched (None when no route was used)."""
 
     path: str | None
     resolution: RouteResolution
     controller: str | None
+    route: DeclaredRoute | None = None
 
 
 @dataclass(frozen=True)
@@ -222,24 +223,36 @@ def resolve_probe_path(
         return ProbeRoute(probe.path, RouteResolution.UNAVAILABLE, None)
     if primary is not None:
         for candidate in probe.candidate_paths:
-            if primary in _matching_controllers(table, probe, candidate):
-                return ProbeRoute(candidate, RouteResolution.RESOLVED, primary)
+            on_primary = [
+                route
+                for route in _matching_routes(table, probe, candidate)
+                if route.controller == primary
+            ]
+            if on_primary:
+                return ProbeRoute(candidate, RouteResolution.RESOLVED, primary, on_primary[0])
     for candidate in probe.candidate_paths:
-        controllers = _matching_controllers(table, probe, candidate)
-        if controllers:
-            return ProbeRoute(candidate, RouteResolution.RESOLVED, controllers[0])
+        routes = _matching_routes(table, probe, candidate)
+        if routes:
+            return ProbeRoute(candidate, RouteResolution.RESOLVED, routes[0].controller, routes[0])
     return ProbeRoute(None, RouteResolution.ROUTE_NOT_FOUND, None)
+
+
+def _matching_routes(table: RouteTable, probe: HttpProbe, candidate: str) -> list[DeclaredRoute]:
+    """The routes for the probe's method matching `candidate`, in a fixed order: by
+    controller name, then routes for the exact method before method-less ones, then place."""
+    routes = [
+        route
+        for route in table.routes
+        if route.method in (None, probe.method) and template_matches(route.template, candidate)
+    ]
+    return sorted(
+        routes, key=lambda r: (r.controller, r.method is None, r.file_path, r.line, r.template)
+    )
 
 
 def _matching_controllers(table: RouteTable, probe: HttpProbe, candidate: str) -> list[str]:
     """The controllers (sorted by name) with a route for the probe's method matching `candidate`."""
-    return sorted(
-        {
-            route.controller
-            for route in table.routes
-            if route.method in (None, probe.method) and template_matches(route.template, candidate)
-        }
-    )
+    return sorted({route.controller for route in _matching_routes(table, probe, candidate)})
 
 
 def template_matches(template: str, path: str) -> bool:

@@ -1,10 +1,18 @@
 """Application settings: secrets from the environment or `.env`, the rest from `config.yaml`."""
 
 from pathlib import Path
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, Literal, Self
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field, SecretStr, ValidationError, field_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    SecretStr,
+    ValidationError,
+    field_validator,
+    model_validator,
+)
 from pydantic_settings import BaseSettings, PydanticBaseSettingsSource, SettingsConfigDict
 
 from hw_checker.config.errors import ConfigurationError
@@ -65,6 +73,18 @@ PinnedImage = Annotated[
 ]
 """An image reference pinned by digest: `<name>[:<tag>]@sha256:<64 hex>`."""
 
+FrameworkName = Annotated[str, Field(pattern=r"^net\d+\.\d+$")]
+"""A .NET target framework moniker such as `net10.0`."""
+
+
+class FrameworkImages(BaseModel):
+    """The pinned SDK image (restore, build) and runtime image (run) of one framework."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    sdk: PinnedImage
+    runtime: PinnedImage
+
 
 class StepLimits(BaseModel):
     """Resource limits for one container step."""
@@ -81,14 +101,23 @@ class RunnerSettings(BaseModel):
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    sdk_image: PinnedImage = (
-        "mcr.microsoft.com/dotnet/sdk:10.0"
-        "@sha256:747cbade5bfd918a175ac32f8f1d931edec2c7d0d5397a3de72eaef1ac1f66d2"
-    )
-    runtime_image: PinnedImage = (
-        "mcr.microsoft.com/dotnet/aspnet:10.0"
-        "@sha256:8af87eba5e7cdafb1514d7388be287365da97c132509e84dfe252ffd552398ca"
-    )
+    framework_images: dict[FrameworkName, FrameworkImages] = {
+        "net8.0": FrameworkImages(
+            sdk="mcr.microsoft.com/dotnet/sdk:8.0@sha256:738f72aff955d5c5690e06b6fc8ecd1b90ead564099a257ac528ff720b8da85f",
+            runtime="mcr.microsoft.com/dotnet/aspnet:8.0@sha256:74a1d7c07211a7e8a2e35ff3c70ed8e4e1d6451a1ff7cf7bdf526f9eafa23023",
+        ),
+        "net9.0": FrameworkImages(
+            sdk="mcr.microsoft.com/dotnet/sdk:9.0@sha256:d9ad72f6b3eb5d61adb158db510ae1c3098c12c92d23ab8da833418275f1c652",
+            runtime="mcr.microsoft.com/dotnet/aspnet:9.0@sha256:88fcfc1b81c43afa15ba3c138c57d77f77c1cb5118ae9d7024c94e82e2895aa5",
+        ),
+        "net10.0": FrameworkImages(
+            sdk="mcr.microsoft.com/dotnet/sdk:10.0@sha256:747cbade5bfd918a175ac32f8f1d931edec2c7d0d5397a3de72eaef1ac1f66d2",
+            runtime="mcr.microsoft.com/dotnet/aspnet:10.0@sha256:8af87eba5e7cdafb1514d7388be287365da97c132509e84dfe252ffd552398ca",
+        ),
+    }
+    """The images for each supported target framework; other frameworks are not run."""
+    course_framework: FrameworkName = "net10.0"
+    """The course's framework; projects on an older one are marked for the student."""
     probe_image: PinnedImage = (
         "curlimages/curl:8.10.1"
         "@sha256:d9b4541e214bcd85196d6e92e2753ac6d0ea699f0af5741f8c6cccbfcf00ef4b"
@@ -102,6 +131,7 @@ class RunnerSettings(BaseModel):
     readiness_timeout_seconds: int = Field(default=30, ge=1)
     probe_timeout_seconds: int = Field(default=10, ge=1)
     readiness_poll_seconds: float = Field(default=0.5, gt=0)
+    resolve_grace_seconds: float = Field(default=5, gt=0)
     app_port: int = Field(default=8080, ge=1, le=65535)
     app_uid: int = Field(default=1654, ge=1)
     app_gid: int = Field(default=1654, ge=1)
@@ -113,6 +143,14 @@ class RunnerSettings(BaseModel):
     max_file_mb: int = Field(default=50, ge=1)
     logs_root: Path = Path("logs")
     """Folder for full build and run logs, relative to `workspace_dir`."""
+
+    @model_validator(mode="after")
+    def _course_framework_has_images(self) -> Self:
+        if self.course_framework not in self.framework_images:
+            raise ValueError(
+                f"course_framework {self.course_framework} has no entry in framework_images"
+            )
+        return self
 
     @field_validator("logs_root")
     @classmethod

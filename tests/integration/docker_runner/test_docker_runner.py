@@ -32,6 +32,10 @@ from tests.integration.docker_runner.conftest import (
     ABSOLUTE_PATH_FIXTURE,
     ABSOLUTE_PATH_PROBES,
     CACHE_VOLUME,
+    CUSTOM_MODEL_FIXTURE,
+    CUSTOM_MODEL_PROBES,
+    ITEMS_PROBES,
+    OLDER_FRAMEWORK_FIXTURES,
     PREFIX,
     PROJECT,
     SAMPLE_PROBES,
@@ -125,6 +129,45 @@ def test_sample_api_writes_and_reads_its_text_file_and_answers_every_probe(
     # and never redirects the HTTP probes.
     run_log = (tmp_path / "logs" / "run.log").read_text(encoding="utf-8")
     assert "Failed to determine the https port for redirect" in run_log
+    assert_nothing_left(engine)
+
+
+def test_long_run_and_repo_ids_do_not_affect_probing(
+    docker_runner: DockerCodeRunner,
+    engine: SdkDockerEngine,
+    sample_copy: SampleCopy,
+    tmp_path: Path,
+) -> None:
+    run_id = "round-2026-10-25-hw01-second-check"
+    repo_id = "it__a-long-student-github-name__web-api-homework-repository"
+    assert len(f"{PREFIX}-{run_id}-{repo_id}-app-12345678") > 63
+
+    result = docker_runner.execute(
+        make_request(sample_copy(), tmp_path / "logs", repo_id=repo_id, run_id=run_id)
+    )
+
+    assert result.steps == (StepStatus.SUCCEEDED,) * 3, describe(result)
+    assert all_passed(result), describe(result)
+    assert_nothing_left(engine)
+
+
+@pytest.mark.parametrize("framework", sorted(OLDER_FRAMEWORK_FIXTURES))
+def test_older_framework_builds_runs_and_is_marked(
+    docker_runner: DockerCodeRunner,
+    engine: SdkDockerEngine,
+    sample_copy: SampleCopy,
+    tmp_path: Path,
+    framework: str,
+) -> None:
+    repo = sample_copy(source=OLDER_FRAMEWORK_FIXTURES[framework])
+
+    result = docker_runner.execute(make_request(repo, tmp_path / "logs", probes=ITEMS_PROBES))
+
+    assert result.steps == (StepStatus.SUCCEEDED,) * 3, describe(result)
+    assert statuses(result) == [("GET", "/api/items", 200), ("POST", "/api/items", 201)]
+    assert (result.target_framework, result.framework_outdated) == (framework, True)
+    prepare_log = (tmp_path / "logs" / "prepare.log").read_text(encoding="utf-8")
+    assert f"({framework})" in prepare_log
     assert_nothing_left(engine)
 
 
@@ -307,6 +350,49 @@ def test_probes_go_to_one_controller_when_the_student_has_two(
     assert_nothing_left(engine)
 
 
+def test_probe_bodies_are_adapted_to_the_students_model(
+    docker_runner: DockerCodeRunner,
+    engine: SdkDockerEngine,
+    sample_copy: SampleCopy,
+    tmp_path: Path,
+) -> None:
+    repo = sample_copy(source=CUSTOM_MODEL_FIXTURE)
+
+    result = docker_runner.execute(
+        make_request(repo, tmp_path / "logs", probes=CUSTOM_MODEL_PROBES)
+    )
+
+    register, login = result.probe_results
+    assert register.actual_status == 201, describe(result)
+    assert register.sent_body == '{"userName":"newuser","password":12345,"name":"probe-name"}'
+    assert register.body_adaptation is not None and not register.body_adaptation.mismatched
+    assert login.actual_status == 401, describe(result)
+    assert login.body_adaptation is not None and login.body_adaptation.mismatched
+    assert [(n.field, n.outcome.value) for n in login.body_adaptation.notes] == [
+        ("userName", "unmatched"),
+        ("password", "converted"),
+        ("Email", "filled"),
+    ]
+    requirements = tuple(
+        Requirement(
+            id=requirement_id,
+            title=requirement_id,
+            severity=Severity.MAJOR,
+            kind=RequirementKind.HTTP,
+            http_probes=tuple(p for p in CUSTOM_MODEL_PROBES if p.requirement_id == requirement_id),
+        )
+        for requirement_id in ("hw01-r1", "hw01-r2")
+    )
+    assignment = Assignment(id="hw01", order=1, title="Users", requirements=requirements)
+    checker = DeterministicRequirementChecker(CheckRegistry(builtin_checks()))
+    checked = DeterministicCheckService(checker).evaluate(assignment, repo, result)
+    assert checked.findings == ()
+    assert checked.not_evaluated == (
+        NotEvaluated(requirement_id="hw01-r2", reason=NotEvaluatedReason.BODY_MISMATCH),
+    )
+    assert_nothing_left(engine)
+
+
 def test_compile_error_is_a_build_failure(
     docker_runner: DockerCodeRunner,
     engine: SdkDockerEngine,
@@ -433,7 +519,7 @@ def test_sweep_removes_planted_leftovers_and_keeps_the_cache(
     engine.create_container(
         ContainerSpec(
             "hw-checker-it-planted-app",
-            config.runtime_image,
+            config.helper_image,
             ("true",),
             labels,
             config.user,

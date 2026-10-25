@@ -262,12 +262,17 @@ def test_runner_defaults_load_from_the_repo_config(tmp_path: Path) -> None:
 
     runner = load_settings(config_path=DEFAULT_CONFIG_PATH, env_path=tmp_path / ".env").runner
 
-    assert runner.sdk_image.startswith("mcr.microsoft.com/dotnet/sdk:10.0@sha256:")
-    assert runner.runtime_image.startswith("mcr.microsoft.com/dotnet/aspnet:10.0@sha256:")
+    assert set(runner.framework_images) == {"net8.0", "net9.0", "net10.0"}
+    for version, images in runner.framework_images.items():
+        tag = version.removeprefix("net")
+        assert images.sdk.startswith(f"mcr.microsoft.com/dotnet/sdk:{tag}@sha256:")
+        assert images.runtime.startswith(f"mcr.microsoft.com/dotnet/aspnet:{tag}@sha256:")
+    assert runner.course_framework == "net10.0"
     assert "@sha256:" in runner.probe_image
     assert runner.run_limits.memory_mb == 512
     assert runner.readiness_timeout_seconds == 30
     assert runner.probe_timeout_seconds == 10
+    assert runner.resolve_grace_seconds == 5
     assert runner.app_port == 8080
     assert runner.logs_root == Path("logs")
 
@@ -290,14 +295,40 @@ def test_runner_defaults_apply_without_config(tmp_path: Path) -> None:
     ],
 )
 def test_unpinned_image_is_rejected_naming_the_field(tmp_path: Path, image: str) -> None:
-    with pytest.raises(ConfigurationError, match=r"runner\.sdk_image"):
-        _load(tmp_path, f"runner:\n  sdk_image: '{image}'\n")
+    pinned = "mcr.microsoft.com/dotnet/aspnet@sha256:" + "a" * 64
+    yaml = (
+        "runner:\n  framework_images:\n    net10.0:\n"
+        f"      sdk: '{image}'\n      runtime: '{pinned}'\n"
+    )
+
+    with pytest.raises(ConfigurationError, match=r"runner\.framework_images\.net10\.0\.sdk"):
+        _load(tmp_path, yaml)
 
 
 def test_image_pinned_without_tag_is_accepted(tmp_path: Path) -> None:
     image = "mcr.microsoft.com/dotnet/aspnet@sha256:" + "a" * 64
+    yaml = f"runner:\n  framework_images:\n    net10.0: {{sdk: '{image}', runtime: '{image}'}}\n"
 
-    assert _load(tmp_path, f"runner:\n  runtime_image: '{image}'\n").runner.runtime_image == image
+    runner = _load(tmp_path, yaml).runner
+
+    assert runner.framework_images["net10.0"].runtime == image
+
+
+def test_course_framework_needs_images(tmp_path: Path) -> None:
+    with pytest.raises(ConfigurationError, match=r"course_framework net11\.0"):
+        _load(tmp_path, "runner:\n  course_framework: net11.0\n")
+
+
+def test_framework_names_are_checked(tmp_path: Path) -> None:
+    image = "mcr.microsoft.com/dotnet/aspnet@sha256:" + "a" * 64
+    yaml = (
+        "runner:\n  framework_images:\n"
+        f"    net10.0: {{sdk: '{image}', runtime: '{image}'}}\n"
+        f"    dotnet10: {{sdk: '{image}', runtime: '{image}'}}\n"
+    )
+
+    with pytest.raises(ConfigurationError, match="dotnet10"):
+        _load(tmp_path, yaml)
 
 
 LIMIT_CASES = [

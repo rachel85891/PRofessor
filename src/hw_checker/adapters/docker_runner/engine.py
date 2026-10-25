@@ -50,6 +50,8 @@ class ContainerSpec:
     read_only_root: bool = False
     tmpfs: Mapping[str, str] = field(default_factory=dict)
     working_dir: str = CONTAINER_WORKDIR
+    network_aliases: tuple[str, ...] = ()
+    """Extra DNS names of the container on `network`."""
 
 
 @dataclass(frozen=True)
@@ -178,6 +180,15 @@ class SdkDockerEngine:
 
     def create_container(self, spec: ContainerSpec) -> str:
         with _engine_errors(f"cannot create container {spec.name}"):
+            networking_config = (
+                {
+                    spec.network: self._client.api.create_endpoint_config(
+                        aliases=list(spec.network_aliases)
+                    )
+                }
+                if spec.network is not None and spec.network_aliases
+                else None
+            )
             container = self._client.containers.create(
                 spec.image,
                 command=list(spec.command),
@@ -192,6 +203,7 @@ class SdkDockerEngine:
                 },
                 working_dir=spec.working_dir,
                 network=spec.network,
+                networking_config=networking_config,
                 network_mode=spec.network_mode,
                 mem_limit=f"{spec.memory_mb}m",
                 memswap_limit=f"{spec.memory_mb}m",
