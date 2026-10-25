@@ -35,6 +35,8 @@ from tests.integration.docker_runner.conftest import (
     PREFIX,
     PROJECT,
     SAMPLE_PROBES,
+    TWO_CONTROLLERS_FIXTURE,
+    TWO_CONTROLLERS_PROBES,
     USER_SIGNIN_FIXTURE,
     USER_SIGNIN_PROBES,
     leftovers,
@@ -96,8 +98,14 @@ def test_sample_api_writes_and_reads_its_text_file_and_answers_every_probe(
     ]
     assert all_passed(result), describe(result)
     assert all(
-        r.route_resolution is RouteResolution.RESOLVED and r.sent_path == r.probe.path
+        r.route_resolution is RouteResolution.RESOLVED
+        and r.sent_path == r.probe.path
+        and r.controller == "UsersController"
         for r in result.probe_results
+    )
+    assert (result.primary_controller, result.serving_controllers) == (
+        "UsersController",
+        ("UsersController",),
     )
     assert result.path_rewrites == ()
     assert result.routes is not None and result.routes.usable
@@ -268,6 +276,34 @@ def test_probe_alternatives_reach_the_routes_the_student_declared(
     assert checked.not_evaluated == (
         NotEvaluated(requirement_id="hw01-r3", reason=NotEvaluatedReason.ROUTE_NOT_FOUND),
     )
+    assert_nothing_left(engine)
+
+
+def test_probes_go_to_one_controller_when_the_student_has_two(
+    docker_runner: DockerCodeRunner,
+    engine: SdkDockerEngine,
+    sample_copy: SampleCopy,
+    tmp_path: Path,
+) -> None:
+    repo = sample_copy(source=TWO_CONTROLLERS_FIXTURE)
+
+    result = docker_runner.execute(
+        make_request(repo, tmp_path / "logs", probes=TWO_CONTROLLERS_PROBES)
+    )
+
+    assert [(r.sent_path, r.controller, r.actual_status) for r in result.probe_results] == [
+        ("/api/users", "UsersController", 201),
+        ("/api/users/3", "UsersController", 200),
+        ("/api/users/3", "UsersController", 204),
+        ("/api/users/3", "UsersController", 204),
+        ("/api/users/3", "UsersController", 404),
+        ("/api/user/login", "UserController", 200),  # only the other controller serves it
+    ], describe(result)
+    assert all_passed(result), describe(result)
+    assert result.primary_controller == "UsersController"
+    assert result.serving_controllers == ("UserController", "UsersController")
+    prepare_log = (tmp_path / "logs" / "prepare.log").read_text(encoding="utf-8")
+    assert "probes sent to UsersController when it serves them" in prepare_log
     assert_nothing_left(engine)
 
 

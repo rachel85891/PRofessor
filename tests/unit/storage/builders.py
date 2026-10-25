@@ -101,6 +101,7 @@ def successful_execution() -> ExecutionResult:
                 passed=True,
                 sent_path="/api/product",
                 route_resolution=RouteResolution.RESOLVED,
+                controller="ProductController",
             ),
             ProbeResult(
                 probe=probe("/api/products/1", 204),
@@ -114,6 +115,8 @@ def successful_execution() -> ExecutionResult:
                 route_resolution=RouteResolution.ROUTE_NOT_FOUND,
             ),
         ),
+        primary_controller="ProductController",
+        serving_controllers=("ProductController", "ProductsController"),
         routes=RouteTable(
             routes=(
                 DeclaredRoute(

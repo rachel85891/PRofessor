@@ -316,7 +316,65 @@ def test_probes_are_sent_to_the_resolved_path_or_not_at_all(repo: Path, tmp_path
         ("/api/user/signin", RouteResolution.RESOLVED, 200),
         (None, RouteResolution.ROUTE_NOT_FOUND, None),
     ]
+    assert [r.controller for r in result.probe_results] == [
+        "UserController",
+        "UserController",
+        None,
+    ]
+    assert (result.primary_controller, result.serving_controllers) == (
+        "UserController",
+        ("UserController",),
+    )
     assert not result.probe_results[2].passed
+
+
+TWO_CONTROLLERS = (
+    '[Route("api/[controller]")]\npublic class UsersController : ControllerBase\n{\n'
+    "    [HttpPost]\n    public IActionResult Post() => Ok();\n"
+    '    [HttpPut("{id}")]\n    public IActionResult Put(int id) => Ok();\n}\n'
+    '[Route("api/[controller]")]\npublic class UserController : ControllerBase\n{\n'
+    '    [HttpPut("{id}")]\n    public IActionResult Put(int id) => Ok();\n'
+    '    [HttpPost("login")]\n    public IActionResult Login() => Ok();\n}\n'
+)
+
+
+def test_probes_are_steered_to_the_controller_serving_most(repo: Path, tmp_path: Path) -> None:
+    (repo / "Controllers" / "ProductsController.cs").write_text(TWO_CONTROLLERS, encoding="utf-8")
+
+    def two_way(method: HttpMethod, path: str, alternative: str) -> HttpProbe:
+        return HttpProbe(
+            requirement_id="hw01-r1",
+            assignment_id="hw01",
+            method=method,
+            path=path,
+            path_alternatives=(alternative,),
+            expected_status=200,
+        )
+
+    probes = (
+        two_way(HttpMethod.POST, "/api/user", "/api/users"),
+        two_way(HttpMethod.PUT, "/api/user/3", "/api/users/3"),
+        two_way(HttpMethod.POST, "/api/users/login", "/api/user/login"),
+    )
+    engine = FakeEngine()
+
+    result = runner(engine).execute(request(repo, tmp_path, probes=probes))
+
+    urls = [command[command.index("--") + 1] for command in engine.exec_commands]
+    sent = [urlsplit(url).path for url in urls if urlsplit(url).path != "/"]
+    assert sent == ["/api/users", "/api/users/3", "/api/user/login"]
+    assert [r.controller for r in result.probe_results] == [
+        "UsersController",
+        "UsersController",
+        "UserController",
+    ]
+    assert result.primary_controller == "UsersController"
+    assert result.serving_controllers == ("UserController", "UsersController")
+    prepare_log = (tmp_path / "logs" / "prepare.log").read_text(encoding="utf-8")
+    assert (
+        "controllers serving probes: UserController, UsersController; "
+        "probes sent to UsersController when it serves them"
+    ) in prepare_log
 
 
 def test_without_routes_probes_go_to_their_first_path(repo: Path, tmp_path: Path) -> None:
@@ -324,9 +382,13 @@ def test_without_routes_probes_go_to_their_first_path(repo: Path, tmp_path: Path
 
     result = runner(engine).execute(request(repo, tmp_path))
 
-    assert [(r.sent_path, r.route_resolution) for r in result.probe_results] == [
-        (probe.path, RouteResolution.UNAVAILABLE) for probe in PROBES
+    assert [(r.sent_path, r.route_resolution, r.controller) for r in result.probe_results] == [
+        (probe.path, RouteResolution.UNAVAILABLE, None) for probe in PROBES
     ]
+    assert (result.primary_controller, result.serving_controllers) == (None, ())
+    assert "controllers serving probes" not in (tmp_path / "logs" / "prepare.log").read_text(
+        encoding="utf-8"
+    )
 
 
 def test_project_without_routes_records_an_empty_table(repo: Path, tmp_path: Path) -> None:
