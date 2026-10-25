@@ -319,6 +319,43 @@ def test_probes_are_sent_to_the_resolved_path_or_not_at_all(repo: Path, tmp_path
     assert not result.probe_results[2].passed
 
 
+TWO_CONTROLLERS = (
+    '[Route("api/[controller]")]\npublic class UsersController : ControllerBase\n{\n'
+    "    [HttpPost]\n    public IActionResult Post() => Ok();\n"
+    '    [HttpPut("{id}")]\n    public IActionResult Put(int id) => Ok();\n}\n'
+    '[Route("api/[controller]")]\npublic class UserController : ControllerBase\n{\n'
+    '    [HttpPut("{id}")]\n    public IActionResult Put(int id) => Ok();\n'
+    '    [HttpPost("login")]\n    public IActionResult Login() => Ok();\n}\n'
+)
+
+
+def test_probes_are_steered_to_the_controller_serving_most(repo: Path, tmp_path: Path) -> None:
+    (repo / "Controllers" / "ProductsController.cs").write_text(TWO_CONTROLLERS, encoding="utf-8")
+
+    def two_way(method: HttpMethod, path: str, alternative: str) -> HttpProbe:
+        return HttpProbe(
+            requirement_id="hw01-r1",
+            assignment_id="hw01",
+            method=method,
+            path=path,
+            path_alternatives=(alternative,),
+            expected_status=200,
+        )
+
+    probes = (
+        two_way(HttpMethod.POST, "/api/user", "/api/users"),
+        two_way(HttpMethod.PUT, "/api/user/3", "/api/users/3"),
+        two_way(HttpMethod.POST, "/api/users/login", "/api/user/login"),
+    )
+    engine = FakeEngine()
+
+    runner(engine).execute(request(repo, tmp_path, probes=probes))
+
+    urls = [command[command.index("--") + 1] for command in engine.exec_commands]
+    sent = [urlsplit(url).path for url in urls if urlsplit(url).path != "/"]
+    assert sent == ["/api/users", "/api/users/3", "/api/user/login"]
+
+
 def test_without_routes_probes_go_to_their_first_path(repo: Path, tmp_path: Path) -> None:
     engine = FakeEngine(probe_statuses=STATUSES)
 

@@ -9,6 +9,7 @@ Student code is never compiled or executed.
 """
 
 import re
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -150,23 +151,95 @@ def routes_in_source(
     return routes, unsupported
 
 
-def resolve_probe_path(
-    probe: HttpProbe, table: RouteTable | None
-) -> tuple[str | None, RouteResolution]:
-    """The path to send `probe` to, and how it was chosen.
+@dataclass(frozen=True)
+class ProbeRoute:
+    """Where a probe goes: the path (None when it is not sent), how it was chosen, and the
+    controller whose route it matched (None when no route was used)."""
 
-    The first candidate (`path`, then `path_alternatives`) that matches a route declared for
-    the probe's method wins; the candidate is sent as written, with its own values. With no
-    match the probe is not sent. When the table is not usable (empty, or with routing forms
-    it could not read), the probe is sent to its first path, as before route resolution.
+    path: str | None
+    resolution: RouteResolution
+    controller: str | None
+
+
+@dataclass(frozen=True)
+class ControllerChoice:
+    """The controller probes are steered to, and every controller that could serve a probe
+    (sorted by name). `primary` is None when no controller can serve any probe."""
+
+    primary: str | None
+    serving: tuple[str, ...]
+
+
+def choose_primary_controller(
+    probes: Sequence[HttpProbe], table: RouteTable | None
+) -> ControllerChoice:
+    """The controller that can serve the most probes, so one student's probes share state.
+
+    A student may have two controllers (`UserController` and `UsersController`, each with
+    its own data), and probes resolved one by one would split between them: a user created
+    in one is not found by the other. A tie goes to the controller that the earliest probe
+    resolves to on its own, then to the first name in order, so the choice never depends on
+    the order of the route table.
     """
     if table is None or not table.usable:
-        return probe.path, RouteResolution.UNAVAILABLE
+        return ControllerChoice(None, ())
+    counts: dict[str, int] = {}
+    for probe in probes:
+        serving = {
+            controller
+            for candidate in probe.candidate_paths
+            for controller in _matching_controllers(table, probe, candidate)
+        }
+        for controller in serving:
+            counts[controller] = counts.get(controller, 0) + 1
+    if not counts:
+        return ControllerChoice(None, ())
+    best = max(counts.values())
+    tied = sorted(controller for controller, count in counts.items() if count == best)
+    primary = tied[0]
+    if len(tied) > 1:
+        for probe in probes:
+            own = resolve_probe_path(probe, table).controller
+            if own in tied:
+                primary = own
+                break
+    return ControllerChoice(primary, tuple(sorted(counts)))
+
+
+def resolve_probe_path(
+    probe: HttpProbe, table: RouteTable | None, primary: str | None = None
+) -> ProbeRoute:
+    """The path to send `probe` to, how it was chosen, and the controller it reaches.
+
+    The first candidate (`path`, then `path_alternatives`) that matches a route of the
+    `primary` controller for the probe's method wins; failing that, the first candidate
+    that matches a route of any controller (the first controller name in order when several
+    match). The candidate is sent as written, with its own values. With no match the probe
+    is not sent. When the table is not usable (empty, or with routing forms it could not
+    read), the probe is sent to its first path, as before route resolution.
+    """
+    if table is None or not table.usable:
+        return ProbeRoute(probe.path, RouteResolution.UNAVAILABLE, None)
+    if primary is not None:
+        for candidate in probe.candidate_paths:
+            if primary in _matching_controllers(table, probe, candidate):
+                return ProbeRoute(candidate, RouteResolution.RESOLVED, primary)
     for candidate in probe.candidate_paths:
-        for route in table.routes:
-            if route.method in (None, probe.method) and template_matches(route.template, candidate):
-                return candidate, RouteResolution.RESOLVED
-    return None, RouteResolution.ROUTE_NOT_FOUND
+        controllers = _matching_controllers(table, probe, candidate)
+        if controllers:
+            return ProbeRoute(candidate, RouteResolution.RESOLVED, controllers[0])
+    return ProbeRoute(None, RouteResolution.ROUTE_NOT_FOUND, None)
+
+
+def _matching_controllers(table: RouteTable, probe: HttpProbe, candidate: str) -> list[str]:
+    """The controllers (sorted by name) with a route for the probe's method matching `candidate`."""
+    return sorted(
+        {
+            route.controller
+            for route in table.routes
+            if route.method in (None, probe.method) and template_matches(route.template, candidate)
+        }
+    )
 
 
 def template_matches(template: str, path: str) -> bool:

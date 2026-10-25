@@ -39,7 +39,12 @@ from hw_checker.adapters.docker_runner.engine import (
 )
 from hw_checker.adapters.docker_runner.excerpt import excerpt_log
 from hw_checker.adapters.docker_runner.host_paths import PathPlan, plan_path_fixes
-from hw_checker.adapters.docker_runner.routes import extract_route_table, resolve_probe_path
+from hw_checker.adapters.docker_runner.routes import (
+    ControllerChoice,
+    choose_primary_controller,
+    extract_route_table,
+    resolve_probe_path,
+)
 from hw_checker.adapters.docker_runner.runner_config import ContainerLimits, DockerRunnerConfig
 from hw_checker.config.logging_setup import log_context
 from hw_checker.domain import (
@@ -226,6 +231,7 @@ class _Execution:
     volumes: list[str] = field(default_factory=list)
     suffix: str = field(default_factory=lambda: uuid.uuid4().hex[:8])
     routes: RouteTable | None = None
+    controllers: ControllerChoice = field(default_factory=lambda: ControllerChoice(None, ()))
 
     def run(self) -> ExecutionResult:
         self.request.logs_dir.mkdir(parents=True, exist_ok=True)
@@ -244,6 +250,7 @@ class _Execution:
             return self._prepare_failed(f"not run, flagged for review: {problem}")
         plan = plan_path_fixes(self.request.working_copy, discovery.folder)
         self.routes = extract_route_table(self.request.working_copy, discovery.folder)
+        self.controllers = choose_primary_controller(self.request.probes, self.routes)
         result = self._prepare_build_run(discovery, plan)
         # Every result after this point records the detected paths and the route table.
         return result.model_copy(update={"path_rewrites": plan.rewrites, "routes": self.routes})
@@ -434,7 +441,8 @@ class _Execution:
             self.sleep(self.config.readiness_poll_seconds)
 
     def _probe(self, sidecar: str, base_url: str, probe: HttpProbe) -> ProbeResult:
-        path, resolution = resolve_probe_path(probe, self.routes)
+        route = resolve_probe_path(probe, self.routes, self.controllers.primary)
+        path, resolution = route.path, route.resolution
         if path is None:
             logger.info("Probe %s %s not sent: no declared route matches", probe.method, probe.path)
             return ProbeResult(

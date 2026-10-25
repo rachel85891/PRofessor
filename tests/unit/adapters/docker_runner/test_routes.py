@@ -1,8 +1,12 @@
+import random
 from pathlib import Path
 
 import pytest
 
 from hw_checker.adapters.docker_runner.routes import (
+    ControllerChoice,
+    ProbeRoute,
+    choose_primary_controller,
     combine_templates,
     extract_route_table,
     resolve_probe_path,
@@ -387,7 +391,13 @@ def http_probe(method: HttpMethod, path: str, *alternatives: str) -> HttpProbe:
     ],
 )
 def test_first_candidate_declared_for_the_method_wins(probe: HttpProbe, expected: str) -> None:
-    assert resolve_probe_path(probe, TABLE) == (expected, RouteResolution.RESOLVED)
+    resolved = resolve_probe_path(probe, TABLE)
+
+    assert (resolved.path, resolved.resolution, resolved.controller) == (
+        expected,
+        RouteResolution.RESOLVED,
+        "C",
+    )
 
 
 @pytest.mark.parametrize(
@@ -399,7 +409,9 @@ def test_first_candidate_declared_for_the_method_wins(probe: HttpProbe, expected
     ],
 )
 def test_probe_without_a_declared_route_is_not_sent(probe: HttpProbe) -> None:
-    assert resolve_probe_path(probe, TABLE) == (None, RouteResolution.ROUTE_NOT_FOUND)
+    assert resolve_probe_path(probe, TABLE) == ProbeRoute(
+        None, RouteResolution.ROUTE_NOT_FOUND, None
+    )
 
 
 @pytest.mark.parametrize(
@@ -418,4 +430,138 @@ def test_probe_without_a_declared_route_is_not_sent(probe: HttpProbe) -> None:
 def test_unusable_table_falls_back_to_the_first_path(table: RouteTable | None) -> None:
     probe = http_probe(DELETE, "/api/users/3", "/api/user/3")
 
-    assert resolve_probe_path(probe, table) == ("/api/users/3", RouteResolution.UNAVAILABLE)
+    assert resolve_probe_path(probe, table) == ProbeRoute(
+        "/api/users/3", RouteResolution.UNAVAILABLE, None
+    )
+    assert choose_primary_controller([probe], table) == ControllerChoice(None, ())
+
+
+# ---------------------------------------------------------------- primary controller
+
+
+def controller_route(controller: str, method: HttpMethod, template: str) -> DeclaredRoute:
+    return DeclaredRoute(
+        method=method,
+        template=template,
+        controller=controller,
+        action="A",
+        file_path=f"Controllers/{controller}.cs",
+        line=1,
+    )
+
+
+USERS = "UsersController"
+USER = "UserController"
+TWO_CONTROLLERS = (
+    controller_route(USERS, GET, "api/Users"),
+    controller_route(USERS, GET, "api/Users/{id}"),
+    controller_route(USERS, POST, "api/Users"),
+    controller_route(USERS, PUT, "api/Users/{id}"),
+    controller_route(USERS, DELETE, "api/Users/{id}"),
+    controller_route(USER, PUT, "api/User/{id}"),
+    controller_route(USER, DELETE, "api/User/{id}"),
+    controller_route(USER, POST, "api/User/login"),
+)
+# Each probe names /api/user first, so resolving one by one sends PUT and DELETE to the
+# UserController, away from the user the POST created in the UsersController.
+STEERED_PROBES = (
+    http_probe(POST, "/api/user", "/api/users"),
+    http_probe(GET, "/api/user/3", "/api/users/3"),
+    http_probe(PUT, "/api/user/3", "/api/users/3"),
+    http_probe(DELETE, "/api/user/3", "/api/users/3"),
+    http_probe(POST, "/api/users/login", "/api/user/login"),
+)
+
+
+def resolve_all(
+    probes: tuple[HttpProbe, ...], table: RouteTable
+) -> tuple[ControllerChoice, list[tuple[str | None, str | None]]]:
+    choice = choose_primary_controller(probes, table)
+    routes = [resolve_probe_path(probe, table, choice.primary) for probe in probes]
+    return choice, [(route.path, route.controller) for route in routes]
+
+
+def test_probes_go_to_the_controller_serving_most_and_fall_back_for_the_rest() -> None:
+    choice, sent = resolve_all(STEERED_PROBES, RouteTable(routes=TWO_CONTROLLERS))
+
+    assert choice == ControllerChoice(USERS, (USER, USERS))
+    assert sent == [
+        ("/api/users", USERS),
+        ("/api/users/3", USERS),
+        ("/api/users/3", USERS),
+        ("/api/users/3", USERS),
+        ("/api/user/login", USER),
+    ]
+
+
+def test_without_a_preference_probes_resolve_one_by_one_as_before() -> None:
+    table = RouteTable(routes=TWO_CONTROLLERS)
+
+    own = [resolve_probe_path(probe, table) for probe in STEERED_PROBES]
+
+    assert [(route.path, route.controller) for route in own] == [
+        ("/api/users", USERS),
+        ("/api/users/3", USERS),
+        ("/api/user/3", USER),
+        ("/api/user/3", USER),
+        ("/api/user/login", USER),
+    ]
+
+
+def test_a_tie_goes_to_the_controller_of_the_earliest_probe() -> None:
+    table = RouteTable(
+        routes=(
+            controller_route("BController", GET, "api/b"),
+            controller_route("AController", POST, "api/a"),
+        )
+    )
+    probes = (http_probe(GET, "/api/b"), http_probe(POST, "/api/a"))
+
+    assert choose_primary_controller(probes, table).primary == "BController"
+    assert choose_primary_controller(probes[::-1], table).primary == "AController"
+
+
+def test_a_tie_with_no_earliest_resolution_goes_to_the_first_name() -> None:
+    table = RouteTable(
+        routes=(
+            controller_route("BController", GET, "api/items"),
+            controller_route("AController", GET, "api/items"),
+        )
+    )
+
+    choice = choose_primary_controller((http_probe(GET, "/api/items"),), table)
+
+    assert choice == ControllerChoice("AController", ("AController", "BController"))
+
+
+def test_a_single_controller_resolves_exactly_as_before() -> None:
+    probes = (
+        http_probe(GET, "/api/users", "/api/user"),
+        http_probe(
+            POST, "/api/users/login", "/api/user/login", "/api/users/signin", "/api/user/signin"
+        ),
+        http_probe(DELETE, "/api/users/3", "/api/user/3"),
+    )
+
+    choice, sent = resolve_all(probes, TABLE)
+
+    assert choice == ControllerChoice("C", ("C",))
+    assert sent == [
+        (route.path, route.controller) for route in (resolve_probe_path(p, TABLE) for p in probes)
+    ]
+
+
+def test_no_controller_serving_any_probe_gives_no_primary() -> None:
+    choice = choose_primary_controller((http_probe(PATCH, "/api/x"),), TABLE)
+
+    assert choice == ControllerChoice(None, ())
+
+
+@pytest.mark.parametrize("seed", range(6))
+def test_choice_does_not_depend_on_the_route_table_order(seed: int) -> None:
+    shuffled = list(TWO_CONTROLLERS)
+    random.Random(seed).shuffle(shuffled)
+
+    choice, sent = resolve_all(STEERED_PROBES, RouteTable(routes=tuple(shuffled)))
+
+    assert (choice, sent) == resolve_all(STEERED_PROBES, RouteTable(routes=TWO_CONTROLLERS))
