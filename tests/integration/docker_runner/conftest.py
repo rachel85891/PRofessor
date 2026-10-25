@@ -17,6 +17,7 @@ FIXTURES = Path(__file__).parents[2] / "fixtures"
 FIXTURE = FIXTURES / "sample_webapi"
 ABSOLUTE_PATH_FIXTURE = FIXTURES / "sample_webapi_absolute_path"
 USER_SIGNIN_FIXTURE = FIXTURES / "sample_webapi_user_signin"
+TWO_CONTROLLERS_FIXTURE = FIXTURES / "sample_webapi_two_controllers"
 PROJECT = Path("WebApi") / "WebApi"
 """Where the sample fixture's Web project sits, relative to the fixture root."""
 PREFIX = "hw-checker-it"
@@ -189,3 +190,36 @@ USER_SIGNIN_PROBES = (
 )
 """Against `sample_webapi_user_signin`: every route is singular, login is `signin`, and
 there is no DELETE action, so the hw01-r3 probe has no declared route."""
+
+
+def user_or_users(
+    method: HttpMethod, singular: str, status: int, body: str | None = None
+) -> HttpProbe:
+    """A probe naming the singular route first and the plural one as the alternative."""
+    return probe(
+        "hw01-r1",
+        method,
+        singular,
+        status,
+        body,
+        alternatives=(singular.replace("/api/user", "/api/users", 1),),
+    )
+
+
+TWO_CONTROLLERS_PROBES = (
+    user_or_users(HttpMethod.POST, "/api/user", 201, user_body("newuser", TEST_PASSWORD)),
+    user_or_users(HttpMethod.GET, "/api/user/3", 200),
+    user_or_users(HttpMethod.PUT, "/api/user/3", 204, user_body("renamed", TEST_PASSWORD)),
+    user_or_users(HttpMethod.DELETE, "/api/user/3", 204),
+    user_or_users(HttpMethod.GET, "/api/user/3", 404),
+    probe(
+        "hw01-r2",
+        HttpMethod.POST,
+        "/api/users/login",
+        200,
+        user_body("tester1", "pass1"),
+        alternatives=("/api/user/login",),
+    ),
+)
+"""Against `sample_webapi_two_controllers`: every probe but the login can go to either
+controller by its candidates, and only UsersController holds the user the POST creates."""
