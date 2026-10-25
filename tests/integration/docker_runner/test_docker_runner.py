@@ -128,6 +128,25 @@ def test_sample_api_writes_and_reads_its_text_file_and_answers_every_probe(
     assert_nothing_left(engine)
 
 
+def test_long_run_and_repo_ids_do_not_affect_probing(
+    docker_runner: DockerCodeRunner,
+    engine: SdkDockerEngine,
+    sample_copy: SampleCopy,
+    tmp_path: Path,
+) -> None:
+    run_id = "round-2026-10-25-hw01-second-check"
+    repo_id = "it__a-long-student-github-name__web-api-homework-repository"
+    assert len(f"{PREFIX}-{run_id}-{repo_id}-app-12345678") > 63
+
+    result = docker_runner.execute(
+        make_request(sample_copy(), tmp_path / "logs", repo_id=repo_id, run_id=run_id)
+    )
+
+    assert result.steps == (StepStatus.SUCCEEDED,) * 3, describe(result)
+    assert all_passed(result), describe(result)
+    assert_nothing_left(engine)
+
+
 def test_written_data_does_not_outlive_the_run(
     docker_runner: DockerCodeRunner,
     engine: SdkDockerEngine,

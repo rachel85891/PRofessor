@@ -491,6 +491,43 @@ def test_startup_crash_stops_readiness_early(repo: Path, tmp_path: Path) -> None
     assert engine.leftovers == 0
 
 
+def test_app_is_reached_through_its_short_network_alias(repo: Path, tmp_path: Path) -> None:
+    engine = FakeEngine()
+    long_ids = {"run_id": "round-2026-10-25-hw01-" + "x" * 30, "repo_id": "student__" + "y" * 40}
+
+    runner(engine).execute(request(repo, tmp_path, **long_ids))
+
+    (app,) = engine.specs("app")
+    (sidecar,) = engine.specs("probe")
+    assert len(app.name) > 63, "the container name alone would not resolve"
+    assert app.network_aliases == ("app",)
+    assert sidecar.network_aliases == ()
+    urls = {command[command.index("--") + 1] for command in engine.exec_commands}
+    assert all(url.startswith("http://app:8080/") for url in urls)
+
+
+def test_name_that_never_resolves_is_an_environment_error(repo: Path, tmp_path: Path) -> None:
+    engine = FakeEngine(resolve_failures=1_000)
+
+    result = runner(engine).execute(request(repo, tmp_path))
+
+    assert result.failure_kind is FailureKind.ENVIRONMENT_ERROR
+    assert result.steps == (StepStatus.SUCCEEDED, StepStatus.SUCCEEDED, StepStatus.FAILED)
+    # About 2 s of grace / 0.1 s poll, far fewer than the 5 s readiness timeout would take.
+    assert 20 <= len(engine.exec_commands) <= 22
+    assert "could not resolve 'app'" in (tmp_path / "logs" / "run.log").read_text(encoding="utf-8")
+    assert engine.leftovers == 0
+
+
+def test_name_that_resolves_within_the_grace_period_is_fine(repo: Path, tmp_path: Path) -> None:
+    engine = FakeEngine(resolve_failures=5, probe_statuses=STATUSES)
+
+    result = runner(engine).execute(request(repo, tmp_path))
+
+    assert result.failure_kind is None
+    assert all(r.passed for r in result.probe_results)
+
+
 def test_app_that_never_answers_times_out(repo: Path, tmp_path: Path) -> None:
     engine = FakeEngine(app="hang")
 

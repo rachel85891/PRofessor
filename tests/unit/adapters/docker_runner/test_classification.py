@@ -118,6 +118,12 @@ def test_app_still_running_at_readiness_timeout_is_a_timeout() -> None:
     assert classify(StepOutcome(RunnerStep.RUN, timed_out=True)) is FailureKind.TIMEOUT
 
 
+def test_app_name_that_cannot_be_resolved_is_an_environment_error() -> None:
+    outcome = StepOutcome(RunnerStep.RUN, unresolved_host=True, log_text="Application started")
+
+    assert classify(outcome) is FailureKind.ENVIRONMENT_ERROR
+
+
 def test_run_that_neither_answered_nor_exited_is_an_environment_error() -> None:
     assert classify(StepOutcome(RunnerStep.RUN)) is FailureKind.ENVIRONMENT_ERROR
 

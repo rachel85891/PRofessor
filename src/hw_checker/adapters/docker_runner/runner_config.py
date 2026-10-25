@@ -40,6 +40,9 @@ class DockerRunnerConfig:
     max_archive_bytes: int
     max_file_bytes: int
     step_poll_seconds: float = 0.5
+    resolve_grace_seconds: float = 5.0
+    """How long the sidecar may fail to resolve the app's name before it is an environment
+    failure instead of a slow start."""
 
     def __post_init__(self) -> None:
         durations = (
@@ -49,6 +52,7 @@ class DockerRunnerConfig:
             self.probe_timeout_seconds,
             self.readiness_poll_seconds,
             self.step_poll_seconds,
+            self.resolve_grace_seconds,
         )
         if any(duration <= 0 for duration in durations):
             raise ValueError("runner timeouts and poll intervals must be positive")

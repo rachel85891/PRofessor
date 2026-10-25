@@ -64,6 +64,9 @@ runner:
   # and a probe that times out counts as "no answer", so leave room.
   probe_timeout_seconds: 10
   readiness_poll_seconds: 0.5
+  # The probe sidecar reaches the app by the network alias "app". If it cannot resolve that
+  # name for longer than this, the run is an environment failure, not a slow start.
+  resolve_grace_seconds: 5
   # Port the app listens on inside its container (ASPNETCORE_HTTP_PORTS).
   app_port: 8080
   # Non-root user of the official .NET images; owns the files copied into the container.

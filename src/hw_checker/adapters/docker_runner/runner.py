@@ -74,8 +74,17 @@ DOTNET_ENVIRONMENT = {
     "DOTNET_NOLOGO": "1",
 }
 TMPFS = {"/tmp": "size=64m"}
+APP_ALIAS = "app"
+"""The app's DNS name on its per-repo network. Container names can pass the 63-character
+DNS label limit (they include the run and repo ids), and then cannot be resolved; each repo
+has its own network, so a fixed short alias never collides."""
 CACHE_KIND = "cache"
-CURL_ERRORS = {6: "could not resolve the app", 7: "connection refused", 28: "timed out"}
+CURL_RESOLVE_ERROR = 6
+CURL_ERRORS = {
+    CURL_RESOLVE_ERROR: "could not resolve the app",
+    7: "connection refused",
+    28: "timed out",
+}
 _INVALID_NAME_CHARACTERS = re.compile(r"[^a-zA-Z0-9_.-]")
 
 Clock = Callable[[], float]
@@ -401,14 +410,10 @@ class _Execution:
             sidecar = self._create(self._probe_spec(network))
             self.engine.start(sidecar)
             self.engine.start(app)
-            outcome = self._wait_until_ready(
-                app, sidecar, f"http://{app_name}:{self.config.app_port}"
-            )
+            base_url = f"http://{APP_ALIAS}:{self.config.app_port}"
+            outcome = self._wait_until_ready(app, sidecar, base_url)
             probe_results = (
-                tuple(
-                    self._probe(sidecar, f"http://{app_name}:{self.config.app_port}", probe)
-                    for probe in self.request.probes
-                )
+                tuple(self._probe(sidecar, base_url, probe) for probe in self.request.probes)
                 if outcome.ready
                 else ()
             )
@@ -416,6 +421,11 @@ class _Execution:
         except EngineError as error:
             outcome = StepOutcome(RunnerStep.RUN, engine_error=True, log_text=str(error))
             probe_results, log = (), str(error)
+        if outcome.unresolved_host:
+            log += (
+                f"\n[runner] the probe sidecar could not resolve {APP_ALIAS!r} for more than "
+                f"{self.config.resolve_grace_seconds:g} s; this is an environment problem\n"
+            )
         self._log_step_end(RunnerStep.RUN, started, outcome)
         self._write_log(RunnerStep.RUN, log)
         kind = classify(dataclasses.replace(outcome, log_text=log))
@@ -437,9 +447,17 @@ class _Execution:
 
     def _wait_until_ready(self, app: str, sidecar: str, base_url: str) -> StepOutcome:
         deadline = self.clock() + self.config.readiness_timeout_seconds
+        unresolved_since: float | None = None
         while True:
-            if self._http_status(sidecar, "GET", f"{base_url}/", None)[0] is not None:
+            status, error = self._http_status(sidecar, "GET", f"{base_url}/", None)
+            if status is not None:
                 return StepOutcome(RunnerStep.RUN, ready=True)
+            if error == CURL_ERRORS[CURL_RESOLVE_ERROR]:
+                unresolved_since = self.clock() if unresolved_since is None else unresolved_since
+                if self.clock() - unresolved_since >= self.config.resolve_grace_seconds:
+                    return StepOutcome(RunnerStep.RUN, unresolved_host=True)
+            else:
+                unresolved_since = None
             state = self.engine.state(app)
             if not state.running:
                 return StepOutcome(
@@ -578,6 +596,7 @@ class _Execution:
                 Mount(project_volume, DATA_MOUNT, read_only=False),
             ),
             network=network,
+            network_aliases=(APP_ALIAS,),
             environment=environment,
             read_only_root=True,
             tmpfs=TMPFS,

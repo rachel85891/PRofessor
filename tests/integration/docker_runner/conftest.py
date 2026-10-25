@@ -44,6 +44,7 @@ def runner_config() -> DockerRunnerConfig:
         readiness_timeout_seconds=20,
         probe_timeout_seconds=settings.probe_timeout_seconds,
         readiness_poll_seconds=0.5,
+        resolve_grace_seconds=settings.resolve_grace_seconds,
         app_port=settings.app_port,
         app_uid=settings.app_uid,
         app_gid=settings.app_gid,
@@ -150,9 +151,10 @@ def make_request(
     logs_dir: Path,
     repo_id: str = "it__sample",
     probes: tuple[HttpProbe, ...] = SAMPLE_PROBES,
+    run_id: str = "it-run",
 ) -> ExecutionRequest:
     return ExecutionRequest(
-        run_id="it-run",
+        run_id=run_id,
         repo_id=repo_id,
         working_copy=working_copy,
         probes=probes,

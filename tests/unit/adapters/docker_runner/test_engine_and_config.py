@@ -23,6 +23,7 @@ def config(**overrides: Any) -> DockerRunnerConfig:
         "build_timeout_seconds": 10,
         "readiness_timeout_seconds": 5,
         "probe_timeout_seconds": 2,
+        "resolve_grace_seconds": 2,
         "readiness_poll_seconds": 0.1,
         "app_port": 8080,
         "app_uid": 1654,

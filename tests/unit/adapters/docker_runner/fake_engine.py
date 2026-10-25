@@ -42,7 +42,8 @@ class FakeEngine:
 
     `exit_codes` maps a step kind (restore, build) to its exit code; None keeps it running.
     `app` is "ready", "crash" (exits with 139) or "hang". `fail_on` maps "operation" or
-    "operation:kind" to an exception to raise there.
+    "operation:kind" to an exception to raise there. The first `resolve_failures` requests
+    from the sidecar fail as curl does when it cannot resolve the host (exit 6).
     """
 
     exit_codes: dict[str, int | None] = field(default_factory=dict)
@@ -54,6 +55,7 @@ class FakeEngine:
     cache_volume: str = "hw-checker-test-nuget"
     reachable: bool = True
     oom_kinds: set[str] = field(default_factory=set)
+    resolve_failures: int = 0
     fail_on: dict[str, BaseException] = field(default_factory=dict)
     containers: dict[str, FakeContainer] = field(default_factory=dict)
     networks: dict[str, tuple[dict[str, str], bool]] = field(default_factory=dict)
@@ -158,6 +160,8 @@ class FakeEngine:
     def exec(self, container: str, command: tuple[str, ...]) -> ExecResult:
         self._fail("exec")
         self.exec_commands.append(command)
+        if len(self.exec_commands) <= self.resolve_failures:
+            return ExecResult(6, "000")
         if self.app != "ready":
             return ExecResult(7, "000")
         method = command[command.index("--request") + 1]

@@ -35,7 +35,8 @@ class StepOutcome:
     """What happened in one step.
 
     `exit_code` is None when the container never exited (still running, or never started).
-    For `run`, `ready` says whether the app answered before the readiness timeout. For
+    For `run`, `ready` says whether the app answered before the readiness timeout, and
+    `unresolved_host` that the probe sidecar could not resolve the app's name at all. For
     `prepare`, `project_found` says whether discovery found exactly one Web project.
     """
 
@@ -47,6 +48,7 @@ class StepOutcome:
     log_text: str = ""
     ready: bool = False
     project_found: bool = True
+    unresolved_host: bool = False
 
 
 def classify(outcome: StepOutcome) -> FailureKind | None:
@@ -103,6 +105,8 @@ def _classify_build(outcome: StepOutcome) -> FailureKind | None:
 def _classify_run(outcome: StepOutcome) -> FailureKind | None:
     if outcome.ready:
         return None
+    if outcome.unresolved_host:
+        return FailureKind.ENVIRONMENT_ERROR  # our network, not the student's app
     if outcome.exit_code is not None:
         return FailureKind.STARTUP_FAILED  # exited before it answered
     if outcome.timed_out:
