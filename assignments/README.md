@@ -170,7 +170,7 @@ When route names are up to the student, list the other names as `path_alternativ
     probes:
       - method: GET
         path: /api/users/{userId}
-        path_alternatives: [/api/user/{userId}]
+        path_alternatives: ["/api/user/{userId}"]
         expected_status: 200
   - id: hw01-r5
     kind: http
@@ -184,7 +184,7 @@ When route names are up to the student, list the other names as `path_alternativ
         expected_status: 200
 ```
 
-A `{name}` must be captured by an earlier probe of the same file, or the file is rejected. If a capture fails (the response has no JSON, no such field, or no `Location`), the probes that need it are not sent, and their requirements are "not evaluated" (reason `dependency_failed`), never failed; the probe that could not capture is judged on its own. A captured value is text: in a body, a field the student's model declares as a number receives it as a number.
+A `{name}` must be captured by an earlier probe of the same file, or the file is rejected. Inside `[...]` (and at the very start of a value) YAML reads `{` as the start of a mapping, so quote such paths there: `["/api/user/{userId}"]`; a plain `path: /api/users/{userId}` needs no quotes. If a capture fails (the response has no JSON, no such field, or no `Location`), the probes that need it are not sent, and their requirements are "not evaluated" (reason `dependency_failed`), never failed; the probe that could not capture is judged on its own. A captured value is text: in a body, a field the student's model declares as a number receives it as a number.
 
 **Bodies and student models.** Students define their own classes for request bodies, so the checker reads the model of the action a probe reaches and adapts the body to it:
 
