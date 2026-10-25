@@ -378,6 +378,55 @@ def test_probes_are_steered_to_the_controller_serving_most(repo: Path, tmp_path:
     ) in prepare_log
 
 
+MODEL_CONTROLLER = (
+    '[Route("api/[controller]")]\npublic class UsersController : ControllerBase\n{\n'
+    "    [HttpPost]\n    public IActionResult Post([FromBody] Account a) => Ok();\n}\n"
+    "public class Account\n{\n"
+    "    public int Password { get; set; }\n"
+    "    public required string Name { get; set; }\n}\n"
+)
+
+
+def test_probe_body_is_adapted_to_the_students_model(repo: Path, tmp_path: Path) -> None:
+    (repo / "Controllers" / "ProductsController.cs").write_text(MODEL_CONTROLLER, encoding="utf-8")
+    create = HttpProbe(
+        requirement_id="hw01-r1",
+        assignment_id="hw01",
+        method=HttpMethod.POST,
+        path="/api/users",
+        body='{"password":"12345","email":"a@b.c"}',
+        expected_status=200,
+    )
+    engine = FakeEngine()
+
+    result = runner(engine).execute(request(repo, tmp_path, probes=(create,)))
+
+    (sent,) = [c for c in engine.exec_commands if "--data-raw" in c]
+    expected = '{"password":12345,"email":"a@b.c","name":"probe-name"}'
+    assert sent[sent.index("--data-raw") + 1] == expected
+    (probe_result,) = result.probe_results
+    assert probe_result.sent_body == expected
+    adaptation = probe_result.body_adaptation
+    assert adaptation is not None and adaptation.model == "Account"
+    assert [(n.field, n.outcome.value) for n in adaptation.notes] == [
+        ("password", "converted"),
+        ("email", "unmatched"),
+        ("Name", "filled"),
+    ]
+
+
+def test_without_a_route_table_the_body_is_sent_as_written(repo: Path, tmp_path: Path) -> None:
+    body = '{"name":"Desk","price":250}'
+    engine = FakeEngine(probe_statuses=STATUSES)
+
+    result = runner(engine).execute(request(repo, tmp_path))
+
+    post = result.probe_results[2]
+    assert post.sent_body == body
+    assert post.body_adaptation is not None and not post.body_adaptation.adapted
+    assert result.probe_results[0].body_adaptation is None  # a GET has no body
+
+
 def test_without_routes_probes_go_to_their_first_path(repo: Path, tmp_path: Path) -> None:
     engine = FakeEngine(probe_statuses=STATUSES)
 

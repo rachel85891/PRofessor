@@ -38,6 +38,8 @@ class NotEvaluatedReason(StrEnum):
     ENVIRONMENT_ISSUE = "environment_issue"
     ROUTE_NOT_FOUND = "route_not_found"
     """None of a probe's paths is declared in the student's code, so it was not sent."""
+    BODY_MISMATCH = "body_mismatch"
+    """A failing probe's body had fields that do not fit the student's model."""
 
 
 class NotEvaluated(DomainModel):

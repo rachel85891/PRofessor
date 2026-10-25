@@ -10,6 +10,9 @@ from hw_checker.checks.deterministic.build import (
 from hw_checker.checks.deterministic.http import evaluate_http
 from hw_checker.domain import (
     Assignment,
+    BodyAdaptation,
+    BodyFieldNote,
+    BodyFieldOutcome,
     CheckInput,
     ExecutionResult,
     FailureKind,
@@ -442,6 +445,54 @@ def test_resolved_probes_are_evaluated_as_before() -> None:
 
     assert evaluate_http(check_input(HTTP_REQUIREMENT, passing)) == ()
     assert len(_findings(evaluate_http(check_input(HTTP_REQUIREMENT, failing)))) == 1
+
+
+def with_body(probe_: HttpProbe, status: int, *outcomes: BodyFieldOutcome) -> ProbeResult:
+    notes = tuple(BodyFieldNote(field=f"f{i}", outcome=o) for i, o in enumerate(outcomes))
+    return ProbeResult(
+        probe=probe_,
+        actual_status=status,
+        passed=status in probe_.allowed_statuses,
+        sent_path=probe_.path,
+        route_resolution=RouteResolution.RESOLVED,
+        sent_body="{}",
+        body_adaptation=BodyAdaptation(adapted=True, model="User", notes=notes),
+    )
+
+
+@pytest.mark.parametrize("outcome", [BodyFieldOutcome.UNMATCHED, BodyFieldOutcome.NOT_CONVERTIBLE])
+def test_failing_probe_with_a_mismatched_body_is_not_evaluated(
+    outcome: BodyFieldOutcome,
+) -> None:
+    execution = run_ok(
+        result(GET_ALL, 200),
+        result(GET_MISSING, 404),
+        with_body(CREATE, 400, BodyFieldOutcome.MATCHED, outcome),
+    )
+
+    assert evaluate_http(check_input(HTTP_REQUIREMENT, execution)) is (
+        NotEvaluatedReason.BODY_MISMATCH
+    )
+
+
+def test_failing_probe_with_a_matched_or_filled_body_is_a_finding() -> None:
+    execution = run_ok(
+        result(GET_ALL, 200),
+        result(GET_MISSING, 404),
+        with_body(CREATE, 500, BodyFieldOutcome.MATCHED, BodyFieldOutcome.FILLED),
+    )
+
+    assert len(_findings(evaluate_http(check_input(HTTP_REQUIREMENT, execution)))) == 1
+
+
+def test_passing_probe_with_a_mismatched_body_still_passes() -> None:
+    execution = run_ok(
+        result(GET_ALL, 200),
+        result(GET_MISSING, 404),
+        with_body(CREATE, 201, BodyFieldOutcome.UNMATCHED),
+    )
+
+    assert evaluate_http(check_input(HTTP_REQUIREMENT, execution)) == ()
 
 
 def test_probes_of_other_requirements_are_ignored() -> None:

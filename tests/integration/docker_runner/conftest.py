@@ -22,6 +22,7 @@ FIXTURE = FIXTURES / "sample_webapi"
 ABSOLUTE_PATH_FIXTURE = FIXTURES / "sample_webapi_absolute_path"
 USER_SIGNIN_FIXTURE = FIXTURES / "sample_webapi_user_signin"
 TWO_CONTROLLERS_FIXTURE = FIXTURES / "sample_webapi_two_controllers"
+CUSTOM_MODEL_FIXTURE = FIXTURES / "sample_webapi_custom_model"
 OLDER_FRAMEWORK_FIXTURES = {
     "net8.0": FIXTURES / "sample_webapi_net80",
     "net9.0": FIXTURES / "sample_webapi_net90",
@@ -243,3 +244,14 @@ ITEMS_PROBES = (
     probe("hw01-r1", HttpMethod.POST, "/api/items", 201, '{"title":"Second"}'),
 )
 """Against the net8.0 and net9.0 fixtures."""
+
+
+NUMERIC_PASSWORD = "12345"  # pragma: allowlist secret
+CUSTOM_MODEL_PROBES = (
+    probe("hw01-r1", HttpMethod.POST, "/api/users", 201, user_body("newuser", NUMERIC_PASSWORD)),
+    probe(
+        "hw01-r2", HttpMethod.POST, "/api/users/login", 200, user_body("newuser", NUMERIC_PASSWORD)
+    ),
+)
+"""Against `sample_webapi_custom_model`: the register body needs adapting (the password is a
+number there, and Name is required); the login model has Email instead of UserName."""

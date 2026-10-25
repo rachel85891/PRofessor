@@ -14,6 +14,9 @@ from hw_checker.domain.assignment import (
 )
 from hw_checker.domain.checks import CheckDescription, CheckInput, CheckParamDescription
 from hw_checker.domain.execution import (
+    BodyAdaptation,
+    BodyFieldNote,
+    BodyFieldOutcome,
     DeclaredRoute,
     ExecutionRequest,
     ExecutionResult,
@@ -68,6 +71,9 @@ __all__ = [
     "Assignment",
     "AssignmentResult",
     "AssignmentVersion",
+    "BodyAdaptation",
+    "BodyFieldNote",
+    "BodyFieldOutcome",
     "CheckDescription",
     "CheckInput",
     "CheckParamDescription",

@@ -24,6 +24,8 @@ from hw_checker.adapters.docker_runner.archive import (
     build_work_archive,
     directory_archive,
 )
+from hw_checker.adapters.docker_runner.body_adapter import adapt_body
+from hw_checker.adapters.docker_runner.body_models import ProjectSources
 from hw_checker.adapters.docker_runner.classification import RunnerStep, StepOutcome, classify
 from hw_checker.adapters.docker_runner.discovery import (
     DiscoveryFailure,
@@ -42,6 +44,7 @@ from hw_checker.adapters.docker_runner.excerpt import excerpt_log
 from hw_checker.adapters.docker_runner.host_paths import PathPlan, plan_path_fixes
 from hw_checker.adapters.docker_runner.routes import (
     ControllerChoice,
+    ProbeRoute,
     choose_primary_controller,
     extract_route_table,
     resolve_probe_path,
@@ -53,6 +56,7 @@ from hw_checker.adapters.docker_runner.runner_config import (
 )
 from hw_checker.config.logging_setup import log_context
 from hw_checker.domain import (
+    BodyAdaptation,
     ExecutionRequest,
     ExecutionResult,
     FailureKind,
@@ -247,6 +251,7 @@ class _Execution:
     routes: RouteTable | None = None
     controllers: ControllerChoice = field(default_factory=lambda: ControllerChoice(None, ()))
     framework_images: FrameworkImages | None = None
+    project_sources: ProjectSources | None = None
 
     def run(self) -> ExecutionResult:
         self.request.logs_dir.mkdir(parents=True, exist_ok=True)
@@ -275,6 +280,9 @@ class _Execution:
         plan = plan_path_fixes(self.request.working_copy, discovery.folder)
         self.routes = extract_route_table(self.request.working_copy, discovery.folder)
         self.controllers = choose_primary_controller(self.request.probes, self.routes)
+        self.project_sources = ProjectSources.read(
+            self.request.working_copy, discovery.folder, discovery.nullable
+        )
         result = self._prepare_build_run(discovery, plan)
         # Every result after this point records the detected paths, the route table and the
         # controller choice.
@@ -494,7 +502,8 @@ class _Execution:
                 error="no route declared in the code matches the probe's paths",
                 route_resolution=resolution,
             )
-        status, error = self._http_status(sidecar, probe.method.value, base_url + path, probe.body)
+        body, adaptation = self._probe_body(probe, route)
+        status, error = self._http_status(sidecar, probe.method.value, base_url + path, body)
         return ProbeResult(
             probe=probe,
             actual_status=status,
@@ -503,7 +512,21 @@ class _Execution:
             sent_path=path,
             route_resolution=resolution,
             controller=route.controller,
+            sent_body=body,
+            body_adaptation=adaptation,
         )
+
+    def _probe_body(
+        self, probe: HttpProbe, route: ProbeRoute
+    ) -> tuple[str | None, BodyAdaptation | None]:
+        """The body to send: the probe's intended body adapted to the action's model."""
+        if probe.body is None:
+            return None, None
+        if route.route is None or self.project_sources is None:
+            return probe.body, BodyAdaptation(
+                adapted=False, reason="the probe's route was not resolved against the code"
+            )
+        return adapt_body(probe.body, self.project_sources.body_model(route.route))
 
     def _http_status(
         self, sidecar: str, method: str, url: str, body: str | None

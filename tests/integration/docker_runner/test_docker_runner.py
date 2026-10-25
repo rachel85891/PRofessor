@@ -32,6 +32,8 @@ from tests.integration.docker_runner.conftest import (
     ABSOLUTE_PATH_FIXTURE,
     ABSOLUTE_PATH_PROBES,
     CACHE_VOLUME,
+    CUSTOM_MODEL_FIXTURE,
+    CUSTOM_MODEL_PROBES,
     ITEMS_PROBES,
     OLDER_FRAMEWORK_FIXTURES,
     PREFIX,
@@ -345,6 +347,49 @@ def test_probes_go_to_one_controller_when_the_student_has_two(
     assert result.serving_controllers == ("UserController", "UsersController")
     prepare_log = (tmp_path / "logs" / "prepare.log").read_text(encoding="utf-8")
     assert "probes sent to UsersController when it serves them" in prepare_log
+    assert_nothing_left(engine)
+
+
+def test_probe_bodies_are_adapted_to_the_students_model(
+    docker_runner: DockerCodeRunner,
+    engine: SdkDockerEngine,
+    sample_copy: SampleCopy,
+    tmp_path: Path,
+) -> None:
+    repo = sample_copy(source=CUSTOM_MODEL_FIXTURE)
+
+    result = docker_runner.execute(
+        make_request(repo, tmp_path / "logs", probes=CUSTOM_MODEL_PROBES)
+    )
+
+    register, login = result.probe_results
+    assert register.actual_status == 201, describe(result)
+    assert register.sent_body == '{"userName":"newuser","password":12345,"name":"probe-name"}'
+    assert register.body_adaptation is not None and not register.body_adaptation.mismatched
+    assert login.actual_status == 401, describe(result)
+    assert login.body_adaptation is not None and login.body_adaptation.mismatched
+    assert [(n.field, n.outcome.value) for n in login.body_adaptation.notes] == [
+        ("userName", "unmatched"),
+        ("password", "converted"),
+        ("Email", "filled"),
+    ]
+    requirements = tuple(
+        Requirement(
+            id=requirement_id,
+            title=requirement_id,
+            severity=Severity.MAJOR,
+            kind=RequirementKind.HTTP,
+            http_probes=tuple(p for p in CUSTOM_MODEL_PROBES if p.requirement_id == requirement_id),
+        )
+        for requirement_id in ("hw01-r1", "hw01-r2")
+    )
+    assignment = Assignment(id="hw01", order=1, title="Users", requirements=requirements)
+    checker = DeterministicRequirementChecker(CheckRegistry(builtin_checks()))
+    checked = DeterministicCheckService(checker).evaluate(assignment, repo, result)
+    assert checked.findings == ()
+    assert checked.not_evaluated == (
+        NotEvaluated(requirement_id="hw01-r2", reason=NotEvaluatedReason.BODY_MISMATCH),
+    )
     assert_nothing_left(engine)
 
 

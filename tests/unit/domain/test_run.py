@@ -202,6 +202,7 @@ def test_not_evaluated_reasons() -> None:
         "run_not_healthy",
         "environment_issue",
         "route_not_found",
+        "body_mismatch",
     }
 
 
