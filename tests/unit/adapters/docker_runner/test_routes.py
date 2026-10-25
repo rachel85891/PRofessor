@@ -534,6 +534,18 @@ def test_a_tie_with_no_earliest_resolution_goes_to_the_first_name() -> None:
     assert choice == ControllerChoice("AController", ("AController", "BController"))
 
 
+def test_resolution_names_the_declared_route_it_used() -> None:
+    table = RouteTable(routes=TWO_CONTROLLERS)
+    choice = choose_primary_controller(STEERED_PROBES, table)
+
+    put = resolve_probe_path(STEERED_PROBES[2], table, choice.primary)
+    login = resolve_probe_path(STEERED_PROBES[4], table, choice.primary)
+
+    assert put.route == controller_route(USERS, PUT, "api/Users/{id}")
+    assert login.route == controller_route(USER, POST, "api/User/login")
+    assert resolve_probe_path(http_probe(PATCH, "/api/x"), table).route is None
+
+
 def test_a_single_controller_resolves_exactly_as_before() -> None:
     probes = (
         http_probe(GET, "/api/users", "/api/user"),

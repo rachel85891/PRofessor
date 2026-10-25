@@ -22,13 +22,15 @@ class WebProject:
     """The Web project to build: its path relative to the working copy, and its assembly.
 
     `target_framework` is the literal `<TargetFramework>` (or `<TargetFrameworks>`) text,
-    None when the project file has neither.
+    None when the project file has neither. `nullable` is True when `<Nullable>` is `enable`,
+    which makes `[ApiController]` treat non-nullable reference properties as required.
     """
 
     path: str
     assembly_name: str
     unreadable: tuple[str, ...] = ()
     target_framework: str | None = None
+    nullable: bool = False
 
     @property
     def folder(self) -> str:
@@ -80,6 +82,7 @@ class _ParsedProject:
     is_web: bool
     assembly_name: str
     target_framework: str | None
+    nullable: bool
 
 
 def discover_web_project(working_copy: Path) -> WebProject | DiscoveryFailure:
@@ -100,7 +103,11 @@ def discover_web_project(working_copy: Path) -> WebProject | DiscoveryFailure:
     others = tuple(project.path for project in parsed if not project.is_web)
     if len(web) == 1:
         return WebProject(
-            web[0].path, web[0].assembly_name, tuple(unreadable), web[0].target_framework
+            web[0].path,
+            web[0].assembly_name,
+            tuple(unreadable),
+            web[0].target_framework,
+            web[0].nullable,
         )
     return DiscoveryFailure(
         message=_failure_message(web, others, unreadable),
@@ -134,7 +141,11 @@ def _parse_project(path: Path, relative: str) -> _ParsedProject | None:
     except (OSError, ElementTree.ParseError):
         return None
     return _ParsedProject(
-        relative, _is_web_project(root), _assembly_name(root, path), _target_framework(root)
+        relative,
+        _is_web_project(root),
+        _assembly_name(root, path),
+        _target_framework(root),
+        _nullable_enabled(root),
     )
 
 
@@ -170,6 +181,13 @@ def _target_framework(root: ElementTree.Element) -> str | None:
             if _local_name(element.tag) == name and (element.text or "").strip():
                 return (element.text or "").strip()
     return None
+
+
+def _nullable_enabled(root: ElementTree.Element) -> bool:
+    return any(
+        _local_name(element.tag) == "Nullable" and (element.text or "").strip().lower() == "enable"
+        for element in root.iter()
+    )
 
 
 def _failure_message(

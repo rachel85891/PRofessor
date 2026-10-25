@@ -159,7 +159,7 @@ def test_the_committed_sample_fixture_is_found() -> None:
     fixture = Path(__file__).parents[3] / "fixtures" / "sample_webapi"
 
     assert discover_web_project(fixture) == WebProject(
-        "WebApi/WebApi/WebApi.csproj", "WebApi", target_framework="net10.0"
+        "WebApi/WebApi/WebApi.csproj", "WebApi", target_framework="net10.0", nullable=True
     )
 
 
@@ -167,8 +167,27 @@ def test_the_committed_absolute_path_fixture_is_found_at_the_root() -> None:
     fixture = Path(__file__).parents[3] / "fixtures" / "sample_webapi_absolute_path"
 
     assert discover_web_project(fixture) == WebProject(
-        "AbsolutePathApi.csproj", "AbsolutePathApi", target_framework="net10.0"
+        "AbsolutePathApi.csproj", "AbsolutePathApi", target_framework="net10.0", nullable=True
     )
+
+
+@pytest.mark.parametrize(
+    ("props", "nullable"),
+    [
+        ("<Nullable>enable</Nullable>", True),
+        ("<Nullable> Enable </Nullable>", True),
+        ("<Nullable>disable</Nullable>", False),
+        ("<Nullable>warnings</Nullable>", False),
+        ("", False),
+    ],
+)
+def test_nullable_setting_is_read(tmp_path: Path, props: str, nullable: bool) -> None:
+    write(tmp_path, "Api.csproj", web(props))
+
+    result = discover_web_project(tmp_path)
+
+    assert isinstance(result, WebProject)
+    assert result.nullable is nullable
 
 
 def test_target_framework_is_read(tmp_path: Path) -> None:
