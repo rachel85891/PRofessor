@@ -1,6 +1,23 @@
 # General requirements, checked in every round together with assignments 1..N.
-# The real requirements are added in stage 3c. See ../README.md for the format.
+# Approved by the developer on 2026-10-25 as a starting point; to be finalized with the lecturer.
 id: _general
 order: 0
 title: General requirements
-requirements: []
+lenient_notes:
+  - Do not judge names, letter case or language of identifiers
+  - Separation into layers (services, repositories) is not required yet
+  - async/await is not required yet
+  - Storing data in a text file is expected at this stage
+  - Leftover template code (for example WeatherForecastController) is not a problem
+requirements:
+  - id: gen-build
+    kind: build
+    title: The project builds and starts without crashing
+    severity: critical
+  - id: gen-controllers
+    kind: structure
+    title: The project has a Controllers folder
+    severity: minor
+    check: folder_exists
+    params:
+      path: Controllers
