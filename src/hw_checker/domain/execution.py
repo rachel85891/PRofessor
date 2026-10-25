@@ -63,6 +63,9 @@ class BodyFieldOutcome(StrEnum):
 
     MATCHED = "matched"
     """The body key matched a property (ignoring case) and its value already fit."""
+    MATCHED_BY_CONTAINS = "matched_by_contains"
+    """No property has the key's name, but exactly one property's name contains it once
+    case, `_`, `-` and digits are ignored (`password` for `LogInPassword`)."""
     CONVERTED = "converted"
     """The value was converted to the property's type, for example "12345" to 12345."""
     FILLED = "filled"
@@ -74,12 +77,19 @@ class BodyFieldOutcome(StrEnum):
 
 
 class BodyFieldNote(DomainModel):
-    """One field of an adapted probe body."""
+    """One field of an adapted probe body.
+
+    For a key with alternatives (`userName|email`), `alternative` is the one that matched
+    `property_name`; an unmatched key lists in `candidates` the properties it could not
+    choose between.
+    """
 
     field: NonBlankStr
     """The body key, or for a filled field the property's name."""
     property_name: str | None = None
     outcome: BodyFieldOutcome
+    alternative: str | None = None
+    candidates: tuple[str, ...] = ()
 
 
 MISMATCH_OUTCOMES = frozenset({BodyFieldOutcome.UNMATCHED, BodyFieldOutcome.NOT_CONVERTIBLE})

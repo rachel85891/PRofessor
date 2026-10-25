@@ -23,6 +23,11 @@ ABSOLUTE_PATH_FIXTURE = FIXTURES / "sample_webapi_absolute_path"
 USER_SIGNIN_FIXTURE = FIXTURES / "sample_webapi_user_signin"
 TWO_CONTROLLERS_FIXTURE = FIXTURES / "sample_webapi_two_controllers"
 NO_ID_FIXTURE = FIXTURES / "sample_webapi_no_id"
+LOGIN_VARIANT_FIXTURES = {
+    "members": FIXTURES / "sample_webapi_email_login",
+    "customers": FIXTURES / "sample_webapi_login_attributes",
+}
+"""Login by `Email`, and by `[EmailAddress] LogInEmail` / `LogInPassword`, keyed by route."""
 CUSTOM_MODEL_FIXTURE = FIXTURES / "sample_webapi_custom_model"
 OLDER_FRAMEWORK_FIXTURES = {
     "net8.0": FIXTURES / "sample_webapi_net80",
@@ -298,3 +303,21 @@ NO_ID_PROBES = (
 )
 """Against `sample_webapi_no_id`: the POST answers without the id, so the read-back
 cannot be sent."""
+
+
+def login_variant_probes(resource: str) -> tuple[HttpProbe, ...]:
+    """Sign up and log in with an `userName|email` key, whatever the login model calls it."""
+    account = json.dumps({"userName|email": "newuser@example.com", "password": TEST_PASSWORD})
+    wrong = json.dumps({"userName|email": "newuser@example.com", "password": "wrong"})
+    return (
+        probe(
+            "hw01-r1",
+            HttpMethod.POST,
+            f"/api/{resource}",
+            201,
+            account,
+            capture="accountId from body:id",
+        ),
+        probe("hw01-r2", HttpMethod.POST, f"/api/{resource}/login", 200, account),
+        probe("hw01-r2", HttpMethod.POST, f"/api/{resource}/login", 401, wrong),
+    )

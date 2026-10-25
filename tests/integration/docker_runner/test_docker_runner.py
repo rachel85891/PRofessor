@@ -40,17 +40,20 @@ from tests.integration.docker_runner.conftest import (
     CUSTOM_MODEL_FIXTURE,
     CUSTOM_MODEL_PROBES,
     ITEMS_PROBES,
+    LOGIN_VARIANT_FIXTURES,
     NO_ID_FIXTURE,
     NO_ID_PROBES,
     OLDER_FRAMEWORK_FIXTURES,
     PREFIX,
     PROJECT,
     SAMPLE_PROBES,
+    TEST_PASSWORD,
     TWO_CONTROLLERS_FIXTURE,
     TWO_CONTROLLERS_PROBES,
     USER_SIGNIN_FIXTURE,
     USER_SIGNIN_PROBES,
     leftovers,
+    login_variant_probes,
     make_request,
     replace_in,
     runner_config,
@@ -466,6 +469,31 @@ def test_a_post_without_an_id_gives_dependency_failed_not_findings(
         (),
         (NotEvaluated(requirement_id="hw01-r2", reason=NotEvaluatedReason.DEPENDENCY_FAILED),),
     )
+    assert_nothing_left(engine)
+
+
+@pytest.mark.parametrize("resource", sorted(LOGIN_VARIANT_FIXTURES))
+def test_login_with_field_alternatives_fits_each_login_model(
+    docker_runner: DockerCodeRunner,
+    engine: SdkDockerEngine,
+    sample_copy: SampleCopy,
+    tmp_path: Path,
+    resource: str,
+) -> None:
+    repo = sample_copy(source=LOGIN_VARIANT_FIXTURES[resource])
+    probes = login_variant_probes(resource)
+
+    result = docker_runner.execute(make_request(repo, tmp_path / "logs", probes=probes))
+
+    assert [r.actual_status for r in result.probe_results] == [201, 200, 401], describe(result)
+    login = result.probe_results[1]
+    assert login.body_adaptation is not None and not login.body_adaptation.mismatched
+    if resource == "customers":
+        assert login.sent_body == (
+            f'{{"logInEmail":"newuser@example.com","logInPassword":"{TEST_PASSWORD}"}}'
+        )
+        assert {n.outcome.value for n in login.body_adaptation.notes} == {"matched_by_contains"}
+    assert evaluate(probes, repo, result) == ((), ())
     assert_nothing_left(engine)
 
 
