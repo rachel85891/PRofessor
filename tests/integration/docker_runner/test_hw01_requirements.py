@@ -1,6 +1,6 @@
-"""The committed hw01 requirements, run for real against the sample Web API fixture.
+"""The committed hw01 requirements, run for real against correct sample solutions.
 
-The fixture is a correct solution, so every requirement must pass: no findings and nothing
+Each fixture is a correct solution, so every requirement must pass: no findings and nothing
 left "not evaluated". A failure here means the requirements or the runner reject a correct
 project.
 """
@@ -20,7 +20,19 @@ from hw_checker.config.settings import REPO_ROOT
 from hw_checker.domain import ExecutionResult, StepStatus
 from hw_checker.services.assignments import AssignmentCatalogService
 from hw_checker.services.deterministic_checks import DeterministicCheckService
-from tests.integration.docker_runner.conftest import CACHE_VOLUME, leftovers, make_request
+from tests.integration.docker_runner.conftest import (
+    CACHE_VOLUME,
+    FIXTURE,
+    FIXTURES,
+    leftovers,
+    make_request,
+)
+
+CORRECT_SOLUTIONS = {
+    "sample_webapi": FIXTURE,
+    # Its ids are called userId, so the capture body:id has to find them leniently.
+    "sample_webapi_user_id": FIXTURES / "sample_webapi_user_id",
+}
 
 pytestmark = pytest.mark.integration
 
@@ -34,11 +46,13 @@ def describe(result: ExecutionResult) -> str:
     return "\n".join([*lines, result.logs_excerpt])
 
 
-def test_hw01_requirements_give_no_findings_on_the_sample_fixture(
+@pytest.mark.parametrize("fixture", sorted(CORRECT_SOLUTIONS))
+def test_hw01_requirements_give_no_findings_on_a_correct_solution(
     docker_runner: DockerCodeRunner,
     engine: SdkDockerEngine,
     sample_copy: Callable[..., Path],
     tmp_path: Path,
+    fixture: str,
 ) -> None:
     registry = CheckRegistry(builtin_checks())
     catalog = AssignmentCatalogService(YamlAssignmentSource(REPO_ROOT / "assignments"), registry)
@@ -49,7 +63,7 @@ def test_hw01_requirements_give_no_findings_on_the_sample_fixture(
         for requirement in assignment.requirements
         for probe in requirement.http_probes
     )
-    repo = sample_copy()
+    repo = sample_copy(source=CORRECT_SOLUTIONS[fixture])
 
     result = docker_runner.execute(make_request(repo, tmp_path / "logs", probes=probes))
 

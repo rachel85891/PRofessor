@@ -462,7 +462,7 @@ def test_a_captured_id_is_used_by_later_probes(repo: Path, tmp_path: Path) -> No
     result = runner(engine).execute(request(repo, tmp_path, probes=CHAIN))
 
     post, get, put = result.probe_results
-    assert post.capture == CaptureResult(name="userId", value="7")
+    assert post.capture == CaptureResult(name="userId", value="7", source_field="id")
     assert (get.sent_path, put.sent_path) == ("/api/users/7", "/api/users/7")
     # The captured text "7" becomes a number for the model's int Id.
     assert put.sent_body == '{"id":7,"userName":"renamed"}'
