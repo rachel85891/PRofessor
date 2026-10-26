@@ -21,7 +21,46 @@ def body(text: str) -> HttpResponse:
     "text", ['{"id":3,"userName":"newuser"}', '{"Id":3}', '{"ID":3}', '{"id":"3"}', '{"id":3.0}']
 )
 def test_capture_from_a_body_field_ignoring_case(text: str) -> None:
-    assert capture_value(FROM_ID, body(text)) == CaptureResult(name="userId", value="3")
+    captured = capture_value(FROM_ID, body(text))
+
+    assert (captured.value, captured.failure) == ("3", None)
+    assert captured.source_field is not None and captured.source_field.lower() == "id"
+
+
+@pytest.mark.parametrize("key", ["userId", "UserID", "user_id", "productId", "USER-ID", "user1Id"])
+def test_an_id_like_field_is_captured_when_there_is_no_id(key: str) -> None:
+    captured = capture_value(FROM_ID, body(f'{{"{key}":13,"userName":"newuser"}}'))
+
+    assert captured == CaptureResult(name="userId", value="13", source_field=key)
+
+
+def test_an_exact_id_wins_over_an_id_like_field() -> None:
+    captured = capture_value(FROM_ID, body('{"userId":13,"id":4}'))
+
+    assert (captured.value, captured.source_field) == ("4", "id")
+
+
+@pytest.mark.parametrize(
+    ("text", "candidates"),
+    [
+        ('{"userId":13,"roleId":2,"name":"x"}', ("userId", "roleId")),
+        ('{"Id":1,"ID":2}', ("Id", "ID")),
+    ],
+)
+def test_several_candidate_fields_are_ambiguous_never_guessed(
+    text: str, candidates: tuple[str, ...]
+) -> None:
+    captured = capture_value(FROM_ID, body(text))
+
+    assert captured == CaptureResult(
+        name="userId", failure=CaptureFailure.AMBIGUOUS, candidates=candidates
+    )
+
+
+def test_fields_that_do_not_end_with_the_name_are_not_used() -> None:
+    captured = capture_value(FROM_ID, body('{"identity":"x","idNumber":5}'))
+
+    assert captured.failure is CaptureFailure.FIELD_MISSING
 
 
 def test_exact_field_name_wins_over_other_cases() -> None:
@@ -62,7 +101,9 @@ def test_capture_from_the_location_header(location: str, value: str) -> None:
 def test_every_capture_failure_reason(
     capture: ProbeCapture, response: HttpResponse | None, failure: CaptureFailure
 ) -> None:
-    assert capture_value(capture, response) == CaptureResult(name="userId", failure=failure)
+    captured = capture_value(capture, response)
+
+    assert (captured.name, captured.value, captured.failure) == ("userId", None, failure)
 
 
 def test_a_probe_not_sent_captures_nothing() -> None:

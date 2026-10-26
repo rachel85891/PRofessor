@@ -1,14 +1,17 @@
 """LocalGitClient: the GitClient port implemented with the git CLI."""
 
+import logging
 import os
 import re
 import shutil
 import stat
+import time
 import uuid
 from collections.abc import Callable
 from pathlib import Path
 
 from hw_checker.adapters.git_local.log_format import LOG_FORMAT, parse_log_output
+from hw_checker.adapters.git_local.network_errors import transient_failure
 from hw_checker.adapters.git_local.runner import CommandRunner, GitRunner, run_subprocess
 from hw_checker.domain import CommitInfo
 from hw_checker.domain.errors import (
@@ -18,6 +21,8 @@ from hw_checker.domain.errors import (
     RepoUnavailableError,
 )
 
+logger = logging.getLogger(__name__)
+
 _SHA_PATTERN = re.compile(r"^[0-9a-f]{40}(?:[0-9a-f]{24})?$")
 _REMOTE_HEAD_PREFIX = "origin/"
 
@@ -26,7 +31,9 @@ class LocalGitClient:
     """Clones and works with local copies of repos through the `git` executable.
 
     Working copies always hold the repo's exact bytes (`core.autocrlf=false`). When
-    `ssl_backend` is set, every command uses that TLS backend (`http.sslBackend`).
+    `ssl_backend` is set, every command uses that TLS backend (`http.sslBackend`). A clone
+    or fetch that fails with a transient network error is retried up to `network_retries`
+    times, `retry_backoff_seconds` apart.
     """
 
     def __init__(
@@ -37,10 +44,18 @@ class LocalGitClient:
         commit_author_email: str | None,
         runner: CommandRunner = run_subprocess,
         ssl_backend: str | None = None,
+        network_retries: int = 2,
+        retry_backoff_seconds: float = 3.0,
+        sleep: Callable[[float], None] = time.sleep,
     ) -> None:
+        if network_retries < 0 or retry_backoff_seconds < 0:
+            raise ValueError("network_retries and retry_backoff_seconds cannot be negative")
         self._git = GitRunner(executable, timeout_seconds, runner, ssl_backend)
         self._author_name = commit_author_name
         self._author_email = commit_author_email
+        self._network_retries = network_retries
+        self._retry_backoff = retry_backoff_seconds
+        self._sleep = sleep
 
     def clone_or_fetch(self, url: str, destination: Path) -> None:
         """Clone `url` into `destination`, or update an existing clone to the remote head.
@@ -49,16 +64,39 @@ class LocalGitClient:
         untracked and ignored files, so it matches a fresh clone. A `destination` that is
         not a clone of `url` is left untouched.
 
+        A transient network failure (the host cannot be resolved or reached, a server
+        error, an interrupted transfer) is retried; a missing repo or denied access is not.
+        A failed clone never leaves its staging folder behind.
+
         Raises:
-            RepoUnavailableError: the repo cannot be cloned or fetched, is empty, or
-                `destination` exists but is not a clone of `url`.
+            RepoUnavailableError: the repo cannot be cloned or fetched (after the retries),
+                is empty, or `destination` exists but is not a clone of `url`.
             ExecutionEnvironmentError: the git executable is not available.
         """
         _reject_option_like(url, "URL", RepoUnavailableError)
-        if destination.exists():
-            self._update(url, destination)
-        else:
-            self._clone(url, destination)
+        attempts = self._network_retries + 1
+        for attempt in range(1, attempts + 1):
+            try:
+                if destination.exists():
+                    self._update(url, destination)
+                else:
+                    self._clone(url, destination)
+                return
+            except RepoUnavailableError as error:
+                reason = transient_failure(str(error))
+                if reason is None or attempt == attempts:
+                    raise
+                # The repo id is the folder name; the URL may hold credentials.
+                logger.warning(
+                    "Transient network error (%s) for repo %s; retry %d of %d in %g s",
+                    reason,
+                    destination.name,
+                    attempt,
+                    self._network_retries,
+                    self._retry_backoff,
+                    extra={"repo_id": destination.name, "reason": reason, "attempt": attempt},
+                )
+                self._sleep(self._retry_backoff)
 
     def head_sha(self, repo_dir: Path) -> str:
         """Return the full sha of the checked-out commit.

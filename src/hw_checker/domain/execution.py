@@ -124,14 +124,23 @@ class CaptureFailure(StrEnum):
     NOT_A_VALUE = "not_a_value"
     """The field holds null, an object, a list, or a text too long to use."""
     NO_LOCATION = "no_location"
+    AMBIGUOUS = "ambiguous"
+    """Several fields could hold the value (`userId` and `roleId` for `body:id`)."""
 
 
 class CaptureResult(DomainModel):
-    """The value a probe captured for `{name}`, or why it could not."""
+    """The value a probe captured for `{name}`, or why it could not.
+
+    `source_field` is the response field the value came from (it may differ from the
+    capture's field, as `userId` for `body:id`); `candidates` lists the fields of an
+    ambiguous capture.
+    """
 
     name: NonBlankStr
     value: str | None = Field(default=None, max_length=MAX_CAPTURED_CHARS)
     failure: CaptureFailure | None = None
+    source_field: str | None = None
+    candidates: tuple[str, ...] = ()
 
     @model_validator(mode="after")
     def _value_or_failure(self) -> Self:

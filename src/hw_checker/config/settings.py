@@ -64,6 +64,8 @@ class GitSettings(BaseModel):
     executable: NonBlankText = "git"
     timeout_seconds: int = Field(default=120, ge=1)
     ssl_backend: Literal["openssl", "schannel"] | None = None
+    network_retries: int = Field(default=2, ge=0, le=10)
+    retry_backoff_seconds: float = Field(default=3, ge=0, le=60)
     commit_author_name: NonBlankText | None = None
     commit_author_email: NonBlankText | None = None
 

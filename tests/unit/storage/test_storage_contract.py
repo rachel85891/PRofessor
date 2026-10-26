@@ -78,6 +78,7 @@ def test_route_table_and_probe_resolution_are_loaded_back(storage: Storage) -> N
         "unavailable",
         "route_not_found",
         "dependency_missing",
+        "unavailable",
     ]
     assert execution.probe_results[0].sent_path == "/api/product"
     assert execution.probe_results == builders.successful_execution().probe_results
@@ -87,7 +88,14 @@ def test_route_table_and_probe_resolution_are_loaded_back(storage: Storage) -> N
         None,
         None,
         None,
+        None,
     ]
+    ambiguous = execution.probe_results[-1].capture
+    assert ambiguous is not None and ambiguous.failure is not None
+    assert (ambiguous.failure.value, ambiguous.candidates) == (
+        "ambiguous",
+        ("productId", "categoryId"),
+    )
     assert (execution.target_framework, execution.framework_outdated) == ("net8.0", True)
     assert (execution.primary_controller, execution.serving_controllers) == (
         "ProductController",

@@ -4,11 +4,17 @@
 students. A probe can capture a value (`body:<field>` or `location`), and later probes use it
 as `{name}` in their path or in string values of their body. Values are used as text; the
 body adaptation converts them to the model's types afterwards.
+
+A `body:<field>` capture takes the field of that exact name, then one differing only in
+case, then the single field whose normalized name (as in body matching) ends with the
+field's: `body:id` finds `userId`, `UserID` or `user_id`. Several such fields are never
+guessed between.
 """
 
 import json
 from urllib.parse import quote, urlsplit
 
+from hw_checker.adapters.docker_runner.body_adapter import normalize_name
 from hw_checker.adapters.docker_runner.http_response import HttpResponse
 from hw_checker.domain import CaptureFailure, CaptureResult, ProbeCapture
 from hw_checker.domain.assignment import VARIABLE_USE
@@ -57,14 +63,30 @@ def _from_body(name: str, field: str, body: str) -> CaptureResult:
         return CaptureResult(name=name, failure=CaptureFailure.NO_JSON)
     if not isinstance(data, dict):
         return CaptureResult(name=name, failure=CaptureFailure.NO_JSON)
-    key = field if field in data else next((k for k in data if k.lower() == field.lower()), None)
-    if key is None:
+    keys = _matching_keys(field, list(data))
+    if not keys:
         return CaptureResult(name=name, failure=CaptureFailure.FIELD_MISSING)
-    value = data[key]
-    text = _as_text(value)
+    if len(keys) > 1:
+        return CaptureResult(name=name, failure=CaptureFailure.AMBIGUOUS, candidates=tuple(keys))
+    (key,) = keys
+    text = _as_text(data[key])
     if text is None or len(text) > MAX_CAPTURED_CHARS:
-        return CaptureResult(name=name, failure=CaptureFailure.NOT_A_VALUE)
-    return CaptureResult(name=name, value=text)
+        return CaptureResult(name=name, failure=CaptureFailure.NOT_A_VALUE, source_field=key)
+    return CaptureResult(name=name, value=text, source_field=key)
+
+
+def _matching_keys(field: str, keys: list[str]) -> list[str]:
+    """The response keys for `field`: the exact one, else those equal ignoring case, else
+    those whose normalized name ends with the field's normalized name."""
+    if field in keys:
+        return [field]
+    same_case = [key for key in keys if key.lower() == field.lower()]
+    if same_case:
+        return same_case
+    wanted = normalize_name(field)
+    if not wanted:
+        return []
+    return [key for key in keys if normalize_name(key).endswith(wanted)]
 
 
 def _as_text(value: object) -> str | None:

@@ -109,7 +109,7 @@ def successful_execution() -> ExecutionResult:
                 controller="ProductController",
                 sent_body='{"name":"שולחן","price":250,"sku":"probe-sku"}',
                 response_excerpt='{"id":7,"name":"שולחן"}',
-                capture=CaptureResult(name="productId", value="7"),
+                capture=CaptureResult(name="productId", value="7", source_field="productId"),
                 body_adaptation=BodyAdaptation(
                     adapted=True,
                     model="Product",
@@ -143,6 +143,16 @@ def successful_execution() -> ExecutionResult:
                 passed=False,
                 route_resolution=RouteResolution.DEPENDENCY_MISSING,
                 capture=CaptureResult(name="stock", failure=CaptureFailure.NOT_SENT),
+            ),
+            ProbeResult(
+                probe=probe("/api/products", 200),
+                actual_status=200,
+                passed=True,
+                capture=CaptureResult(
+                    name="anyId",
+                    failure=CaptureFailure.AMBIGUOUS,
+                    candidates=("productId", "categoryId"),
+                ),
             ),
         ),
         primary_controller="ProductController",

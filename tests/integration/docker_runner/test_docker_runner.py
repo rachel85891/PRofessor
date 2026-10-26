@@ -446,7 +446,9 @@ def test_chained_create_read_update_login_delete_scenario(
         ("DELETE", "/api/users/3", 204),
         ("GET", "/api/users/3", 404),
     ], describe(result)
-    assert result.probe_results[0].capture == CaptureResult(name="userId", value="3")
+    assert result.probe_results[0].capture == CaptureResult(
+        name="userId", value="3", source_field="id"
+    )
     assert evaluate(CHAINED_PROBES, repo, result) == ((), ())
     assert_nothing_left(engine)
 
