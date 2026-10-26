@@ -144,6 +144,27 @@ def test_non_mapping_yaml_raises_naming_the_file(tmp_path: Path) -> None:
         load_settings(config_path=config_path, env_path=tmp_path / ".env")
 
 
+def test_repo_config_sets_the_git_retries(tmp_path: Path) -> None:
+    from hw_checker.config.settings import DEFAULT_CONFIG_PATH
+
+    git = load_settings(config_path=DEFAULT_CONFIG_PATH, env_path=tmp_path / ".env").git
+
+    assert (git.network_retries, git.retry_backoff_seconds) == (2, 3)
+
+
+@pytest.mark.parametrize(
+    ("yaml", "field"),
+    [
+        ("git:\n  network_retries: -1\n", r"git\.network_retries"),
+        ("git:\n  network_retries: 11\n", r"git\.network_retries"),
+        ("git:\n  retry_backoff_seconds: -0.5\n", r"git\.retry_backoff_seconds"),
+    ],
+)
+def test_git_retry_settings_are_validated(tmp_path: Path, yaml: str, field: str) -> None:
+    with pytest.raises(ConfigurationError, match=field):
+        _load(tmp_path, yaml)
+
+
 def test_roster_defaults_apply(tmp_path: Path) -> None:
     roster = _load(tmp_path, "").roster
 
@@ -199,6 +220,7 @@ def test_git_defaults_apply(tmp_path: Path) -> None:
     assert git.timeout_seconds == 120
     assert git.commit_author_name is None
     assert git.commit_author_email is None
+    assert (git.network_retries, git.retry_backoff_seconds) == (2, 3)
 
 
 def test_git_values_load_from_yaml(tmp_path: Path) -> None:

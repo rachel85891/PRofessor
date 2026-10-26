@@ -39,6 +39,11 @@ git:
   # schannel because on this Windows machine the OpenSSL backend hangs during the TLS
   # handshake with GitHub.
   ssl_backend: schannel
+  # A clone or fetch that fails with a transient network error (the host cannot be resolved
+  # or reached, a server error, an interrupted transfer) is retried this many times, this
+  # many seconds apart. A missing repo or denied access is never retried.
+  network_retries: 2
+  retry_backoff_seconds: 3
   # The author of fix commits (commit_author_name, commit_author_email) is a personal
   # identity, so it is set in .env, not here. See .env.example.
 
