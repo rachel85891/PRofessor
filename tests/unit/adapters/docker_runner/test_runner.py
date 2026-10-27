@@ -553,6 +553,20 @@ def test_without_routes_probes_go_to_their_first_path(repo: Path, tmp_path: Path
     )
 
 
+def test_code_facts_are_recorded_on_the_result(repo: Path, tmp_path: Path) -> None:
+    (repo / "Controllers" / "ProductsController.cs").write_text(
+        "public class User : ControllerBase\n{\n    public string email { get; set; }\n}\n",
+        encoding="utf-8",
+    )
+    engine = FakeEngine(exit_codes={"build": 1}, logs_by_kind={"build": BUILD_ERROR})
+
+    result = runner(engine).execute(request(repo, tmp_path))
+
+    assert result.code_facts is not None
+    assert [(t.name, t.is_controller) for t in result.code_facts.types] == [("User", True)]
+    assert [p.name for p in result.code_facts.properties] == ["email"]
+
+
 def test_project_without_routes_records_an_empty_table(repo: Path, tmp_path: Path) -> None:
     result = runner(FakeEngine()).execute(request(repo, tmp_path))
 

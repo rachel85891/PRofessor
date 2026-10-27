@@ -334,6 +334,7 @@ def test_older_execution_without_controller_fields_still_loads() -> None:
 
     assert (execution.primary_controller, execution.serving_controllers) == (None, ())
     assert (execution.target_framework, execution.framework_outdated) == (None, False)
+    assert execution.code_facts is None
 
 
 def test_only_a_resolved_probe_has_a_controller() -> None:

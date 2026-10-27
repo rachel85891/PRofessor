@@ -27,6 +27,7 @@ from hw_checker.adapters.docker_runner.archive import (
 from hw_checker.adapters.docker_runner.body_adapter import adapt_body
 from hw_checker.adapters.docker_runner.body_models import ProjectSources
 from hw_checker.adapters.docker_runner.classification import RunnerStep, StepOutcome, classify
+from hw_checker.adapters.docker_runner.code_facts import extract_code_facts
 from hw_checker.adapters.docker_runner.discovery import (
     DiscoveryFailure,
     WebProject,
@@ -292,6 +293,7 @@ class _Execution:
         self.framework_images = self.config.framework_images[discovery.framework]
         plan = plan_path_fixes(self.request.working_copy, discovery.folder)
         self.routes = extract_route_table(self.request.working_copy, discovery.folder)
+        code_facts = extract_code_facts(self.request.working_copy, discovery.folder)
         self.controllers = choose_primary_controller(self.request.probes, self.routes)
         self.project_sources = ProjectSources.read(
             self.request.working_copy, discovery.folder, discovery.nullable
@@ -303,6 +305,7 @@ class _Execution:
             update={
                 "path_rewrites": plan.rewrites,
                 "routes": self.routes,
+                "code_facts": code_facts,
                 "primary_controller": self.controllers.primary,
                 "serving_controllers": self.controllers.serving,
                 **framework,
