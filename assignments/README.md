@@ -56,6 +56,8 @@ Unknown fields are rejected, so a typo such as `chek` is reported instead of bei
 | `path` | yes | Starts with `/`, for example `/api/products/1`. |
 | `path_alternatives` | no | Other paths a correct solution may use, each starting with `/`. The task does not fix route names, so one student writes `/api/users` and another `/api/user`. The checker reads the routes declared in the student's code and sends the probe to the first of `path`, then `path_alternatives`, that the code declares for the probe's method. If none is declared, the probe is not sent and the requirement is "not evaluated" (reason `route_not_found`), with the student's routes shown to the reviewer. |
 | `body` | no | The request body: either written as YAML fields (converted to JSON) or as JSON text in quotes. It says what the request *means*; the checker adapts it to each student's own model (see "Bodies and student models" below). |
+| `expect_json` | no | The shape the JSON response must have: `object` or `array_of_objects`. A list of plain values (such as the template's `"value1", "value2"`) where objects are expected is reported with its own message. |
+| `expect_values` | no | Values that must appear anywhere in the JSON response, for example `["probe.user@example.com"]`; they may use `{name}`. Text is compared ignoring upper and lower case and surrounding spaces, numbers as their text. |
 | `capture` | no | A value to take from the response for later probes: `capture: {name: userId, from: body:id}` (a top-level field of the JSON response, upper and lower case ignored; see "Which field a capture takes" below) or `from: location` (the last part of the `Location` header). Later probes use it as `{userId}` in their `path`, `path_alternatives` or body text. |
 | `expected_status` | yes | The status code a correct solution returns, 100–599. |
 | `allowed_statuses` | no | All status codes that count as correct. Must include `expected_status`. If omitted, only `expected_status` counts. |
@@ -185,6 +187,8 @@ When route names are up to the student, list the other names as `path_alternativ
 ```
 
 A `{name}` must be captured by an earlier probe of the same file, or the file is rejected. Inside `[...]` (and at the very start of a value) YAML reads `{` as the start of a mapping, so quote such paths there: `["/api/user/{userId}"]`; a plain `path: /api/users/{userId}` needs no quotes. If a capture fails (the response has no JSON, no such field, or no `Location`), the probes that need it are not sent, and their requirements are "not evaluated" (reason `dependency_failed`), never failed; the probe that could not capture is judged on its own. A captured value is text: in a body, a field the student's model declares as a number receives it as a number.
+
+**Checking what a response contains.** A status alone does not show that the data is right, so a probe can also check the response: `expect_json` its shape, `expect_values` values that must appear in it. A probe passes only when both its status and its content are right; a content problem is reported in the same finding, naming the shape or the missing values. Content that cannot be judged is never a finding: a response cut at the size limit, an empty list where objects are expected, or no JSON body on an accepted error status.
 
 **Which field a capture takes.** Students name the id of a new record differently, so `from: body:id` looks for it in this order:
 
