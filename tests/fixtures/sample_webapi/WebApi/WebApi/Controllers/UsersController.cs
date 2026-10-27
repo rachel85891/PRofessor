@@ -64,7 +64,7 @@ namespace WebApi.Controllers
             User? user = ReadUsers().FirstOrDefault(
                 u => u.UserName == request.UserName && u.Password == request.Password);
             if (user == null)
-                return Unauthorized();
+                return NoContent();
             return Ok(user);
         }
 

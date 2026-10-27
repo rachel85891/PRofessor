@@ -105,7 +105,7 @@ def test_sample_api_writes_and_reads_its_text_file_and_answers_every_probe(
         ("POST", "/api/users", 201),
         ("GET", "/api/users/3", 200),  # the POST was written to users.txt and read back
         ("POST", "/api/users/login", 200),  # login with the created user
-        ("POST", "/api/users/login", 401),
+        ("POST", "/api/users/login", 204),  # wrong password: NoContent
         ("PUT", "/api/users/3", 204),
         ("DELETE", "/api/users/3", 204),
         ("GET", "/api/users/3", 404),
@@ -442,7 +442,7 @@ def test_chained_create_read_update_login_delete_scenario(
         ("GET", "/api/users/3", 200),
         ("PUT", "/api/users/3", 204),
         ("POST", "/api/users/login", 200),
-        ("POST", "/api/users/login", 401),
+        ("POST", "/api/users/login", 204),
         ("DELETE", "/api/users/3", 204),
         ("GET", "/api/users/3", 404),
     ], describe(result)

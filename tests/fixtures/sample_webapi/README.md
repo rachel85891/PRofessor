@@ -6,7 +6,7 @@ student projects. It contains no student code, names or data.
 - Layout like a Visual Studio solution: `WebApi/WebApi.slnx` and the project in
   `WebApi/WebApi/` (net10.0, one NuGet package: `Microsoft.AspNetCore.OpenApi`).
 - `UsersController` with GET all, GET by id (404 when missing), POST (201 with
-  `CreatedAtAction`), PUT (204), DELETE (204) and `POST login` (200, or 401).
+  `CreatedAtAction`), PUT (204), DELETE (204) and `POST login` (200, or 204 `NoContent` for wrong details, as hw01 requires).
 - Users are stored in `users.txt` next to the project, one JSON object per line, opened
   with the relative path `"users.txt"` through `File.ReadLines`, `File.AppendAllText` and
   `File.WriteAllLines`, so the app needs its project folder as the working directory and

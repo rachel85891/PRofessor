@@ -50,7 +50,7 @@ namespace UsersApi.Controllers
         {
             User? user = Load().FirstOrDefault(
                 u => u.UserName == credentials.UserName && u.Password == credentials.Password);
-            return user == null ? Unauthorized() : Ok(user);
+            return user == null ? NoContent() : Ok(user);
         }
 
         [HttpPut("{userId}")]
