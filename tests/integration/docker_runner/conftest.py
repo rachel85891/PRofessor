@@ -116,7 +116,7 @@ SAMPLE_PROBES = (
     probe("hw01-r3", HttpMethod.POST, "/api/users", 201, NEW_USER),
     probe("hw01-r3", HttpMethod.GET, "/api/users/3", 200),
     probe("hw01-r4", HttpMethod.POST, "/api/users/login", 200, user_body("newuser", TEST_PASSWORD)),
-    probe("hw01-r4", HttpMethod.POST, "/api/users/login", 401, user_body("newuser", "wrong")),
+    probe("hw01-r4", HttpMethod.POST, "/api/users/login", 204, user_body("newuser", "wrong")),
     probe("hw01-r5", HttpMethod.PUT, "/api/users/3", 204, NEW_USER.replace("New", "Renamed")),
     probe("hw01-r5", HttpMethod.DELETE, "/api/users/3", 204),
     probe("hw01-r5", HttpMethod.GET, "/api/users/3", 404),
@@ -282,7 +282,7 @@ CHAINED_PROBES = (
         NEW_USER.replace("New", "Renamed"),
     ),
     probe("hw01-r4", HttpMethod.POST, "/api/users/login", 200, user_body("newuser", TEST_PASSWORD)),
-    probe("hw01-r4", HttpMethod.POST, "/api/users/login", 401, user_body("newuser", "wrong")),
+    probe("hw01-r4", HttpMethod.POST, "/api/users/login", 204, user_body("newuser", "wrong")),
     probe("hw01-r5", HttpMethod.DELETE, "/api/users/{userId}", 204),
     probe("hw01-r5", HttpMethod.GET, "/api/users/{userId}", 404),
 )

@@ -29,6 +29,7 @@ from hw_checker.domain import (
     RepoRunResult,
     RepoRunStatus,
     RepoTarget,
+    ResponseShape,
     ReviewDecision,
     ReviewOutcome,
     RouteResolution,
@@ -110,6 +111,8 @@ def successful_execution() -> ExecutionResult:
                 sent_body='{"name":"שולחן","price":250,"sku":"probe-sku"}',
                 response_excerpt='{"id":7,"name":"שולחן"}',
                 capture=CaptureResult(name="productId", value="7", source_field="productId"),
+                response_shape=ResponseShape.OBJECT,
+                missing_values=("שולחן לבן",),
                 body_adaptation=BodyAdaptation(
                     adapted=True,
                     model="Product",
@@ -153,6 +156,16 @@ def successful_execution() -> ExecutionResult:
                     failure=CaptureFailure.AMBIGUOUS,
                     candidates=("productId", "categoryId"),
                 ),
+                response_shape=ResponseShape.ARRAY_OF_SCALARS,
+            ),
+            ProbeResult(
+                probe=probe("/api/products", 201),
+                actual_status=201,
+                passed=True,
+                capture=CaptureResult(
+                    name="paid", failure=CaptureFailure.NOT_AN_IDENTIFIER, source_field="isPaid"
+                ),
+                response_shape=ResponseShape.CUT,
             ),
         ),
         primary_controller="ProductController",

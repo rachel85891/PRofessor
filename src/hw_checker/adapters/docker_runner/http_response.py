@@ -17,19 +17,29 @@ _BLANK_LINE = re.compile(r"\r?\n\r?\n")
 
 @dataclass(frozen=True)
 class HttpResponse:
-    """One response: the status, the header values by lower-case name, and the body text."""
+    """One response: the status, the header values by lower-case name, and the body text.
+
+    `truncated` is True when the sidecar's output reached the size limit, so the body may
+    be cut short.
+    """
 
     status: int
     headers: dict[str, str] = field(default_factory=dict)
     body: str = ""
+    truncated: bool = False
 
     def header(self, name: str) -> str | None:
         """The value of header `name`, ignoring case; None when it is absent."""
         return self.headers.get(name.lower())
 
 
-def parse_response(raw: str) -> HttpResponse | None:
-    """The final response in `raw`, skipping interim 1xx responses; None when there is none."""
+def parse_response(raw: str, limit: int | None = None) -> HttpResponse | None:
+    """The final response in `raw`, skipping interim 1xx responses; None when there is none.
+
+    With `limit` (the sidecar's byte limit), a response whose raw output reached it is
+    marked `truncated`.
+    """
+    truncated = limit is not None and len(raw.encode("utf-8")) >= limit
     text = raw
     while True:
         match = _STATUS_LINE.match(text)
@@ -42,7 +52,7 @@ def parse_response(raw: str) -> HttpResponse | None:
         if 100 <= status < 200 and _STATUS_LINE.match(rest):
             text = rest
             continue
-        return HttpResponse(status, _headers(head), rest)
+        return HttpResponse(status, _headers(head), rest, truncated)
 
 
 def excerpt(body: str, limit: int = EXCERPT_CHARS) -> str:

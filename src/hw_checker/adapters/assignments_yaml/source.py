@@ -258,6 +258,8 @@ def _probe_data(probe: ProbeEntry, requirement_id: str, assignment_id: str) -> d
         "capture": None
         if probe.capture is None
         else {"name": probe.capture.name, "source": probe.capture.source},
+        "expect_json": probe.expect_json,
+        "expect_values": probe.expect_values,
         "body": _body_text(probe.body),
         "expected_status": probe.expected_status,
         "allowed_statuses": probe.allowed_statuses,

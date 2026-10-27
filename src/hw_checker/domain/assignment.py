@@ -102,6 +102,13 @@ VARIABLE_USE = re.compile(r"\{(" + VARIABLE_NAME_PATTERN + r")\}")
 """`{name}` in a probe's path or body: a value captured by an earlier probe."""
 
 
+class ExpectedJson(StrEnum):
+    """The JSON shape a probe's response must have."""
+
+    OBJECT = "object"
+    ARRAY_OF_OBJECTS = "array_of_objects"
+
+
 class ProbeCapture(DomainModel):
     """A value a probe takes from its response, for later probes to use as `{name}`.
 
@@ -134,6 +141,9 @@ class HttpProbe(DomainModel):
     path: ProbePath
     path_alternatives: tuple[ProbePath, ...] = ()
     capture: ProbeCapture | None = None
+    expect_json: ExpectedJson | None = None
+    expect_values: tuple[NonBlankStr, ...] = ()
+    """Values (possibly with `{name}` variables) that must appear anywhere in the response."""
     body: str | None = None
     expected_status: HttpStatusCode
     allowed_statuses: tuple[HttpStatusCode, ...] = Field(default=(), validate_default=True)
@@ -148,7 +158,7 @@ class HttpProbe(DomainModel):
     def variables_used(self) -> tuple[str, ...]:
         """The `{name}` variables in the paths and body, each once, in order of appearance."""
         found: list[str] = []
-        for text in (*self.candidate_paths, self.body or ""):
+        for text in (*self.candidate_paths, self.body or "", *self.expect_values):
             found += [name for name in VARIABLE_USE.findall(text) if name not in found]
         return tuple(found)
 

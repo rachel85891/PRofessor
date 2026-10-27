@@ -97,7 +97,48 @@ PROBE_NO_ANSWER = MessageTemplate(
     en="{method} {path}: expected {expected}, no answer",
 )
 
+HTTP_PROBES_WRONG_ANSWER = MessageTemplate(
+    name="HTTP_PROBES_WRONG_ANSWER",
+    he="בקשות HTTP שלא החזירו את התשובה הצפויה:\n{probes}",
+    en="HTTP requests that did not return the expected answer:\n{probes}",
+)
+
+PROBE_WRONG_SHAPE = MessageTemplate(
+    name="PROBE_WRONG_SHAPE",
+    he="{method} {path}: צפוי {expected} ב-JSON, התקבל {actual}",
+    en="{method} {path}: expected {expected} in JSON, got {actual}",
+)
+
+PROBE_PLAIN_VALUES_LIST = MessageTemplate(
+    name="PROBE_PLAIN_VALUES_LIST",
+    he=(
+        "{method} {path}: הרשימה מחזירה ערכים פשוטים (למשל טקסט) במקום אובייקטים; "
+        "כנראה זה עדיין הקוד של תבנית הפרויקט"
+    ),
+    en=(
+        "{method} {path}: the list returns plain values (such as text) instead of objects; "
+        "this is probably still the project template's code"
+    ),
+)
+
+PROBE_MISSING_VALUES = MessageTemplate(
+    name="PROBE_MISSING_VALUES",
+    he="{method} {path}: התשובה אינה מכילה את {values}",
+    en="{method} {path}: the response does not contain {values}",
+)
+
 STATUS_SEPARATOR = MessageTemplate(name="STATUS_SEPARATOR", he=" או ", en=" or ")
+
+SHAPE_NAMES: dict[str, Localized] = {
+    "object": Localized(he="אובייקט", en="an object"),
+    "array_of_objects": Localized(he="רשימה של אובייקטים", en="a list of objects"),
+    "array_of_scalars": Localized(he="רשימה של ערכים פשוטים", en="a list of plain values"),
+    "empty_array": Localized(he="רשימה ריקה", en="an empty list"),
+    "scalar": Localized(he="ערך בודד", en="a single value"),
+    "not_json": Localized(he="תשובה שאינה JSON", en="a response that is not JSON"),
+    "empty": Localized(he="תשובה ריקה", en="an empty response"),
+}
+"""How a response shape is named inside the messages above."""
 
 ALL_TEMPLATES: tuple[MessageTemplate, ...] = (
     FILE_MISSING,
@@ -110,5 +151,9 @@ ALL_TEMPLATES: tuple[MessageTemplate, ...] = (
     HTTP_PROBES_FAILED,
     PROBE_WRONG_STATUS,
     PROBE_NO_ANSWER,
+    HTTP_PROBES_WRONG_ANSWER,
+    PROBE_WRONG_SHAPE,
+    PROBE_PLAIN_VALUES_LIST,
+    PROBE_MISSING_VALUES,
     STATUS_SEPARATOR,
 )

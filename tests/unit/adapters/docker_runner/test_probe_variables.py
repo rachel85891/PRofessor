@@ -5,6 +5,7 @@ from hw_checker.adapters.docker_runner.probe_variables import (
     capture_value,
     fill_body,
     fill_path,
+    fill_text,
     not_sent,
 )
 from hw_checker.domain import CaptureFailure, CaptureResult, ProbeCapture
@@ -124,3 +125,41 @@ def test_values_are_filled_into_json_strings_escaped() -> None:
     assert fill_body('{"id":"{userId}","note":"{quote}"}', variables) == (
         '{"id":"3","note":"say \\"hi\\""}'
     )
+
+
+@pytest.mark.parametrize(
+    ("text", "value"),
+    [
+        ('{"userId":7}', "7"),
+        ('{"userId":"7"}', "7"),
+        (
+            '{"userId":"3f2504e0-4f89-11d3-9a0c-0305e82c3301"}',
+            "3f2504e0-4f89-11d3-9a0c-0305e82c3301",
+        ),
+    ],
+)
+def test_a_leniently_found_field_is_taken_when_it_holds_an_identifier(
+    text: str, value: str
+) -> None:
+    captured = capture_value(FROM_ID, body(text))
+
+    assert (captured.value, captured.source_field) == (value, "userId")
+
+
+@pytest.mark.parametrize(
+    "text", ['{"isPaid":false}', '{"isPaid":true,"name":"x"}', '{"userId":"abc"}', '{"userId":2.5}']
+)
+def test_a_leniently_found_field_that_is_not_an_identifier_is_refused(text: str) -> None:
+    captured = capture_value(FROM_ID, body(text))
+
+    assert captured.failure is CaptureFailure.NOT_AN_IDENTIFIER
+    assert captured.source_field is not None and captured.value is None
+
+
+def test_an_exact_or_same_case_field_is_taken_whatever_it_holds() -> None:
+    assert capture_value(FROM_ID, body('{"id":"abc"}')).value == "abc"
+    assert capture_value(FROM_ID, body('{"ID":"user-7"}')).value == "user-7"
+
+
+def test_values_are_filled_into_text_as_they_are() -> None:
+    assert fill_text("{name} <{userId}>", {"name": "a b/c", "userId": "3"}) == "a b/c <3>"

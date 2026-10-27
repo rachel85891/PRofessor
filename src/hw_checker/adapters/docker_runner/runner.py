@@ -47,8 +47,10 @@ from hw_checker.adapters.docker_runner.probe_variables import (
     capture_value,
     fill_body,
     fill_path,
+    fill_text,
     not_sent,
 )
+from hw_checker.adapters.docker_runner.response_content import missing_values, response_shape
 from hw_checker.adapters.docker_runner.routes import (
     ControllerChoice,
     ProbeRoute,
@@ -70,6 +72,7 @@ from hw_checker.domain import (
     HttpProbe,
     PathRewrite,
     ProbeResult,
+    ResponseShape,
     RouteResolution,
     RouteTable,
     StepStatus,
@@ -526,6 +529,13 @@ class _Execution:
         body, adaptation = self._probe_body(probe, route)
         response, error = self._http_request(sidecar, probe.method.value, base_url + path, body)
         status = None if response is None else response.status
+        shape = None if response is None else response_shape(response)
+        expected = [fill_text(value, self.variables) for value in probe.expect_values]
+        absent = (
+            ()
+            if response is None or shape is ResponseShape.CUT
+            else missing_values(response.body, expected)
+        )
         captured = None if probe.capture is None else capture_value(probe.capture, response)
         if captured is not None and captured.value is not None:
             self.variables[captured.name] = captured.value
@@ -541,6 +551,8 @@ class _Execution:
             body_adaptation=adaptation,
             response_excerpt="" if response is None else excerpt(response.body),
             capture=captured,
+            response_shape=shape,
+            missing_values=absent,
         )
 
     def _probe_body(
@@ -584,7 +596,7 @@ class _Execution:
         curl += ["--", url]
         script = f'set -o pipefail; curl "$@" | head -c {self.config.max_response_bytes}'
         result = self.engine.exec(sidecar, ("sh", "-c", script, "sh", *curl))
-        response = parse_response(result.output)
+        response = parse_response(result.output, self.config.max_response_bytes)
         if response is not None:
             # A body cut by `head` makes curl exit with a write error; the response is fine.
             return response, ""

@@ -16,6 +16,7 @@ from hw_checker.domain import (
     FailureKind,
     HttpMethod,
     HttpProbe,
+    ResponseShape,
     RouteResolution,
     StepStatus,
 )
@@ -468,6 +469,39 @@ def test_a_captured_id_is_used_by_later_probes(repo: Path, tmp_path: Path) -> No
     assert put.sent_body == '{"id":7,"userName":"renamed"}'
     urls = [command[command.index("--") + 1] for command in engine.exec_commands]
     assert sum(url.endswith("/api/users/7") for url in urls) == 2
+
+
+def test_response_shape_and_missing_values_are_recorded(repo: Path, tmp_path: Path) -> None:
+    (repo / "Controllers" / "ProductsController.cs").write_text(CHAIN_CONTROLLER, encoding="utf-8")
+    read = chained(
+        HttpMethod.GET,
+        "/api/users/{userId}",
+        expect_json="object",
+        expect_values=["newuser", "{userId}", "probe.user@example.com"],
+    )
+    engine = FakeEngine(
+        probe_responses={
+            ("POST", "/api/users"): (201, {}, '{"id":7,"userName":"newuser"}'),
+            ("GET", "/api/users/7"): (200, {}, '{"id":7,"userName":"NewUser"}'),
+        }
+    )
+
+    result = runner(engine).execute(request(repo, tmp_path, probes=(CHAIN[0], read)))
+
+    post, got = result.probe_results
+    assert (post.response_shape, post.missing_values) == (ResponseShape.OBJECT, ())
+    assert got.response_shape is ResponseShape.OBJECT
+    assert got.missing_values == ("probe.user@example.com",)
+
+
+def test_a_cut_response_has_no_missing_values(repo: Path, tmp_path: Path) -> None:
+    looking = chained(HttpMethod.GET, "/api/products", expect_values=["anything"])
+    engine = FakeEngine(probe_responses={("GET", "/api/products"): (200, {}, "x" * 70_000)})
+
+    result = runner(engine).execute(request(repo, tmp_path, probes=(looking,)))
+
+    (probe_result,) = result.probe_results
+    assert (probe_result.response_shape, probe_result.missing_values) == (ResponseShape.CUT, ())
 
 
 def test_a_failed_capture_stops_the_probes_that_need_it(repo: Path, tmp_path: Path) -> None:

@@ -104,6 +104,26 @@ def test_probe_capture_is_validated(capture: dict[str, str]) -> None:
         builders.probe(capture=capture)
 
 
+def test_probe_content_expectations() -> None:
+    probe = builders.probe(
+        path="/api/users/{userId}",
+        expect_json="array_of_objects",
+        expect_values=("probe.user@example.com", "{email}"),
+    )
+
+    assert probe.expect_json is not None and probe.expect_json.value == "array_of_objects"
+    assert probe.variables_used == ("userId", "email")
+    assert builders.probe().expect_json is None and builders.probe().expect_values == ()
+
+
+@pytest.mark.parametrize(
+    "overrides", [{"expect_json": "array"}, {"expect_json": "list"}, {"expect_values": ("  ",)}]
+)
+def test_probe_content_expectations_are_validated(overrides: dict[str, object]) -> None:
+    with pytest.raises(ValidationError):
+        builders.probe(**overrides)
+
+
 def test_probe_rejects_unknown_method() -> None:
     with pytest.raises(ValidationError):
         builders.probe(method="FETCH")

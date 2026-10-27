@@ -8,7 +8,14 @@ from typing import Protocol
 import pytest
 
 from hw_checker.adapters.storage_sqlite import SqlStorage, migrate
-from hw_checker.domain import AssignmentResult, ProposalStatus, ReviewOutcome, Verdict
+from hw_checker.domain import (
+    AssignmentResult,
+    CaptureFailure,
+    ProposalStatus,
+    ResponseShape,
+    ReviewOutcome,
+    Verdict,
+)
 from hw_checker.domain.errors import NotFoundError
 from hw_checker.ports import FindingRepository, ProposalRepository, RunRepository
 from tests.fakes.storage import InMemoryStorage
@@ -79,6 +86,7 @@ def test_route_table_and_probe_resolution_are_loaded_back(storage: Storage) -> N
         "route_not_found",
         "dependency_missing",
         "unavailable",
+        "unavailable",
     ]
     assert execution.probe_results[0].sent_path == "/api/product"
     assert execution.probe_results == builders.successful_execution().probe_results
@@ -89,8 +97,20 @@ def test_route_table_and_probe_resolution_are_loaded_back(storage: Storage) -> N
         None,
         None,
         None,
+        None,
     ]
-    ambiguous = execution.probe_results[-1].capture
+    assert [r.response_shape for r in execution.probe_results] == [
+        ResponseShape.OBJECT,
+        None,
+        None,
+        None,
+        ResponseShape.ARRAY_OF_SCALARS,
+        ResponseShape.CUT,
+    ]
+    assert execution.probe_results[0].missing_values == ("שולחן לבן",)
+    identifier = execution.probe_results[-1].capture
+    assert identifier is not None and identifier.failure is CaptureFailure.NOT_AN_IDENTIFIER
+    ambiguous = execution.probe_results[-2].capture
     assert ambiguous is not None and ambiguous.failure is not None
     assert (ambiguous.failure.value, ambiguous.candidates) == (
         "ambiguous",

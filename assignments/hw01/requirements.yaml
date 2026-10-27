@@ -1,20 +1,11 @@
 # Assignment 1: users API with text-file storage.
 # Approved by the developer on 2026-10-25 as a starting point; to be finalized with the lecturer.
+# Updated by the developer on 2026-10-26 (lecturer input): DELETE not required, PUT required, wrong login returns 204, content checks added.
 # taught_techniques: to be filled from the course slides.
 id: hw01
 order: 1
 title: Users API with text-file storage
 requirements:
-  - id: hw01-list
-    kind: http
-    title: GET returns the list of users
-    severity: major
-    probes:
-      - method: GET
-        path: /api/users
-        path_alternatives: [/api/user, /users, /user, /api/login]
-        expected_status: 200
-
   - id: hw01-get-missing
     kind: http
     title: GET by id of a user that does not exist does not return 200
@@ -52,6 +43,7 @@ requirements:
           password: "123456"
         expected_status: 201
         allowed_statuses: [201, 200]
+        expect_json: object
         capture:
           name: user_id
           from: body:id
@@ -65,6 +57,19 @@ requirements:
         path: "/api/users/{user_id}"
         path_alternatives: ["/api/user/{user_id}", "/users/{user_id}", "/user/{user_id}", "/api/login/{user_id}"]
         expected_status: 200
+        expect_json: object
+        expect_values: ["probe.user@example.com"]
+
+  - id: hw01-list
+    kind: http
+    title: GET returns the list of users
+    severity: major
+    probes:
+      - method: GET
+        path: /api/users
+        path_alternatives: [/api/user, /users, /user, /api/login]
+        expected_status: 200
+        expect_json: array_of_objects
 
   - id: hw01-login
     kind: http
@@ -94,7 +99,7 @@ requirements:
     title: Login with a wrong password does not succeed
     severity: minor
     allowed_alternatives:
-      - 401, 404 and 400 are all acceptable
+      - The requirement is 204; 401, 404 and 400 are accepted as "did not succeed" but are marked by hw01-login-wrong-204
     probes:
       - method: POST
         path: /api/users/login
@@ -109,13 +114,33 @@ requirements:
         body:
           userName|email|name: probe.user@example.com
           password: "999999"
-        expected_status: 401
-        allowed_statuses: [401, 404, 400]
+        expected_status: 204
+        allowed_statuses: [204, 401, 404, 400]
+
+  - id: hw01-login-wrong-204
+    kind: http
+    title: Login with a wrong password returns 204, as the assignment requires
+    severity: minor
+    probes:
+      - method: POST
+        path: /api/users/login
+        path_alternatives:
+          - /api/user/login
+          - /users/login
+          - /user/login
+          - /api/login/login
+          - /api/users/signin
+          - /api/user/signin
+          - /users/loginpost
+        body:
+          userName|email|name: probe.user@example.com
+          password: "999999"
+        expected_status: 204
 
   - id: hw01-update
     kind: http
     title: PUT updates a user
-    severity: minor
+    severity: major
     allowed_alternatives:
       - Returning 200 instead of 204 is acceptable
     probes:
@@ -128,22 +153,3 @@ requirements:
           password: "123456"
         expected_status: 204
         allowed_statuses: [204, 200]
-
-  - id: hw01-delete
-    kind: http
-    title: DELETE removes a user
-    severity: minor
-    allowed_alternatives:
-      - Returning 200 instead of 204 is acceptable
-      - After deleting, 404 or 204 for the same id is acceptable
-    probes:
-      - method: DELETE
-        path: "/api/users/{user_id}"
-        path_alternatives: ["/api/user/{user_id}", "/users/{user_id}", "/user/{user_id}", "/api/login/{user_id}"]
-        expected_status: 204
-        allowed_statuses: [204, 200]
-      - method: GET
-        path: "/api/users/{user_id}"
-        path_alternatives: ["/api/user/{user_id}", "/users/{user_id}", "/user/{user_id}", "/api/login/{user_id}"]
-        expected_status: 404
-        allowed_statuses: [404, 204]
