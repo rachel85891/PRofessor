@@ -126,6 +126,9 @@ class CaptureFailure(StrEnum):
     NO_LOCATION = "no_location"
     AMBIGUOUS = "ambiguous"
     """Several fields could hold the value (`userId` and `roleId` for `body:id`)."""
+    NOT_AN_IDENTIFIER = "not_an_identifier"
+    """A field found only by the "ends with" rule holds something other than an integer, a
+    string of digits or a GUID (`isPaid: false` for `body:id`), so it is not taken as an id."""
 
 
 class CaptureResult(DomainModel):
@@ -147,6 +150,20 @@ class CaptureResult(DomainModel):
         if (self.value is None) == (self.failure is None):
             raise ValueError("a capture has either a value or a failure")
         return self
+
+
+class ResponseShape(StrEnum):
+    """What a probe's response body holds, as far as content checks are concerned."""
+
+    OBJECT = "object"
+    ARRAY_OF_OBJECTS = "array_of_objects"
+    ARRAY_OF_SCALARS = "array_of_scalars"
+    EMPTY_ARRAY = "empty_array"
+    SCALAR = "scalar"
+    NOT_JSON = "not_json"
+    EMPTY = "empty"
+    CUT = "cut"
+    """The body reached the size limit, so its content cannot be judged."""
 
 
 class RouteResolution(StrEnum):
@@ -192,6 +209,10 @@ class ProbeResult(DomainModel):
     response_excerpt: str = Field(default="", max_length=MAX_RESPONSE_EXCERPT_CHARS)
     """The start of the response body, for the reviewer; it may hold student data."""
     capture: CaptureResult | None = None
+    response_shape: ResponseShape | None = None
+    """The shape of the full response body; None when there was no answer."""
+    missing_values: tuple[str, ...] = ()
+    """The probe's expected values (variables filled in) that the response lacks."""
 
     @property
     def body_mismatched(self) -> bool:

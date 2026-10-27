@@ -5,6 +5,7 @@ May depend on: the standard library and Pydantic only.
 
 from hw_checker.domain.assignment import (
     Assignment,
+    ExpectedJson,
     HttpMethod,
     HttpProbe,
     ParamValue,
@@ -28,6 +29,7 @@ from hw_checker.domain.execution import (
     PathNotRewrittenReason,
     PathRewrite,
     ProbeResult,
+    ResponseShape,
     RouteResolution,
     RouteTable,
     StepStatus,
@@ -87,6 +89,7 @@ __all__ = [
     "Evidence",
     "ExecutionRequest",
     "ExecutionResult",
+    "ExpectedJson",
     "FailureKind",
     "Finding",
     "FindingSource",
@@ -112,6 +115,7 @@ __all__ = [
     "RepoTarget",
     "Requirement",
     "RequirementKind",
+    "ResponseShape",
     "ReviewDecision",
     "ReviewOutcome",
     "RosterResult",

@@ -28,6 +28,8 @@ class ProbeEntry(_FileModel):
     path: str
     path_alternatives: list[str] = []
     capture: CaptureEntry | None = None
+    expect_json: str | None = None
+    expect_values: list[str] = []
     body: str | dict[str, Any] | list[Any] | None = None
     expected_status: int
     allowed_statuses: list[int] = []

@@ -206,6 +206,44 @@ def test_variable_used_before_it_is_captured_names_the_requirement(tmp_path: Pat
     )
 
 
+def test_content_expectations_load(tmp_path: Path) -> None:
+    expecting = CHAINED.replace(
+        "        path: /api/users/{userId}\n        expected_status: 200\n",
+        "        path: /api/users/{userId}\n        expected_status: 200\n"
+        "        expect_json: object\n        expect_values: [newuser, '{userId}']\n",
+    )
+
+    _, hw02 = load(tmp_path, {"_general": GENERAL, "hw02": expecting}).load_all()
+
+    read = hw02.requirements[1].http_probes[0]
+    assert read.expect_json is not None and read.expect_json.value == "object"
+    assert read.expect_values == ("newuser", "{userId}")
+
+
+def test_unknown_expected_shape_is_reported(tmp_path: Path) -> None:
+    broken = CHAINED.replace(
+        "        capture: {name: userId, from: body:id}\n",
+        "        capture: {name: userId, from: body:id}\n        expect_json: array\n",
+    )
+
+    message = problems_of(load(tmp_path, {"_general": GENERAL, "hw02": broken}))
+
+    assert "requirement 'hw02-r1'" in message and "expect_json" in message
+
+
+def test_expected_value_variable_used_before_capture_is_reported(tmp_path: Path) -> None:
+    early = CHAINED.replace(
+        "        capture: {name: userId, from: body:id}\n",
+        "        capture: {name: userId, from: body:id}\n        expect_values: ['{email}']\n",
+    )
+
+    message = problems_of(load(tmp_path, {"_general": GENERAL, "hw02": early}))
+
+    assert "requirement 'hw02-r1', probe 1: {email} is used before any probe captures it" in (
+        message
+    )
+
+
 def test_invalid_capture_source_is_reported(tmp_path: Path) -> None:
     broken = CHAINED.replace("from: body:id", "from: header:Location")
 
