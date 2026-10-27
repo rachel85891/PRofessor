@@ -1,5 +1,6 @@
 # General requirements, checked in every round together with assignments 1..N.
 # Approved by the developer on 2026-10-25 as a starting point; to be finalized with the lecturer.
+# Naming checks added by the developer on 2026-10-26 (all minor).
 id: _general
 order: 0
 title: General requirements
@@ -21,3 +22,33 @@ requirements:
     check: folder_exists
     params:
       path: Controllers
+  - id: gen-naming-types
+    kind: custom
+    title: Class and type names use PascalCase
+    severity: minor
+    check: pascal_case_types
+  - id: gen-naming-properties
+    kind: custom
+    title: Public properties use PascalCase
+    severity: minor
+    check: pascal_case_properties
+  - id: gen-naming-methods
+    kind: custom
+    title: Method names use PascalCase
+    severity: minor
+    check: pascal_case_methods
+  - id: gen-naming-locals
+    kind: custom
+    title: Local variables use camelCase
+    severity: minor
+    check: camel_case_locals
+  - id: gen-file-names
+    kind: custom
+    title: Each file is named after the type it declares, in PascalCase
+    severity: minor
+    check: file_matches_type
+  - id: gen-controller-suffix
+    kind: custom
+    title: Controller class names end with Controller
+    severity: minor
+    check: controller_suffix

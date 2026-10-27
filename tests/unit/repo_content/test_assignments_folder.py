@@ -18,7 +18,16 @@ def test_committed_assignments_folder_loads_general_and_hw01() -> None:
 
     assert [(a.id, a.order) for a in assignments] == [("_general", 0), ("hw01", 1)]
     general, hw01 = assignments
-    assert [r.id for r in general.requirements] == ["gen-build", "gen-controllers"]
+    assert [(r.id, r.severity.value) for r in general.requirements] == [
+        ("gen-build", "critical"),
+        ("gen-controllers", "minor"),
+        ("gen-naming-types", "minor"),
+        ("gen-naming-properties", "minor"),
+        ("gen-naming-methods", "minor"),
+        ("gen-naming-locals", "minor"),
+        ("gen-file-names", "minor"),
+        ("gen-controller-suffix", "minor"),
+    ]
     assert [(r.id, r.severity.value) for r in hw01.requirements] == [
         ("hw01-get-missing", "major"),
         ("hw01-create", "critical"),
