@@ -129,6 +129,79 @@ PROBE_MISSING_VALUES = MessageTemplate(
 
 STATUS_SEPARATOR = MessageTemplate(name="STATUS_SEPARATOR", he=" או ", en=" or ")
 
+NAMING_TYPES = MessageTemplate(
+    name="NAMING_TYPES",
+    he=(
+        "ב-C# שמות של מחלקות וטיפוסים נכתבים ב-PascalCase (אות ראשונה גדולה, בלי קו תחתון). "
+        "לדוגמה: {examples}. סך הכול: {count}."
+    ),
+    en=(
+        "In C#, class and type names are written in PascalCase (a capital first letter, no "
+        "underscores). For example: {examples}. Total: {count}."
+    ),
+)
+
+NAMING_PROPERTIES = MessageTemplate(
+    name="NAMING_PROPERTIES",
+    he="ב-C# מאפיינים ציבוריים נכתבים ב-PascalCase. לדוגמה: {examples}. סך הכול: {count}.",
+    en="In C#, public properties are written in PascalCase. For example: {examples}. "
+    "Total: {count}.",
+)
+
+NAMING_METHODS = MessageTemplate(
+    name="NAMING_METHODS",
+    he="ב-C# שמות של מתודות נכתבים ב-PascalCase. לדוגמה: {examples}. סך הכול: {count}.",
+    en="In C#, method names are written in PascalCase. For example: {examples}. Total: {count}.",
+)
+
+NAMING_LOCALS = MessageTemplate(
+    name="NAMING_LOCALS",
+    he=(
+        "ב-C# משתנים מקומיים נכתבים ב-camelCase (אות ראשונה קטנה). "
+        "לדוגמה: {examples}. סך הכול: {count}."
+    ),
+    en=(
+        "In C#, local variables are written in camelCase (a lowercase first letter). "
+        "For example: {examples}. Total: {count}."
+    ),
+)
+
+NAMING_FILES = MessageTemplate(
+    name="NAMING_FILES",
+    he=(
+        "ב-C# כל קובץ נקרא על שם הטיפוס שהוא מגדיר, ב-PascalCase. "
+        "לדוגמה: {examples}. סך הכול: {count}."
+    ),
+    en=(
+        "In C#, each file is named after the type it declares, in PascalCase. "
+        "For example: {examples}. Total: {count}."
+    ),
+)
+
+NAMING_CONTROLLER_SUFFIX = MessageTemplate(
+    name="NAMING_CONTROLLER_SUFFIX",
+    he=(
+        "ב-ASP.NET Core שם של מחלקת controller מסתיים ב-Controller. "
+        "לדוגמה: {examples}. סך הכול: {count}."
+    ),
+    en=(
+        "In ASP.NET Core, controller class names end with Controller. "
+        "For example: {examples}. Total: {count}."
+    ),
+)
+
+NAMING_EXAMPLE = MessageTemplate(
+    name="NAMING_EXAMPLE",
+    he="{name} → {suggestion} ({file}, שורה {line})",
+    en="{name} → {suggestion} ({file}, line {line})",
+)
+
+NAMING_EXAMPLE_NO_SUGGESTION = MessageTemplate(
+    name="NAMING_EXAMPLE_NO_SUGGESTION",
+    he="{name} ({file}, שורה {line})",
+    en="{name} ({file}, line {line})",
+)
+
 SHAPE_NAMES: dict[str, Localized] = {
     "object": Localized(he="אובייקט", en="an object"),
     "array_of_objects": Localized(he="רשימה של אובייקטים", en="a list of objects"),
@@ -156,4 +229,12 @@ ALL_TEMPLATES: tuple[MessageTemplate, ...] = (
     PROBE_PLAIN_VALUES_LIST,
     PROBE_MISSING_VALUES,
     STATUS_SEPARATOR,
+    NAMING_TYPES,
+    NAMING_PROPERTIES,
+    NAMING_METHODS,
+    NAMING_LOCALS,
+    NAMING_FILES,
+    NAMING_CONTROLLER_SUFFIX,
+    NAMING_EXAMPLE,
+    NAMING_EXAMPLE_NO_SUGGESTION,
 )

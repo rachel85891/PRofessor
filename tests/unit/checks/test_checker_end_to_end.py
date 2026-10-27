@@ -108,7 +108,16 @@ def test_checker_satisfies_the_port() -> None:
 
 
 def test_builtin_checks_are_registered() -> None:
-    assert CheckRegistry(builtin_checks()).check_names() == {"file_exists", "folder_exists"}
+    assert CheckRegistry(builtin_checks()).check_names() == {
+        "file_exists",
+        "folder_exists",
+        "pascal_case_types",
+        "pascal_case_properties",
+        "pascal_case_methods",
+        "camel_case_locals",
+        "file_matches_type",
+        "controller_suffix",
+    }
 
 
 def test_realistic_assignment_over_the_sample_api() -> None:

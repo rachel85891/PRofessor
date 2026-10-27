@@ -92,7 +92,7 @@ def _build_failure(
         return (deterministic_finding(check_input, message, (kind.value, "no detail")),)
     message = BUILD_FAILED.render(error=f"{error.code}: {error.text.strip()}")
     facts = (kind.value, error.code, error.path, str(error.line))
-    evidence = _evidence(check_input.repo_dir, error.path, error.line)
+    evidence = evidence_at(check_input.repo_dir, error.path, error.line)
     return (deterministic_finding(check_input, message, facts, evidence),)
 
 
@@ -113,7 +113,7 @@ def _run_failure(
     facts = (kind.value, crash.exception_type or "no exception type")
     evidence = None
     if crash.path is not None and crash.source_line is not None:
-        evidence = _evidence(check_input.repo_dir, crash.path, crash.source_line)
+        evidence = evidence_at(check_input.repo_dir, crash.path, crash.source_line)
     return (deterministic_finding(check_input, message, facts, evidence),)
 
 
@@ -142,8 +142,8 @@ def first_startup_crash(log: str) -> StartupCrash | None:
     )
 
 
-def _evidence(repo_dir: Path, relative_path: str, line: int) -> Evidence | None:
-    """Evidence only when the file and line really exist in the working copy."""
+def evidence_at(repo_dir: Path, relative_path: str, line: int) -> Evidence | None:
+    """Evidence only when the file and line really exist in the working copy, quoting it."""
     root = repo_dir.resolve()
     path = (root / relative_path).resolve()
     if not path.is_relative_to(root) or not path.is_file():

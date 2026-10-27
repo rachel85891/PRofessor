@@ -17,6 +17,7 @@ from hw_checker.domain import (
     CheckDescription,
     CheckParamDescription,
     Finding,
+    NotEvaluatedReason,
     ParamValue,
 )
 from hw_checker.domain.errors import CheckRegistrationError, NotFoundError
@@ -26,8 +27,9 @@ _SPEC_ATTRIBUTE = "__hw_checker_check__"
 _TYPE_NAMES: dict[object, str] = {str: "text", int: "integer", float: "number", bool: "true/false"}
 
 
-CheckFunction = Callable[..., tuple[Finding, ...]]
-"""A check: called with a `CheckInput` and its validated params model, returns findings."""
+CheckFunction = Callable[..., tuple[Finding, ...] | NotEvaluatedReason]
+"""A check: called with a `CheckInput` and its validated params model, returns findings, or
+why the requirement could not be evaluated (for example, no code facts were read)."""
 
 
 @dataclass(frozen=True)
