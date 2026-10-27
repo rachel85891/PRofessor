@@ -50,9 +50,12 @@ def test_naming_fixture_gives_exactly_the_four_expected_findings(
             "In C#, local variables are written in camelCase (a lowercase first letter). "
             "For example: FilePath → filePath (Controllers/User.cs, line 14). Total: 1."
         ),
+        # The controller's file follows its correct name, UserController, as the
+        # controller_suffix finding asks.
         "gen-file-names": (
             "In C#, each file is named after the type it declares, in PascalCase. For example: "
-            "loguser.cs → LogUser.cs (Models/loguser.cs, line 3). Total: 1."
+            "User.cs → UserController.cs (Controllers/User.cs, line 9); "
+            "loguser.cs → LogUser.cs (Models/loguser.cs, line 3). Total: 2."
         ),
         "gen-controller-suffix": (
             "In ASP.NET Core, controller class names end with Controller. For example: "

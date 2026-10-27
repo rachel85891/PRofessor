@@ -105,7 +105,8 @@ def _report(
     facts = _facts(check_input)
     if isinstance(facts, NotEvaluatedReason):
         return facts
-    violations = find(facts)
+    # A "fix" that leaves the name as it is would only confuse the student.
+    violations = [v for v in find(facts) if v.suggestion != v.name]
     if not violations:
         return ()
     examples = [_example(v) for v in violations[:MAX_EXAMPLES]]
@@ -169,20 +170,43 @@ def local_violations(facts: CodeFacts) -> list[Violation]:
     ]
 
 
+def correct_type_name(name: str, is_controller: bool) -> str | None:
+    """The name the type should have: in PascalCase and, for a controller, ending with
+    `Controller`; None when no sensible name can be computed."""
+    pascal = name if is_pascal_case(name) else pascal_suggestion(name)
+    if pascal is None:
+        return None
+    if is_controller and not pascal.endswith(CONTROLLER_SUFFIX):
+        return pascal + CONTROLLER_SUFFIX
+    return pascal
+
+
 def file_violations(facts: CodeFacts) -> list[Violation]:
-    lines = {(t.file_path, t.name): t.line for t in facts.types}
+    """A file that declares one type must be named after the type's correct name.
+
+    The type's own naming problems are reported by `pascal_case_types` and
+    `controller_suffix`; here the file is compared with the name the type should have, so
+    `UsersController.cs` holding `class usersController` is not reported twice.
+    """
+    types = {(t.file_path, t.name): t for t in facts.types}
     found: list[Violation] = []
     for file in facts.files:
         name = _file_name(file.file_path)
         if name == PROGRAM_FILE or len(file.types) != 1:
             continue
         (type_name,) = file.types
+        declared = types.get((file.file_path, type_name))
+        correct = correct_type_name(type_name, declared is not None and declared.is_controller)
         stem = name.removesuffix(".cs")
-        if stem == type_name and is_pascal_case(stem):
+        if correct is None:
+            if is_pascal_case(stem):
+                continue
+            suggestion = None
+        elif stem == correct:
             continue
-        wanted = type_name if is_pascal_case(type_name) else pascal_suggestion(type_name)
-        suggestion = None if wanted is None else f"{wanted}.cs"
-        line = lines.get((file.file_path, type_name), 1)
+        else:
+            suggestion = f"{correct}.cs"
+        line = declared.line if declared is not None else 1
         found.append(Violation(name, file.file_path, line, suggestion))
     return found
 

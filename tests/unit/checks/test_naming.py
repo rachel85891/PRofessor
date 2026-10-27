@@ -4,16 +4,24 @@ import pytest
 
 from hw_checker.checks.deterministic.naming import (
     NoParams,
+    Violation,
     camel_case_locals,
     camel_suggestion,
     controller_suffix,
+    controller_violations,
+    correct_type_name,
     file_matches_type,
+    file_violations,
     is_camel_case,
     is_pascal_case,
+    local_violations,
+    method_violations,
     pascal_case_methods,
     pascal_case_properties,
     pascal_case_types,
     pascal_suggestion,
+    property_violations,
+    type_violations,
 )
 from hw_checker.checks.registry import CheckFunction
 from hw_checker.domain import (
@@ -323,3 +331,124 @@ def test_without_code_facts_the_requirement_is_not_evaluated(
         controller_suffix,
     ):
         assert function(check_input, NoParams()) is reason
+
+
+# ---------------------------------------------------------------- files and correct type names
+
+
+def one_type_file(type_name: str, file_path: str, controller: bool) -> CodeFacts:
+    return CodeFacts(
+        types=(type_fact(type_name, file_path, 6, controller=controller),),
+        files=(FileFact(file_path=file_path, types=(type_name,)),),
+    )
+
+
+def test_a_wrongly_named_class_in_a_correctly_named_file_is_reported_once() -> None:
+    facts = one_type_file("usersController", "Controllers/UsersController.cs", controller=True)
+
+    assert run(file_matches_type, facts) == ()
+    assert (
+        "usersController → UsersController"
+        in only_finding(run(pascal_case_types, facts)).message_en
+    )
+    assert run(controller_suffix, facts) == ()
+
+
+def test_a_controller_without_the_suffix_in_a_file_with_it_is_reported_once() -> None:
+    facts = one_type_file("User", "Controllers/UserController.cs", controller=True)
+
+    assert run(file_matches_type, facts) == ()
+    assert (
+        "User → UserController (Controllers/UserController.cs, line 6)"
+        in only_finding(run(controller_suffix, facts)).message_en
+    )
+
+
+def test_a_file_named_after_neither_name_suggests_the_correct_one() -> None:
+    controller = one_type_file("UsersController", "Controllers/Users.cs", controller=True)
+    lowercase = one_type_file("loguser", "Models/loguser.cs", controller=False)
+    suffixless = one_type_file("User", "Controllers/User.cs", controller=True)
+
+    assert (
+        "Users.cs → UsersController.cs"
+        in only_finding(run(file_matches_type, controller)).message_en
+    )
+    assert "loguser.cs → Loguser.cs" in only_finding(run(file_matches_type, lowercase)).message_en
+    assert (
+        "User.cs → UserController.cs" in only_finding(run(file_matches_type, suffixless)).message_en
+    )
+
+
+@pytest.mark.parametrize(
+    ("name", "controller", "correct"),
+    [
+        ("User", False, "User"),
+        ("loguser", False, "Loguser"),
+        ("User", True, "UserController"),
+        ("usersController", True, "UsersController"),
+        ("first_name", False, "FirstName"),
+        ("_", False, None),
+    ],
+)
+def test_correct_type_name(name: str, controller: bool, correct: str | None) -> None:
+    assert correct_type_name(name, controller) == correct
+
+
+BROAD = CodeFacts(
+    types=(
+        type_fact("usersController", "Controllers/UsersController.cs", controller=True),
+        type_fact("User", "Controllers/UserController.cs", controller=True),
+        type_fact("Admin", "Controllers/Admin.cs", controller=True),
+        type_fact("loguser", "Models/loguser.cs"),
+        type_fact("ID", "Models/ID.cs"),
+        type_fact("_", "Models/_.cs"),
+        type_fact("Order", "Models/order.cs"),
+    ),
+    properties=(member("email"), member("ID"), member("first_name"), member("_x")),
+    methods=(member("getAll"), member("Main", owner="Program"), member("_")),
+    locals=(member("FilePath"), member("URL"), member("_cache"), member("x")),
+    files=tuple(
+        FileFact(file_path=path, types=(name,))
+        for name, path in (
+            ("usersController", "Controllers/UsersController.cs"),
+            ("User", "Controllers/UserController.cs"),
+            ("Admin", "Controllers/Admin.cs"),
+            ("loguser", "Models/loguser.cs"),
+            ("ID", "Models/ID.cs"),
+            ("_", "Models/_.cs"),
+            ("Order", "Models/order.cs"),
+        )
+    ),
+)
+
+
+def test_no_check_suggests_the_name_it_already_has() -> None:
+    finders = (
+        type_violations,
+        property_violations,
+        method_violations,
+        local_violations,
+        file_violations,
+        controller_violations,
+    )
+    violations: list[Violation] = [v for find in finders for v in find(BROAD)]
+
+    assert violations, "the broad sample must contain violations"
+    assert all(v.suggestion != v.name for v in violations), [
+        v for v in violations if v.suggestion == v.name
+    ]
+    for function in (
+        pascal_case_types,
+        pascal_case_properties,
+        pascal_case_methods,
+        camel_case_locals,
+        file_matches_type,
+        controller_suffix,
+    ):
+        outcome = run(function, BROAD)
+        assert isinstance(outcome, tuple)
+        for finding in outcome:
+            for example in finding.message_en.split("For example: ", 1)[1].split("; "):
+                if " → " in example:
+                    current, suggested = example.split(" (")[0].split(" → ")
+                    assert current != suggested, finding.message_en
