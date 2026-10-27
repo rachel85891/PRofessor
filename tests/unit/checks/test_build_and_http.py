@@ -15,6 +15,7 @@ from hw_checker.domain import (
     BodyFieldOutcome,
     CheckInput,
     ExecutionResult,
+    ExpectedJson,
     FailureKind,
     Finding,
     HttpMethod,
@@ -26,6 +27,7 @@ from hw_checker.domain import (
     ProbeResult,
     Requirement,
     RequirementKind,
+    ResponseShape,
     RouteResolution,
     Severity,
     StepStatus,
@@ -528,3 +530,218 @@ def test_http_finding_id_is_stable_and_depends_on_the_failure() -> None:
     c = _findings(evaluate_http(check_input(HTTP_REQUIREMENT, other)))[0].id
 
     assert a == b != c
+
+
+# ---------------------------------------------------------------- response content
+
+LIST = probe("/api/users", 200)
+LIST_OF_OBJECTS = LIST.model_copy(update={"expect_json": ExpectedJson.ARRAY_OF_OBJECTS})
+READ = probe("/api/users/3", 200).model_copy(
+    update={"expect_json": ExpectedJson.OBJECT, "expect_values": ("probe.user@example.com",)}
+)
+CONTENT_REQUIREMENT = Requirement(
+    id="hw01-r3",
+    title="Users API content",
+    severity=Severity.MAJOR,
+    kind=RequirementKind.HTTP,
+    http_probes=(LIST_OF_OBJECTS, READ),
+)
+
+
+def answered(
+    probe_: HttpProbe,
+    status: int,
+    shape: ResponseShape | None,
+    missing: tuple[str, ...] = (),
+) -> ProbeResult:
+    return ProbeResult(
+        probe=probe_,
+        actual_status=status,
+        passed=status in probe_.allowed_statuses,
+        response_shape=shape,
+        missing_values=missing,
+    )
+
+
+def content_outcome(*results: ProbeResult) -> tuple[Finding, ...] | NotEvaluatedReason:
+    return evaluate_http(
+        CheckInput(
+            repo_dir=Path("repo"),
+            assignment=Assignment(
+                id="hw01", order=1, title="Users", requirements=(CONTENT_REQUIREMENT,)
+            ),
+            requirement=CONTENT_REQUIREMENT,
+            execution=run_ok(*results),
+        )
+    )
+
+
+def test_content_that_fits_passes() -> None:
+    assert (
+        content_outcome(
+            answered(LIST_OF_OBJECTS, 200, ResponseShape.ARRAY_OF_OBJECTS),
+            answered(READ, 200, ResponseShape.OBJECT),
+        )
+        == ()
+    )
+
+
+def test_a_list_of_plain_values_is_named_as_template_code() -> None:
+    (finding,) = _findings(
+        content_outcome(
+            answered(LIST_OF_OBJECTS, 200, ResponseShape.ARRAY_OF_SCALARS),
+            answered(READ, 200, ResponseShape.OBJECT),
+        )
+    )
+
+    assert finding.message_en == (
+        "HTTP requests that did not return the expected answer:\n"
+        "GET /api/users: the list returns plain values (such as text) instead of objects; "
+        "this is probably still the project template's code"
+    )
+    assert "תבנית הפרויקט" in finding.message_he
+
+
+@pytest.mark.parametrize(
+    ("list_shape", "read_shape", "line"),
+    [
+        (
+            ResponseShape.OBJECT,
+            ResponseShape.OBJECT,
+            "GET /api/users: expected a list of objects in JSON, got an object",
+        ),
+        (
+            ResponseShape.ARRAY_OF_OBJECTS,
+            ResponseShape.SCALAR,
+            "GET /api/users/3: expected an object in JSON, got a single value",
+        ),
+        (
+            ResponseShape.ARRAY_OF_OBJECTS,
+            ResponseShape.NOT_JSON,
+            "GET /api/users/3: expected an object in JSON, got a response that is not JSON",
+        ),
+        (
+            ResponseShape.ARRAY_OF_OBJECTS,
+            ResponseShape.EMPTY,
+            "GET /api/users/3: expected an object in JSON, got an empty response",
+        ),
+    ],
+)
+def test_a_wrong_shape_is_a_finding(
+    list_shape: ResponseShape, read_shape: ResponseShape, line: str
+) -> None:
+    (finding,) = _findings(
+        content_outcome(answered(LIST_OF_OBJECTS, 200, list_shape), answered(READ, 200, read_shape))
+    )
+
+    assert finding.message_en.endswith(line)
+
+
+def test_missing_values_are_named() -> None:
+    (finding,) = _findings(
+        content_outcome(
+            answered(LIST_OF_OBJECTS, 200, ResponseShape.ARRAY_OF_OBJECTS),
+            answered(READ, 200, ResponseShape.OBJECT, ("probe.user@example.com",)),
+        )
+    )
+
+    assert finding.message_en.endswith(
+        'GET /api/users/3: the response does not contain "probe.user@example.com"'
+    )
+    assert '"probe.user@example.com"' in finding.message_he
+
+
+@pytest.mark.parametrize(
+    ("list_result", "read_result"),
+    [
+        (
+            answered(LIST_OF_OBJECTS, 200, ResponseShape.CUT),
+            answered(READ, 200, ResponseShape.CUT, ()),
+        ),
+        (
+            answered(LIST_OF_OBJECTS, 200, ResponseShape.EMPTY_ARRAY),
+            answered(READ, 200, ResponseShape.OBJECT),
+        ),
+    ],
+)
+def test_content_that_cannot_be_judged_passes(
+    list_result: ProbeResult, read_result: ProbeResult
+) -> None:
+    assert content_outcome(list_result, read_result) == ()
+
+
+def test_no_json_body_on_an_allowed_non_success_answer_passes() -> None:
+    missing = probe("/api/users/99999", 404, (404, 204)).model_copy(
+        update={"expect_json": ExpectedJson.OBJECT, "expect_values": ("x",)}
+    )
+    requirement = CONTENT_REQUIREMENT.model_copy(update={"http_probes": (missing,)})
+
+    outcome = evaluate_http(
+        CheckInput(
+            repo_dir=Path("repo"),
+            assignment=Assignment(id="hw01", order=1, title="Users", requirements=(requirement,)),
+            requirement=requirement,
+            execution=run_ok(answered(missing, 404, ResponseShape.EMPTY, ("x",))),
+        )
+    )
+
+    assert outcome == ()
+
+
+def test_a_wrong_status_is_reported_before_content() -> None:
+    (finding,) = _findings(
+        content_outcome(
+            answered(LIST_OF_OBJECTS, 500, ResponseShape.ARRAY_OF_SCALARS),
+            answered(READ, 200, ResponseShape.OBJECT, ("probe.user@example.com",)),
+        )
+    )
+
+    assert finding.message_en == (
+        "HTTP requests that did not return the expected answer:\n"
+        "GET /api/users: expected 200, got 500\n"
+        'GET /api/users/3: the response does not contain "probe.user@example.com"'
+    )
+
+
+def test_status_only_failures_keep_their_message_and_id() -> None:
+    before = _findings(
+        content_outcome(
+            answered(LIST_OF_OBJECTS, 500, None), answered(READ, 200, ResponseShape.OBJECT)
+        )
+    )
+    plain = CONTENT_REQUIREMENT.model_copy(
+        update={"http_probes": (LIST, probe("/api/users/3", 200))}
+    )
+    without_expectations = evaluate_http(
+        CheckInput(
+            repo_dir=Path("repo"),
+            assignment=Assignment(id="hw01", order=1, title="Users", requirements=(plain,)),
+            requirement=plain,
+            execution=run_ok(
+                answered(LIST, 500, None), answered(probe("/api/users/3", 200), 200, None)
+            ),
+        )
+    )
+
+    (finding,) = before
+    assert finding.message_en.startswith("HTTP requests that did not return the expected status")
+    assert finding.id == _findings(without_expectations)[0].id
+
+
+def test_content_finding_ids_follow_the_failure() -> None:
+    def finding_id(*results: ProbeResult) -> str:
+        return _findings(content_outcome(*results))[0].id
+
+    plain = answered(LIST_OF_OBJECTS, 200, ResponseShape.ARRAY_OF_SCALARS)
+    read_ok = answered(READ, 200, ResponseShape.OBJECT)
+    missing = answered(READ, 200, ResponseShape.OBJECT, ("probe.user@example.com",))
+    good_list = answered(LIST_OF_OBJECTS, 200, ResponseShape.ARRAY_OF_OBJECTS)
+
+    assert finding_id(plain, read_ok) == finding_id(plain, read_ok)
+    assert finding_id(plain, read_ok) != finding_id(good_list, missing)
+
+
+def test_every_judged_shape_has_a_name_in_both_languages() -> None:
+    from hw_checker.checks.deterministic.messages import SHAPE_NAMES
+
+    assert set(SHAPE_NAMES) == {shape.value for shape in ResponseShape} - {"cut"}
