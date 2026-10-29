@@ -1,6 +1,7 @@
 # Assignment 1: users API with text-file storage.
 # Approved by the developer on 2026-10-25 as a starting point; to be finalized with the lecturer.
 # Updated by the developer on 2026-10-26 (lecturer input): DELETE not required, PUT required, wrong login returns 204, content checks added.
+# Updated by the developer on 2026-10-28 (lecturer input): GET all not required, PUT returns Ok().
 # taught_techniques: to be filled from the course slides.
 id: hw01
 order: 1
@@ -59,17 +60,6 @@ requirements:
         expected_status: 200
         expect_json: object
         expect_values: ["probe.user@example.com"]
-
-  - id: hw01-list
-    kind: http
-    title: GET returns the list of users
-    severity: major
-    probes:
-      - method: GET
-        path: /api/users
-        path_alternatives: [/api/user, /users, /user, /api/login]
-        expected_status: 200
-        expect_json: array_of_objects
 
   - id: hw01-login
     kind: http
@@ -142,7 +132,7 @@ requirements:
     title: PUT updates a user
     severity: major
     allowed_alternatives:
-      - Returning 200 instead of 204 is acceptable
+      - The assignment asks PUT to return Ok() (200); 204 is also accepted
     probes:
       - method: PUT
         path: "/api/users/{user_id}"
@@ -151,5 +141,5 @@ requirements:
           id: "{user_id}"
           userName|email|name: probe.updated@example.com
           password: "123456"
-        expected_status: 204
-        allowed_statuses: [204, 200]
+        expected_status: 200
+        allowed_statuses: [200, 204]

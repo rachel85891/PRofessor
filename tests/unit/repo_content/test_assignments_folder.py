@@ -32,7 +32,6 @@ def test_committed_assignments_folder_loads_general_and_hw01() -> None:
         ("hw01-get-missing", "major"),
         ("hw01-create", "critical"),
         ("hw01-read-back", "critical"),
-        ("hw01-list", "major"),
         ("hw01-login", "major"),
         ("hw01-login-wrong", "minor"),
         ("hw01-login-wrong-204", "minor"),
@@ -48,7 +47,8 @@ def test_hw01_content_checks_and_wrong_login_statuses() -> None:
     assert probes["hw01-create"].expect_json is ExpectedJson.OBJECT
     assert probes["hw01-read-back"].expect_json is ExpectedJson.OBJECT
     assert probes["hw01-read-back"].expect_values == ("probe.user@example.com",)
-    assert probes["hw01-list"].expect_json is ExpectedJson.ARRAY_OF_OBJECTS
+    assert probes["hw01-update"].expected_status == 200
+    assert probes["hw01-update"].allowed_statuses == (200, 204)
     assert probes["hw01-login-wrong"].allowed_statuses == (204, 401, 404, 400)
     assert probes["hw01-login-wrong-204"].allowed_statuses == (204,)
 

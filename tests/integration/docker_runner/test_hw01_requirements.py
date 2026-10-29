@@ -88,18 +88,10 @@ def test_hw01_requirements_give_no_findings_on_a_correct_solution(
     result, findings, not_evaluated = run_round(docker_runner, repo, tmp_path / "logs")
 
     assert result.steps == (StepStatus.SUCCEEDED,) * 3, describe(result)
-    assert len(result.probe_results) == 8
+    assert len(result.probe_results) == 7
     assert (findings, not_evaluated) == ([], []), describe(result)
     assert leftovers(engine) == []
     assert engine.volume_exists(CACHE_VOLUME)
-
-
-def template_list(repo: Path) -> None:
-    replace_in(
-        repo / CONTROLLER,
-        "return Ok(ReadUsers());",
-        'return Ok(new string[] { "value1", "value2" });',
-    )
 
 
 def read_back_without_email(repo: Path) -> None:
@@ -122,12 +114,6 @@ def wrong_login_401(repo: Path) -> None:
     ("break_it", "requirement_id", "message"),
     [
         (
-            template_list,
-            "hw01-list",
-            "GET /api/users: the list returns plain values (such as text) instead of objects; "
-            "this is probably still the project template's code",
-        ),
-        (
             read_back_without_email,
             "hw01-read-back",
             'GET /api/users/{user_id}: the response does not contain "probe.user@example.com"',
@@ -138,7 +124,7 @@ def wrong_login_401(repo: Path) -> None:
             "POST /api/users/login: expected 204, got 401",
         ),
     ],
-    ids=["template-list", "read-back-without-email", "wrong-login-401"],
+    ids=["read-back-without-email", "wrong-login-401"],
 )
 def test_one_broken_behaviour_gives_exactly_its_finding(
     docker_runner: DockerCodeRunner,
