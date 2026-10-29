@@ -348,6 +348,67 @@ class RouteTable(DomainModel):
         return bool(self.routes) and not self.unsupported
 
 
+MAX_CODE_FACTS = 500
+"""The most entries recorded in each list of `CodeFacts`."""
+
+
+class TypeKind(StrEnum):
+    """The kind of a C# type declaration."""
+
+    CLASS = "class"
+    RECORD = "record"
+    STRUCT = "struct"
+    INTERFACE = "interface"
+    ENUM = "enum"
+
+
+class TypeFact(DomainModel):
+    """A type declared in the student's code."""
+
+    name: NonBlankStr
+    kind: TypeKind
+    file_path: NonBlankStr
+    line: int = Field(ge=1)
+    is_controller: bool = False
+    """It derives from `ControllerBase` or `Controller`."""
+
+
+class MemberFact(DomainModel):
+    """A public property, a method or a local variable declared in the student's code.
+
+    `declaring_type` is None for a method or local variable outside any type (top-level
+    statements in `Program.cs`).
+    """
+
+    name: NonBlankStr
+    declaring_type: str | None = None
+    file_path: NonBlankStr
+    line: int = Field(ge=1)
+
+
+class FileFact(DomainModel):
+    """A source file and the types it declares, in order."""
+
+    file_path: NonBlankStr
+    types: tuple[str, ...] = ()
+
+
+class CodeFacts(DomainModel):
+    """Names declared in the student's C# code, read as text, for the naming checks.
+
+    Generated, designer and migration files and names a student cannot choose (overrides,
+    explicit interface implementations) are left out. Each list holds at most
+    `MAX_CODE_FACTS` entries; `truncated` names the lists that were cut.
+    """
+
+    types: tuple[TypeFact, ...] = Field(default=(), max_length=MAX_CODE_FACTS)
+    properties: tuple[MemberFact, ...] = Field(default=(), max_length=MAX_CODE_FACTS)
+    methods: tuple[MemberFact, ...] = Field(default=(), max_length=MAX_CODE_FACTS)
+    locals: tuple[MemberFact, ...] = Field(default=(), max_length=MAX_CODE_FACTS)
+    files: tuple[FileFact, ...] = Field(default=(), max_length=MAX_CODE_FACTS)
+    truncated: tuple[str, ...] = ()
+
+
 class ExecutionResult(DomainModel):
     """Prepare, build and run outcome for one repo, with probe results and a log excerpt.
 
@@ -375,6 +436,8 @@ class ExecutionResult(DomainModel):
     still built and run; the student is asked to move it, and it never lowers the grade."""
     serving_controllers: tuple[str, ...] = ()
     """Every controller that could serve at least one probe, sorted by name."""
+    code_facts: CodeFacts | None = None
+    """Names declared in the student's code, for the naming checks; None when not read."""
 
     @property
     def steps(self) -> tuple[StepStatus, StepStatus, StepStatus]:

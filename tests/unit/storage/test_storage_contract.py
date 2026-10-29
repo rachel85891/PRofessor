@@ -80,6 +80,8 @@ def test_route_table_and_probe_resolution_are_loaded_back(storage: Storage) -> N
     execution = storage.runs.get(run.run_id).repo_runs[1].execution
     assert execution is not None and execution.routes is not None
     assert execution.routes == builders.successful_execution().routes
+    assert execution.code_facts == builders.successful_execution().code_facts
+    assert execution.code_facts is not None and execution.code_facts.truncated == ("locals",)
     assert [r.route_resolution.value for r in execution.probe_results] == [
         "resolved",
         "unavailable",

@@ -35,7 +35,7 @@ class DeterministicRequirementChecker:
                     f"requirement {requirement.id!r} is a code requirement, not a deterministic one"
                 )
 
-    def _run_registered(self, check_input: CheckInput) -> tuple[Finding, ...]:
+    def _run_registered(self, check_input: CheckInput) -> tuple[Finding, ...] | NotEvaluatedReason:
         requirement = check_input.requirement
         if requirement.check is None:
             raise InvalidAssignmentError(f"requirement {requirement.id!r} names no check")
