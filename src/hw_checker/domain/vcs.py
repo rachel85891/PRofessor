@@ -1,5 +1,7 @@
 """Version-control models used by the Git and code-host ports."""
 
+from pathlib import Path
+
 from pydantic import AwareDatetime, Field
 
 from hw_checker.domain.base import DomainModel, Identifier, NonBlankStr
@@ -19,3 +21,10 @@ class PullRequestRef(DomainModel):
 
     number: int = Field(ge=1)
     url: NonBlankStr
+
+
+class FetchedRepo(DomainModel):
+    """A student repo's local working copy, at the commit that is checked."""
+
+    working_copy: Path
+    commit_sha: Identifier

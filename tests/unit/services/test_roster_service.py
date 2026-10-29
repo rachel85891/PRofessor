@@ -291,3 +291,48 @@ def test_summary_is_logged(caplog: pytest.LogCaptureFixture) -> None:
     (record,) = caplog.records
     assert record.getMessage() == "Roster loaded: 2 rows, 1 repos, 1 pairs, 1 warnings"
     assert record.__dict__["warnings"] == 1
+
+
+def three_repos() -> RosterResult:
+    return load(
+        row(2, "Avigail Test", gh("avigail")),
+        row(3, "Batya Test", gh("batya")),
+        row(4, "Chana Test", gh("chana")),
+    )
+
+
+def test_select_repos_keeps_every_repo_by_default() -> None:
+    repos = three_repos().repos
+
+    assert RosterService.select_repos(repos) == repos
+
+
+def test_select_repos_keeps_only_the_given_ids_in_roster_order() -> None:
+    repos = three_repos().repos
+
+    selected = RosterService.select_repos(repos, repo_ids=("chana__api", "avigail__api"))
+
+    assert [repo.repo_id for repo in selected] == ["avigail__api", "chana__api"]
+
+
+def test_select_repos_takes_the_first_n_after_filtering() -> None:
+    repos = three_repos().repos
+
+    assert [r.repo_id for r in RosterService.select_repos(repos, limit=2)] == [
+        "avigail__api",
+        "batya__api",
+    ]
+    assert [
+        r.repo_id
+        for r in RosterService.select_repos(repos, repo_ids=("batya__api", "chana__api"), limit=1)
+    ] == ["batya__api"]
+
+
+def test_select_repos_rejects_an_id_that_is_not_in_the_roster() -> None:
+    with pytest.raises(RosterError, match="Not in the roster: nobody__api"):
+        RosterService.select_repos(three_repos().repos, repo_ids=("batya__api", "nobody__api"))
+
+
+def test_select_repos_rejects_a_limit_below_one() -> None:
+    with pytest.raises(RosterError, match="at least 1"):
+        RosterService.select_repos(three_repos().repos, limit=0)

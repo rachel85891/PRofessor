@@ -1,3 +1,4 @@
+import re
 from datetime import UTC, datetime, timedelta, timezone
 from typing import Any
 
@@ -11,8 +12,12 @@ from hw_checker.domain import (
     NotEvaluatedReason,
     RepoRunResult,
     RepoRunStatus,
+    RepoSummary,
     Run,
     RunStatus,
+    RunSummary,
+    Severity,
+    new_run_id,
 )
 from tests.unit.domain import builders
 
@@ -228,3 +233,63 @@ def test_not_evaluated_lists_each_requirement_once() -> None:
 def test_not_evaluated_rejects_unknown_reason() -> None:
     with pytest.raises(ValidationError):
         NotEvaluated.model_validate({"requirement_id": "hw01-r2", "reason": "skipped"})
+
+
+def test_new_run_id_starts_with_the_utc_start_time() -> None:
+    first, second = new_run_id(STARTED_AT), new_run_id(STARTED_AT)
+
+    assert re.fullmatch(r"20261020-090000-[0-9a-f]{6}", first)
+    assert first != second
+
+
+def test_run_summary_counts_findings_by_severity_and_skipped_checks() -> None:
+    findings = (
+        builders.finding(id="f-1", severity=Severity.MAJOR, assignment_id="hw01"),
+        builders.finding(id="f-2", severity=Severity.MINOR, assignment_id="hw01"),
+        builders.finding(id="f-3", severity=Severity.MAJOR, assignment_id="_general"),
+    )
+    checked = repo_run(
+        assignment_results=(
+            AssignmentResult(
+                assignment_id="_general",
+                findings=findings[2:],
+                not_evaluated=(
+                    NotEvaluated(
+                        requirement_id="gen-build", reason=NotEvaluatedReason.BUILD_FAILED
+                    ),
+                ),
+            ),
+            AssignmentResult(assignment_id="hw01", findings=findings[:2]),
+        )
+    )
+    failed = repo_run(
+        repo_run_id="run-1/other",
+        repo=builders.repo_target(repo_id="other-api"),
+        status=RepoRunStatus.FAILED,
+        errors=("fetch_repo: repository not found",),
+    )
+    run = Run(
+        run_id="run-1",
+        assignment_id="hw01",
+        started_at=STARTED_AT,
+        status=RunStatus.COMPLETED,
+        repo_runs=(checked, failed),
+    )
+
+    summary = RunSummary.from_run(run)
+
+    assert summary == RunSummary(
+        run_id="run-1",
+        assignment_id="hw01",
+        status=RunStatus.COMPLETED,
+        repos=(
+            RepoSummary(
+                repo_id="dana-api", status=RepoRunStatus.DONE, major=2, minor=1, not_evaluated=1
+            ),
+            RepoSummary(
+                repo_id="other-api",
+                status=RepoRunStatus.FAILED,
+                errors=("fetch_repo: repository not found",),
+            ),
+        ),
+    )

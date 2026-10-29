@@ -72,10 +72,13 @@ from hw_checker.domain.run import (
     NotEvaluatedReason,
     RepoRunResult,
     RepoRunStatus,
+    RepoSummary,
     Run,
     RunStatus,
+    RunSummary,
+    new_run_id,
 )
-from hw_checker.domain.vcs import CommitInfo, PullRequestRef
+from hw_checker.domain.vcs import CommitInfo, FetchedRepo, PullRequestRef
 
 __all__ = [
     "Assignment",
@@ -97,6 +100,7 @@ __all__ = [
     "ExecutionResult",
     "ExpectedJson",
     "FailureKind",
+    "FetchedRepo",
     "FileFact",
     "Finding",
     "FindingSource",
@@ -120,6 +124,7 @@ __all__ = [
     "PullRequestRef",
     "RepoRunResult",
     "RepoRunStatus",
+    "RepoSummary",
     "RepoTarget",
     "Requirement",
     "RequirementKind",
@@ -134,6 +139,7 @@ __all__ = [
     "RouteTable",
     "Run",
     "RunStatus",
+    "RunSummary",
     "Severity",
     "StepStatus",
     "Student",
@@ -141,5 +147,6 @@ __all__ = [
     "TypeKind",
     "UnsupportedRouting",
     "Verdict",
+    "new_run_id",
     "parse_github_url",
 ]
