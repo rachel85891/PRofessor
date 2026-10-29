@@ -100,7 +100,10 @@ runner:
   # The most of each probe response (headers and body) read back; larger bodies are cut,
   # never failed.
   max_response_kb: 64
-  # Full build and run logs, per run and repo; relative to workspace_dir.
+  # Seconds the Docker client waits for one engine API call.
+  engine_timeout_seconds: 120
+  # Folder for full build and run logs inside each run's folder:
+  # <workspace_dir>/runs/<run_id>/<logs_root>/<repo_id>.
   logs_root: logs
 
 storage:
