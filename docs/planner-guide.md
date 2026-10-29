@@ -226,7 +226,7 @@ These are the rules you enforce in review and reference in prompts; they are als
 - A LangGraph node reads state, calls one service, and returns an update. No direct I/O and no business logic.
 - The UI calls services only. It never touches the graph, adapters or the database.
 - Extension through registries and configuration: an assignment is a data folder; a check is a registered function; an LLM provider is a setting.
-- Analysis and publishing are separate: the graph never pushes and never opens a PR.
+- Analysis and publishing are separate: publishing happens only through the round's approval gate (ADR 0018), in the publishing service; no other node pushes or opens a PR.
 
 **Code**
 
@@ -272,8 +272,8 @@ These decisions were made with the developer before implementation started; each
 | 2 | Requirements as YAML data + optional `checks.py` plugins | New assignment without code changes; automatic regression | A code node per assignment |
 | 3 | Three graph levels: round → repo → assignment, using Send | Parallelism and natural regression | One flat graph |
 | 4 | One container per repo + a shared SQL Server with a database per repo | Safety, and memory savings on a local machine | Running directly on the host; SQL Server per repo |
-| 5 | Analysis separated from publishing; publish only after approval | Approval can take days; publishing is deterministic; edits possible before publishing | interrupt inside the graph |
-| 6 | Streamlit on top of a service layer | Fast UI now; later move to FastAPI + React without a rewrite | React now; Gradio |
+| 5 | One approval gate per round, inside the graph; publish only after approval (ADR 0018, superseding 0005) | Approval can take days and comes a few repos at a time; the checkpointer keeps the round's state; publishing stays deterministic, in the publishing service | Publishing outside the graph, started from a UI (ADR 0005); one interrupt per repo |
+| 6 | LangGraph Studio as the v1 UI; Streamlit on top of the service layer deferred (ADR 0017, superseding 0006 for v1) | See the graph and each repo's state with no UI code; the service layer stays UI-agnostic for Streamlit or FastAPI + React later | Streamlit now (ADR 0006); a custom web UI |
 | 7 | SQLite + SQLAlchemy + Alembic behind repositories | Zero setup; move to PostgreSQL by changing the connection string | JSON files; PostgreSQL now |
 | 8 | LLM by role, model set in config; cheap for checks, strong for judge and fixer | Quality at a reasonable cost; switch providers without code | One model for everything |
 | 9 | Judge rails: deterministic validators, then an LLM judge; evidence required | Precision over recall; no invented findings | Self-critique; multi-sample voting |

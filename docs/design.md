@@ -72,7 +72,7 @@ The arrows show dependency direction: each layer on the left depends only on the
 | graph | LangGraph: state, thin nodes, builders | services, domain |
 | adapters | Concrete implementations of the ports | ports, domain, external libraries |
 | bootstrap | Composition root: creates adapters and injects them | Everything |
-| ui | Streamlit; calls services only, through bootstrap | services, domain |
+| ui | Deferred (ADR 0017); LangGraph Studio is the v1 UI. When built: Streamlit, calling services only, through bootstrap | services, domain |
 
 **Mandatory rules**
 
