@@ -11,6 +11,8 @@ logs/
 *.sqlite
 *.sqlite3
 *.sqlite-*
+# The LangGraph dev server's local state (holds students' names and findings)
+.langgraph_api/
 
 # Python
 __pycache__/

@@ -1,6 +1,6 @@
 # 0005. Analysis separated from publishing; publish only after approval
 
-- **Status:** Accepted
+- **Status:** Superseded by 0018
 - **Date:** 2026-10-20
 
 ## Context

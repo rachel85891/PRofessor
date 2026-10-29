@@ -188,45 +188,42 @@ Every external capability is defined as a narrow interface in `ports/` and imple
 
 ## 7. LangGraph design
 
-The graph has three levels: a round graph that fans repos out in parallel, a subgraph per repo, and an inner fan-out per assignment 1..N for regression. Analysis ends at a saved proposal; publishing is a separate service outside the graph.
+The graph has three levels (built in stage 10a): a round graph that sends each repo to a repo subgraph, and inside it one node per assignment, each wrapping that assignment's own subgraph (ADR 0003, refined by ADR 0019). Publishing happens only through the round's approval gate (ADR 0018, stage 13a).
 
 &#91;embedded content: graph flow · round, repo and assignments\]
 
-The round sends each repo to its own subgraph (up to 3 in parallel); inside it, each assignment 1..N is checked separately, and analysis stops at a saved proposal awaiting approval before publishing.
+The round sends each repo to its own subgraph (at most `max_parallel_repos` at a time); inside it, every assignment node runs in parallel, and the ones outside the round's selection return no result.
 
-**Level 1: round graph (RunGraph)**
+**Level 1: round graph** (`build_round_graph`)
 
-1. `load_roster` – read the Excel file, merge into pairs, collect warnings.
-2. `load_assignments` – load `_general` and assignments 1..N.
-3. `fan_out_repos` – Send per repo (parallelism capped in configuration, default 3).
-4. `share_partner_hints` – after both partners finish, one partner's findings are passed as a hint for a re-check of the other (see note).
-5. `aggregate_run` – collect results, produce the grades file, set round status.
+1. `start_round` – load the roster (pairs and warnings), select `_general` and assignments 1..N, prepare the runner (sweep leftovers, check the environment), and start the run in storage. Input: `assignment_id`, `roster_path`, and optionally `repo_ids` (check only these), `limit` (the first N repos) and `run_id`.
+2. `check_repo` – the repo subgraph, sent once per repo with Send; `max_concurrency` is `max_parallel_repos` from configuration (default 3).
+3. `finish_round` – mark the run completed (failed only if no repo could be checked at all) and put the round's summary in state.
 
-**Level 2: repo subgraph (RepoGraph)**
+Planned: `share_partner_hints` (see note), the grades file (11a), and the approval gate with publishing (13a, ADR 0018).
 
-1. `fetch_repo` – clone/fetch, commit sha, commit history.
-2. `build_and_run` – build, provision the database, run, health check. If the build fails, skip HTTP checks (conditional edge) and continue to code checks.
-3. `fan_out_assignments` – Send per assignment 1..N (level 3).
-4. `validate_findings` – deterministic validators.
-5. `judge_findings` – LLM judge.
-6. `score_and_report` – score, Hebrew report, English feedback.
-7. `propose_fixes` (should) – fixes, rebuild, diff.
-8. `persist_proposal` – save the proposal with status `pending_review`.
-9. `teardown` – stop the container and drop the database (always, even on failure).
+**Level 2: repo subgraph** (`build_repo_graph`)
 
-**Level 3: assignment check (AssignmentCheck)** – for each assignment, run the checks registered for it: deterministic (structure, build, HTTP) and an LLM review for each code requirement. Results merge into state through a list reducer.
+1. `fetch_repo` – clone or fetch into `workspace/clones/<repo_id>` (reused across rounds) and read the commit sha. A failed fetch goes straight to `record_repo`.
+2. `build_and_run` – build, run and probe the repo in Docker with the probes of every selected assignment; logs go to `workspace/runs/<run_id>/logs/<repo_id>`. The runner always cleans up after itself. A failed build still runs the assignment nodes; their checks mark build and HTTP requirements not evaluated.
+3. `assignment_<id>` – one node per assignment in the catalog (`assignment__general`, `assignment_hw01`, ...), generated when the graph is built and run in parallel (ADR 0019). Each wraps its assignment subgraph.
+4. `record_repo` – save the repo's result (status, commit, execution, assignment results, errors) in the run.
+
+Planned: `validate_findings`, `judge_findings`, `score_and_report`, `propose_fixes`.
+
+**Level 3: assignment subgraph** (`build_assignment_graph`) – one node now, `deterministic_checks` (structure, custom, build and HTTP requirements). Later `llm_review → judge` for the code requirements.
 
 **State**
 
-- `RunState`: run\_id, assignment\_id, repos, warnings, repo\_results (reducer: append).
-- `RepoState`: repo, commit\_sha, execution, findings (reducer: append), judged, report, proposal, partner\_hints, errors.
-- State holds only ids and small models; logs and large files live on disk or in the database and are referenced by path.
+- Round: the input fields, `run_id`, `repos`, `selected_assignment_ids`, `roster_warnings`, `recorded_repos` and `round_errors` (reducer: append), `summary`.
+- Repo: `run_id`, `repo`, `selected_assignment_ids`, `fetched` (working copy and commit sha), `execution`, `assignment_results` and `errors` (reducer: append). Only `recorded_repos` and `round_errors` flow back to the round.
+- State holds only ids and small models; clones and logs live on disk, results in the database.
 
 **Persistence and errors**
 
-- SQLite checkpointer, one thread per round, so a stopped round resumes from its last point.
-- Every node is wrapped in error handling: an error is recorded in the repo's `errors` and the graph continues to `teardown`. A failed repo does not stop the round.
-- RetryPolicy for nodes with network calls (LLM, GitHub), with a timeout.
+- The command line uses a SQLite checkpointer in its own file (`workspace/checkpoints.sqlite`), one thread per round with thread id = run id. Studio's dev server supplies its own checkpointer.
+- Every repo-level node is wrapped at its boundary, the only place `except Exception` is allowed: the error is logged with run_id and repo_id, added to the repo's `errors`, and the repo continues to `record_repo` with status failed. A failed repo never stops the round. A problem before any repo is checked (roster, assignments, Docker) stops the round with a message.
+- Planned: RetryPolicy for nodes with network calls (LLM, GitHub), with a timeout. Git fetches already retry transient network errors in the adapter.
 
 **Note on partner hints:** in v1, hints are simple: after both repos finish, an accepted finding in one that was not found in the other triggers one focused check in the other. The finding is never copied automatically.
 
@@ -358,7 +355,7 @@ In v1, commit history is collected and shown raw. The next phase adds signals: a
 
 ## 11. Reports, fixes and publishing
 
-Analysis and publishing are two separate phases: the graph ends with a saved proposal in status `pending_review`, and a deterministic publishing service (no LLM) pushes and opens a PR only for approved proposals.
+Publishing happens only through the round's approval gate (ADR 0018, stage 13a): after every repo is checked the round waits for the reviewer, and for each approved repo a deterministic publishing service (no LLM) pushes and opens a PR.
 
 **Three outputs, all from Jinja2 templates**
 
@@ -390,9 +387,16 @@ The LLM writes only the message text of each finding; structure, headings and sc
 
 ## 12. User interface and storage
 
-The v1 UI is a thin Streamlit app that calls only the service layer; storage is SQLite behind the repository pattern. Both choices allow a later move to FastAPI + React and to PostgreSQL without touching the core.
+The v1 UI is LangGraph Studio over the local dev server (ADR 0017), and a command line runs the same graph. The Streamlit app below is deferred until after the approval gate; it will call only the service layer. Storage is SQLite behind the repository pattern. These choices allow a later move to FastAPI + React and to PostgreSQL without touching the core.
 
-**Screens**
+**LangGraph Studio (v1)**
+
+- `langgraph.json` serves the graph `round`, built from the assignment catalog when the server starts (restart it after adding or editing an assignment).
+- The developer starts a round from the graph's input (`assignment_id`, `roster_path`, optional `repo_ids` and `limit`) and watches each repo pass through `fetch_repo`, `build_and_run`, the `assignment_<id>` nodes and `record_repo`.
+- Results are saved in the database as for a round run from the command line.
+- Privacy: the state holds students' names and findings, so LangSmith tracing stays off (no `LANGSMITH_API_KEY`, `LANGSMITH_TRACING=false`). The state stays in the local dev server; the Studio page reads it from `127.0.0.1`.
+
+**Screens (Streamlit, deferred)**
 
 | Screen | What happens there |
 | --- | --- |
@@ -467,14 +471,14 @@ The first phase has 17 implementation stages; 15 of them are required for the st
 | 7 | LLM layer | LLMClient, role mapping, structured output, retry | A real call returns a valid model; switching models is config-only | Must (blocked: provider) | 1 |
 | 8 | Checks | Deterministic checks + LLM reviewer + prompts as files | The sample repo yields structured findings with evidence | Must | 3, 5b, 7 |
 | 9 | Judge rails | Validators + LLM judge + storing rejected findings | Fake findings are filtered out in tests | Must | 8 |
-| 10 | Graph assembly | RunGraph, RepoGraph, Send, checkpointer, error isolation, partner hints | A round over 2–3 repos runs end to end and is saved | Must | 2–9 |
-| 11 | Reports | Jinja2 templates, score, grades file, English feedback | All three outputs produced from a real round | Must | 10 |
-| 12 | Streamlit UI | The four screens from section 12, background run, requirements editor | A full round runs from the UI without a terminal | Must | 11 |
-| 13 | PR publishing | PublishService, GitHubCodeHost | A PR opens only for an approved proposal; re-publishing updates it | Should | 6, 11 |
-| 14 | Fixes | fixer, patch application, rebuild, diff in the UI | A fix that breaks the build is dropped automatically | Should | 10 |
-| 15 | First real run | A round over real repos, calibrating requirements and prompts, bug fixes | A full round completes and results are checked manually | Must | 12 |
+| 10a | Round graph | Round, repo and assignment graphs (Send per repo, one node per assignment), checkpointer, error isolation, CLI, LangGraph Studio | A round over 2–3 repos runs end to end from the CLI and from Studio and is saved | Must | 2–8 |
+| 11a | Reports | Jinja2 templates, score, grades file, English feedback | All three outputs produced from a real round | Must | 10 |
+| 12 | Streamlit UI (deferred, ADR 0017) | The four screens from section 12, background run, requirements editor | A full round runs from the UI without a terminal | Deferred | 13a |
+| 13a | Approval gate and publishing | One interrupt per round (ADR 0018), PublishService, GitHubCodeHost, head check before publishing | A PR opens only for an approved repo; re-publishing updates it | Should | 10a, 11a |
+| 14 | Fixes | fixer, patch application, rebuild, diff in the UI | A fix that breaks the build is dropped automatically | Should | 10a |
+| 15 | First real run | A round over real repos, calibrating requirements and prompts, bug fixes | A full round completes and results are checked manually | Must | 13a |
 
-**Practical order:** 0 → 1 → 5a (early, because of the risk) → 2, 3, 4 → 6 → 5b → 7 → 8 → 9 → 10 → 11 → 12 → 13, 14 if time allows → 15. Stages 2, 3 and 4 are independent of each other and can be done in any order.
+**Practical order:** 0 → 1 → 5a (early, because of the risk) → 2, 3, 4 → 6 → 5b → 7 → 8 → 9 → 10a → 11a → 13a, 14 if time allows → 15. Stage 12 is deferred (ADR 0017); LangGraph Studio is the UI until then. Stages 2, 3 and 4 are independent of each other and can be done in any order.
 
 **Definition of done for every stage**
 

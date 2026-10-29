@@ -144,8 +144,11 @@ class RunnerSettings(BaseModel):
     max_archive_mb: int = Field(default=200, ge=1)
     max_file_mb: int = Field(default=50, ge=1)
     max_response_kb: int = Field(default=64, ge=1)
+    engine_timeout_seconds: int = Field(default=120, ge=1)
+    """Seconds the Docker client waits for one engine API call."""
     logs_root: Path = Path("logs")
-    """Folder for full build and run logs, relative to `workspace_dir`."""
+    """Folder for full build and run logs inside each run's folder:
+    `<workspace_dir>/runs/<run_id>/<logs_root>/<repo_id>`."""
 
     @model_validator(mode="after")
     def _course_framework_has_images(self) -> Self:

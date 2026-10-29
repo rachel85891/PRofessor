@@ -1,15 +1,19 @@
 """Run models: one checking round and the result for each repo in it."""
 
+import uuid
+from datetime import datetime
 from enum import StrEnum
 from typing import Self
 
 from pydantic import AwareDatetime, Field, model_validator
 
-from hw_checker.domain.assignment import SHA256_HEX_PATTERN
+from hw_checker.domain.assignment import SHA256_HEX_PATTERN, Severity
 from hw_checker.domain.base import DomainModel, Identifier, NonBlankStr
 from hw_checker.domain.execution import ExecutionResult
 from hw_checker.domain.findings import Finding, JudgedFinding
 from hw_checker.domain.roster import RepoTarget
+
+RUN_ID_SUFFIX_LENGTH = 6
 
 
 class RepoRunStatus(StrEnum):
@@ -125,3 +129,59 @@ class Run(DomainModel):
         if len(set(run_ids)) != len(run_ids) or len(set(repo_ids)) != len(repo_ids):
             raise ValueError("repo_runs must have unique repo_run_id and repo_id values")
         return self
+
+
+def new_run_id(started_at: datetime) -> str:
+    """Return a new run id: the start time in UTC and a short random suffix.
+
+    For example `20261029-143005-3fa9c2`. Ids sort by start time.
+    """
+    suffix = uuid.uuid4().hex[:RUN_ID_SUFFIX_LENGTH]
+    return f"{started_at:%Y%m%d-%H%M%S}-{suffix}"
+
+
+class RepoSummary(DomainModel):
+    """One repo's line in a round summary: status, finding counts and errors."""
+
+    repo_id: Identifier
+    status: RepoRunStatus
+    critical: int = Field(default=0, ge=0)
+    major: int = Field(default=0, ge=0)
+    minor: int = Field(default=0, ge=0)
+    not_evaluated: int = Field(default=0, ge=0)
+    errors: tuple[NonBlankStr, ...] = ()
+
+    @classmethod
+    def from_repo_run(cls, repo_run: RepoRunResult) -> Self:
+        """Count the repo's findings (before judging) by severity, and its skipped checks."""
+        findings = [
+            finding for result in repo_run.assignment_results for finding in result.findings
+        ]
+        return cls(
+            repo_id=repo_run.repo.repo_id,
+            status=repo_run.status,
+            critical=sum(finding.severity is Severity.CRITICAL for finding in findings),
+            major=sum(finding.severity is Severity.MAJOR for finding in findings),
+            minor=sum(finding.severity is Severity.MINOR for finding in findings),
+            not_evaluated=sum(len(result.not_evaluated) for result in repo_run.assignment_results),
+            errors=repo_run.errors,
+        )
+
+
+class RunSummary(DomainModel):
+    """A short account of a round: its status and one line per repo."""
+
+    run_id: Identifier
+    assignment_id: Identifier
+    status: RunStatus
+    repos: tuple[RepoSummary, ...] = ()
+
+    @classmethod
+    def from_run(cls, run: Run) -> Self:
+        """Summarize `run` and every repo run it holds, in the order they were saved."""
+        return cls(
+            run_id=run.run_id,
+            assignment_id=run.assignment_id,
+            status=run.status,
+            repos=tuple(RepoSummary.from_repo_run(repo_run) for repo_run in run.repo_runs),
+        )

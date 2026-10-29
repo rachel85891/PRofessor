@@ -1,6 +1,6 @@
 # 0006. Streamlit UI on top of a service layer
 
-- **Status:** Accepted
+- **Status:** Superseded by 0017 (for v1)
 - **Date:** 2026-10-20
 
 ## Context

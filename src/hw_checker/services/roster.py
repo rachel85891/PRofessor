@@ -17,6 +17,7 @@ from hw_checker.domain import (
     Student,
     parse_github_url,
 )
+from hw_checker.domain.errors import RosterError
 from hw_checker.ports import RosterReader
 
 logger = logging.getLogger(__name__)
@@ -77,6 +78,32 @@ class RosterService:
             },
         )
         return result
+
+    @staticmethod
+    def select_repos(
+        repos: tuple[RepoTarget, ...],
+        repo_ids: tuple[str, ...] = (),
+        limit: int | None = None,
+    ) -> tuple[RepoTarget, ...]:
+        """Return the repos to check: only `repo_ids` if given, then the first `limit`.
+
+        Roster order is kept. An empty `repo_ids` keeps every repo; a None `limit` keeps
+        them all.
+
+        Raises:
+            RosterError: a repo id is not in the roster, or `limit` is below 1.
+        """
+        if limit is not None and limit < 1:
+            raise RosterError(f"The repo limit must be at least 1 (got {limit}).")
+        known = {repo.repo_id for repo in repos}
+        unknown = [repo_id for repo_id in repo_ids if repo_id not in known]
+        if unknown:
+            raise RosterError(
+                f"Not in the roster: {', '.join(unknown)}. Check the repo ids "
+                "(owner__name, lowercase)."
+            )
+        selected = tuple(repo for repo in repos if not repo_ids or repo.repo_id in repo_ids)
+        return selected if limit is None else selected[:limit]
 
 
 def _parse_rows(rows: tuple[RosterRow, ...], warnings: list[RosterWarning]) -> list[_Entry]:

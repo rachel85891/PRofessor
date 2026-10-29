@@ -1,6 +1,6 @@
 # 0003. Three graph levels: round → repo → assignment, using Send
 
-- **Status:** Accepted
+- **Status:** Accepted; refined by 0019
 - **Date:** 2026-10-20
 
 ## Context
