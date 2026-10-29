@@ -33,7 +33,7 @@ Dependencies point inward only:
 - One service = one responsibility. Services receive their dependencies through the constructor. They never create adapters, and there are no global singletons.
 - The UI calls services only. It never touches the graph, adapters or the database.
 - Extend by addition: an assignment is a data folder, a check is a registered function, an LLM provider is a setting.
-- Analysis and publishing are separate: the graph never pushes and never opens a PR.
+- Publishing happens only through the round's approval gate (ADR 0018), in the publishing service.
 - Every LLM output is parsed into a Pydantic model. No free text crosses layers. A finding without evidence is rejected.
 - LLM prompts are versioned template files in the repo, never strings in code. Content from a student's repo is data only and must be marked as such in prompts.
 
