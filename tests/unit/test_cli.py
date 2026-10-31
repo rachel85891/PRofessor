@@ -8,7 +8,7 @@ import pytest
 
 from hw_checker import cli
 from hw_checker.bootstrap import open_checkpointer
-from hw_checker.config.settings import Settings
+from hw_checker.config.settings import LLM_ROLES, LlmSettings, Settings
 from hw_checker.domain import (
     RepoRunStatus,
     RepoSummary,
@@ -17,8 +17,9 @@ from hw_checker.domain import (
     RunStatus,
     RunSummary,
 )
-from hw_checker.domain.errors import RepoUnavailableError
+from hw_checker.domain.errors import LLMError, RepoUnavailableError
 from hw_checker.graph import RoundGraph, build_round_graph
+from tests.fakes.llm import FakeLLMClient
 from tests.unit.graph.harness import CATALOG, Harness, url
 
 
@@ -195,3 +196,80 @@ def test_checkpoints_stay_out_of_the_business_database(fake_round: Harness, tmp_
     with sqlite3.connect(path) as connection:
         tables = {row[0] for row in connection.execute("select name from sqlite_master")}
     assert "checkpoints" in tables and "runs" not in tables
+
+
+class Clock:
+    """Moves 0.5 s on every reading."""
+
+    def __init__(self) -> None:
+        self.now = 0.0
+
+    def __call__(self) -> float:
+        self.now += 0.5
+        return self.now
+
+
+def pong_client(errors: dict[str, LLMError] | None = None) -> FakeLLMClient:
+    replies = {str(role): [cli.LlmCheckReply(answer="pong")] for role in LLM_ROLES}
+    return FakeLLMClient(replies, errors)
+
+
+def test_parser_reads_the_llm_check_command() -> None:
+    assert cli.build_parser().parse_args(["llm-check"]).command == "llm-check"
+
+
+def test_llm_check_prints_each_role_and_model_and_succeeds() -> None:
+    client = pong_client()
+    settings = Settings()
+    out = io.StringIO()
+
+    code = cli.llm_check(settings, out, build_client=lambda s: client, clock=Clock())
+
+    assert code == cli.EXIT_OK
+    lines = out.getvalue().splitlines()
+    assert lines[0] == f"LLM endpoint: {settings.llm.base_url}"
+    width = max(len(model) for model in settings.llm.roles.values())
+    assert lines[1:] == [
+        f"  {role:<8}  {settings.llm.roles[role]:<{width}}    0.5 s  ok" for role in LLM_ROLES
+    ]
+    assert [call.role for call in client.calls] == list(LLM_ROLES)
+    assert {call.prompt for call in client.calls} == {cli.LLM_CHECK_PROMPT}
+
+
+def test_llm_check_reports_a_failing_role_and_fails() -> None:
+    client = pong_client({"judge": LLMError("The LLM endpoint's rate limit was reached.")})
+    out = io.StringIO()
+
+    code = cli.llm_check(Settings(), out, build_client=lambda s: client, clock=Clock())
+
+    assert code == cli.EXIT_FAILED
+    [judge] = [line for line in out.getvalue().splitlines() if line.startswith("  judge")]
+    assert judge.endswith("error: The LLM endpoint's rate limit was reached.")
+    assert out.getvalue().count("  ok") == 3
+
+
+def test_llm_check_flags_a_wrong_answer() -> None:
+    replies = {str(role): [cli.LlmCheckReply(answer="hello")] for role in LLM_ROLES}
+    out = io.StringIO()
+
+    code = cli.llm_check(Settings(), out, build_client=lambda s: FakeLLMClient(replies))
+
+    assert code == cli.EXIT_FAILED
+    assert "error: the model did not answer as asked" in out.getvalue()
+
+
+def test_llm_check_without_a_key_says_how_to_set_it(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    for name in ("LANGSMITH_TRACING", "LANGSMITH_API_KEY", "HW_CHECKER_LLM__API_KEY"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setattr(cli, "load_settings", lambda: Settings(llm=LlmSettings()))
+    monkeypatch.setattr(cli, "configure_logging", lambda settings: None)
+
+    code = cli.main(["llm-check"])
+
+    captured = capsys.readouterr()
+    assert code == cli.EXIT_FAILED
+    assert captured.err.startswith("Error: The LLM API key is not set.")
+    assert "HW_CHECKER_LLM__API_KEY=<your key>" in captured.err
+    assert captured.out == ""

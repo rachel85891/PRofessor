@@ -110,3 +110,35 @@ storage:
   # SQLAlchemy database URL. SQLite now; PostgreSQL later by changing only this (ADR 0007).
   # A relative SQLite path is relative to the folder the program runs in.
   database_url: sqlite:///workspace/hw_checker.db
+
+llm:
+  # Any OpenAI-compatible endpoint (ADR 0008, ADR 0020). OpenRouter for development; GitHub
+  # Models or OpenAI later by changing base_url, the model ids and the key, never the code.
+  # The key is a secret: HW_CHECKER_LLM__API_KEY in .env (see .env.example).
+  base_url: https://openrouter.ai/api/v1
+  # The model for each role, as the endpoint names it. Proposed 2026-10-31 from OpenRouter's
+  # model list (both support structured outputs); the developer decides. Prices per million
+  # tokens, input / output: claude-haiku-5.5 $0.10 / $0.50, claude-sonnet-5.5 $2 / $10.
+  roles:
+    reviewer: anthropic/claude-haiku-5.5
+    writer: anthropic/claude-haiku-5.5
+    judge: anthropic/claude-sonnet-5.5
+    fixer: anthropic/claude-sonnet-5.5
+  # Low, so the same prompt gives (nearly) the same answer.
+  temperature: 0
+  # Seconds to wait for one reply.
+  timeout_seconds: 60
+  # Retries after a rate limit, a timeout or a server error, waiting retry_backoff_seconds
+  # before the first and doubling each time. Other errors are never retried.
+  max_retries: 2
+  retry_backoff_seconds: 2
+  # A longer prompt is refused before it is sent (about 15,000 tokens).
+  max_prompt_chars: 60000
+  # Extra JSON fields sent with every request. OpenRouter's provider routing: never use a
+  # provider that may train on the data (required on OpenRouter, ADR 0020), and only
+  # providers that support every parameter sent (structured output). Remove this for an
+  # endpoint that is not OpenRouter.
+  extra_body:
+    provider:
+      data_collection: deny
+      require_parameters: true

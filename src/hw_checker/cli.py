@@ -1,27 +1,45 @@
-"""Command line: `python -m hw_checker round --assignment hw01 --roster <xlsx>`.
+"""Command line: `python -m hw_checker round --assignment hw01 --roster <xlsx>`, and
+`python -m hw_checker llm-check`.
 
 This is the only module that writes to stdout and stderr; everything else logs.
 """
 
 import argparse
 import sys
-from collections.abc import Sequence
+import time
+from collections.abc import Callable, Sequence
 from datetime import UTC, datetime
 from typing import Any, TextIO
 
+from pydantic import BaseModel
+
 from hw_checker.bootstrap import (
+    build_llm_client,
     build_round_graph_from_settings,
     open_checkpointer,
     require_tracing_off,
 )
 from hw_checker.config.logging_setup import configure_logging
-from hw_checker.config.settings import Settings, load_settings
+from hw_checker.config.settings import LLM_ROLES, Settings, load_settings
 from hw_checker.domain import RepoSummary, RosterWarning, RunStatus, RunSummary, new_run_id
-from hw_checker.domain.errors import HwCheckerError
+from hw_checker.domain.errors import HwCheckerError, LLMError
 from hw_checker.graph import RoundInput
+from hw_checker.ports import LLMClient
 
 EXIT_OK = 0
 EXIT_FAILED = 1
+LLM_CHECK_PROMPT = (
+    "This is a connectivity check; it contains no real data. "
+    'Reply with the JSON object {"answer": "pong"}.'
+)
+"""The synthetic prompt `llm-check` sends to each role's model; never student data."""
+LLM_CHECK_ANSWER = "pong"
+
+
+class LlmCheckReply(BaseModel):
+    """The structured reply `llm-check` asks for."""
+
+    answer: str
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -42,6 +60,10 @@ def build_parser() -> argparse.ArgumentParser:
     round_parser.add_argument(
         "--limit", type=_positive_int, help="check only the first N repos of the roster"
     )
+    commands.add_parser(
+        "llm-check",
+        help="send one synthetic prompt to each LLM role's model (checks key, models, network)",
+    )
     return parser
 
 
@@ -52,6 +74,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         require_tracing_off()
         settings = load_settings()
         configure_logging(settings)
+        if args.command == "llm-check":
+            return llm_check(settings, sys.stdout)
         return run_round(settings, args, sys.stdout)
     except HwCheckerError as error:
         print(f"Error: {error}", file=sys.stderr)
@@ -78,6 +102,38 @@ def run_round(settings: Settings, args: argparse.Namespace, out: TextIO) -> int:
     summary: RunSummary = output["summary"]
     print_summary(summary, output["roster_warnings"], output.get("round_errors", []), out)
     return EXIT_OK if summary.status is RunStatus.COMPLETED else EXIT_FAILED
+
+
+def llm_check(
+    settings: Settings,
+    out: TextIO,
+    build_client: Callable[[Settings], LLMClient] = build_llm_client,
+    clock: Callable[[], float] = time.monotonic,
+) -> int:
+    """Send the synthetic prompt to each role's model and print one line per role.
+
+    Returns 0 only when every role answered as asked.
+
+    Raises:
+        ConfigurationError: the LLM API key is not set (the message says how to set it).
+    """
+    client = build_client(settings)
+    print(f"LLM endpoint: {settings.llm.base_url}", file=out)
+    models = {role: settings.llm.roles[role] for role in LLM_ROLES}
+    width = max(len(model) for model in models.values())
+    all_ok = True
+    for role, model in models.items():
+        started = clock()
+        try:
+            reply = client.complete(role, LLM_CHECK_PROMPT, LlmCheckReply)
+        except LLMError as error:
+            status, ok = f"error: {error}", False
+        else:
+            ok = reply.answer.strip().lower() == LLM_CHECK_ANSWER
+            status = "ok" if ok else "error: the model did not answer as asked"
+        all_ok = all_ok and ok
+        print(f"  {role:<8}  {model:<{width}}  {clock() - started:5.1f} s  {status}", file=out)
+    return EXIT_OK if all_ok else EXIT_FAILED
 
 
 def print_summary(
