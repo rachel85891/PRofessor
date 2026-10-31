@@ -15,6 +15,16 @@
 {% else %}
 No repos were checked.
 {% endif %}
+{% if publications %}
+
+## Pull requests
+
+| Student | Repo | Outcome | Pull request |
+| --- | --- | --- | --- |
+{% for row in publications %}
+| {{ row.repo.student.name | cell }} | {{ row.repo.owner | cell }}/{{ row.repo.name | cell }} | {{ row.line.publication.outcome.value }} | {% if row.line.publication.pr_url %}[#{{ row.line.publication.pr_number }}]({{ row.line.publication.pr_url }}){% else %}{{ row.line.publication.message | cell }}{% endif %} |
+{% endfor %}
+{% endif %}
 {% if roster_warnings %}
 
 ## Roster warnings ({{ roster_warnings | length }})

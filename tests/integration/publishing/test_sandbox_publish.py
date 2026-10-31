@@ -30,6 +30,7 @@ from hw_checker.domain import (
     RunStatus,
     Student,
 )
+from hw_checker.reporting.writer import MarkdownReportWriter
 from hw_checker.services.publishing import PublishService
 
 pytestmark = pytest.mark.integration
@@ -124,7 +125,8 @@ def test_publishing_opens_then_updates_one_pull_request_on_the_sandbox(tmp_path:
     storage = SqlStorage(url)
     try:
         store_run(storage, repo, base)
-        service = PublishService(storage.proposals, code_host, git, SystemClock(), True)
+        writer = MarkdownReportWriter(tmp_path / "runs")
+        service = PublishService(storage.proposals, code_host, git, writer, SystemClock(), True)
         first_head = commit_note(git, clone, "first publishing test commit")
         first = service.publish(proposal("p-1", repo, branch, base, first_head, clone))
         second_head = commit_note(git, clone, "second publishing test commit")

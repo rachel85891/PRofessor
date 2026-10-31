@@ -4,7 +4,7 @@ from typing import Any
 import pytest
 from pydantic import ValidationError
 
-from hw_checker.domain import PublishOutcome, PublishRecord
+from hw_checker.domain import GateDecision, PublishOutcome, PublishRecord
 
 
 def record(**overrides: Any) -> PublishRecord:
@@ -52,3 +52,12 @@ def test_a_record_that_was_not_published_has_no_pull_request(outcome: PublishOut
 def test_a_publish_record_needs_an_aware_time() -> None:
     with pytest.raises(ValidationError):
         record(published_at=datetime(2026, 11, 1, 9, 0))
+
+
+def test_an_empty_gate_decision_leaves_every_repo_pending() -> None:
+    assert GateDecision() == GateDecision(approve=(), decline=(), notes={})
+
+
+def test_a_gate_decision_refuses_unknown_keys() -> None:
+    with pytest.raises(ValidationError):
+        GateDecision.model_validate({"aprove": ["dana-api"]})

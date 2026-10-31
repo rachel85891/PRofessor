@@ -54,7 +54,13 @@ from hw_checker.domain.proposal import (
     ReviewDecision,
     ReviewOutcome,
 )
-from hw_checker.domain.publishing import PublishOutcome, PublishRecord
+from hw_checker.domain.publishing import (
+    GateDecision,
+    PendingReview,
+    PublishOutcome,
+    PublishRecord,
+    ReviewPrompt,
+)
 from hw_checker.domain.roster import (
     GitHubRepo,
     Pair,
@@ -110,6 +116,7 @@ __all__ = [
     "FindingSource",
     "FixProposal",
     "ForkRef",
+    "GateDecision",
     "GitHubRepo",
     "HttpMethod",
     "HttpProbe",
@@ -123,6 +130,7 @@ __all__ = [
     "PathFixKind",
     "PathNotRewrittenReason",
     "PathRewrite",
+    "PendingReview",
     "ProbeCapture",
     "ProbeResult",
     "ProposalStatus",
@@ -138,6 +146,7 @@ __all__ = [
     "ResponseShape",
     "ReviewDecision",
     "ReviewOutcome",
+    "ReviewPrompt",
     "RosterResult",
     "RosterRow",
     "RosterWarning",

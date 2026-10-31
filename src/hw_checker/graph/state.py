@@ -11,6 +11,7 @@ from hw_checker.domain import (
     AssignmentResult,
     ExecutionResult,
     FetchedRepo,
+    PublishRecord,
     RepoTarget,
     RosterWarning,
     RunSummary,
@@ -97,6 +98,7 @@ class RoundOutput(TypedDict):
     summary: RunSummary
     roster_warnings: list[RosterWarning]
     round_errors: Annotated[list[str], operator.add]
+    publish_results: Annotated[list[PublishRecord], operator.add]
 
 
 class RoundState(RoundInput):
@@ -111,3 +113,11 @@ class RoundState(RoundInput):
     round_errors: Annotated[list[str], operator.add]
     report_paths: Annotated[dict[str, str], merge]
     summary: NotRequired[RunSummary]
+    gate_open: NotRequired[bool]
+    """Whether proposals were pending at the approval gate's last visit."""
+    gate_message: NotRequired[str]
+    """Why the reviewer's last answer was not applied; empty when it was."""
+    approved: NotRequired[list[str]]
+    """The repo runs approved at the gate's last visit, to publish next."""
+    publish_results: Annotated[list[PublishRecord], operator.add]
+    """Every publish attempt of the round, in order."""

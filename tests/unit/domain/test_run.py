@@ -12,6 +12,8 @@ from hw_checker.domain import (
     FindingBrief,
     NotEvaluated,
     NotEvaluatedReason,
+    PublishOutcome,
+    PublishRecord,
     RepoRunResult,
     RepoRunStatus,
     RepoSummary,
@@ -344,6 +346,25 @@ def test_run_summary_carries_report_paths() -> None:
     summary = RunSummary.from_run(run, report_paths={"batya-api": Path("r/batya-api.md")})
 
     assert [line.report_path for line in summary.repos] == [None, Path("r/batya-api.md")]
+
+
+def test_publish_records_go_to_their_repos_and_the_last_one_wins() -> None:
+    summary = RunSummary.from_run(summary_run("avigail-api", "batya-api"))
+    first, last = (
+        PublishRecord(
+            repo_run_id="run-1/batya-api",
+            repo_id="batya-api",
+            branch_name="hw-review/hw01-2026-11-01",
+            published_at=STARTED_AT,
+            outcome=outcome,
+            message="moved",
+        )
+        for outcome in (PublishOutcome.FAILED, PublishOutcome.STALE)
+    )
+
+    updated = summary.with_publish_records([first, last])
+
+    assert [line.publication for line in updated.repos] == [None, last]
 
 
 def test_finding_brief_is_the_first_line_of_the_english_message() -> None:

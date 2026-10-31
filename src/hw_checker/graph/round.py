@@ -5,12 +5,12 @@ from pathlib import Path
 
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.state import CompiledStateGraph
-from langgraph.types import Checkpointer, Send
+from langgraph.types import Checkpointer, Send, interrupt
 
 from hw_checker.config.logging_setup import log_context
-from hw_checker.domain import Assignment, RunSummary
-from hw_checker.domain.errors import HwCheckerError, InvalidAssignmentError
-from hw_checker.graph.guard import Update
+from hw_checker.domain import Assignment, GateDecision, RunSummary
+from hw_checker.domain.errors import HwCheckerError, InvalidAssignmentError, ReviewError
+from hw_checker.graph.guard import Update, describe_error
 from hw_checker.graph.repo import build_repo_graph
 from hw_checker.graph.services import GraphServices
 from hw_checker.graph.state import RepoInput, RoundInput, RoundOutput, RoundState
@@ -26,11 +26,14 @@ def build_round_graph(
     max_parallel_repos: int,
     checkpointer: Checkpointer = None,
 ) -> RoundGraph:
-    """Build `start_round → check_repo (Send per repo) → finish_round → write_round_report`.
+    """Build `start_round → check_repo (Send per repo) → finish_round → write_round_report
+    → approval_gate`, with `approval_gate → publish_approved → write_round_report` looping
+    while proposals are pending (ADR 0018).
 
     `assignments` is the catalog when the graph is built; it fixes the repo graph's
     assignment nodes. At most `max_parallel_repos` repos are checked at a time. Without a
-    checkpointer the graph uses its caller's (the LangGraph dev server supplies one).
+    checkpointer the graph uses its caller's (the LangGraph dev server supplies one); the
+    approval gate needs one as soon as a proposal is pending.
     """
     built_versions = {assignment.id: assignment.source_hash for assignment in assignments}
 
@@ -93,16 +96,60 @@ def build_round_graph(
                 return {"round_errors": [f"write_round_report: {error}"]}
         return {"summary": summary}
 
+    def approval_gate(state: RoundState) -> Update:
+        # The node runs again from the start when the round is resumed; nothing before
+        # `interrupt` changes stored state (it only rewrites the diff files).
+        run_id = state["run_id"]
+        with log_context(run_id=run_id):
+            prompt = services.publishing.review_prompt(
+                run_id, state["summary"], state.get("gate_message", "")
+            )
+            if prompt is None:
+                return {"gate_open": False, "gate_message": "", "approved": []}
+            decision = interrupt(prompt.model_dump(mode="json"), response_schema=GateDecision)
+            try:
+                approved = services.publishing.apply_decision(run_id, decision)
+            except ReviewError as error:
+                logger.warning("The answer at the approval gate was not applied: %s", error)
+                return {"gate_open": True, "gate_message": str(error), "approved": []}
+        return {"gate_open": True, "gate_message": "", "approved": list(approved)}
+
+    def after_gate(state: RoundState) -> str:
+        if not state.get("gate_open"):
+            return END
+        return "publish_approved" if state.get("approved") else "approval_gate"
+
+    def publish_approved(state: RoundState) -> Update:
+        with log_context(run_id=state["run_id"]):
+            try:
+                records = services.publishing.publish_approved(tuple(state.get("approved", [])))
+            except Exception as error:
+                # Node boundary: a publish failure is recorded and never stops the round.
+                message = describe_error("publish_approved", error)
+                logger.error("Publishing failed: %s", message, exc_info=error)
+                return {"round_errors": [message], "approved": []}
+        return {
+            "publish_results": list(records),
+            "summary": state["summary"].with_publish_records(records),
+            "approved": [],
+        }
+
     builder = StateGraph(RoundState, input_schema=RoundInput, output_schema=RoundOutput)
     builder.add_node("start_round", start_round)
     builder.add_node("check_repo", build_repo_graph(assignments, services))
     builder.add_node("finish_round", finish_round)
     builder.add_node("write_round_report", write_round_report)
+    builder.add_node("approval_gate", approval_gate)
+    builder.add_node("publish_approved", publish_approved)
     builder.add_edge(START, "start_round")
     builder.add_conditional_edges("start_round", send_repos, ["check_repo", "finish_round"])
     builder.add_edge("check_repo", "finish_round")
     builder.add_edge("finish_round", "write_round_report")
-    builder.add_edge("write_round_report", END)
+    builder.add_edge("write_round_report", "approval_gate")
+    builder.add_conditional_edges(
+        "approval_gate", after_gate, ["publish_approved", "approval_gate", END]
+    )
+    builder.add_edge("publish_approved", "write_round_report")
     graph = builder.compile(checkpointer=checkpointer, name="round")
     return graph.with_config(max_concurrency=max_parallel_repos)
 

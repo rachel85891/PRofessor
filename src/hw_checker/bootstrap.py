@@ -56,6 +56,7 @@ from hw_checker.reporting.writer import MarkdownReportWriter
 from hw_checker.services.assignments import AssignmentCatalogService
 from hw_checker.services.deterministic_checks import DeterministicCheckService
 from hw_checker.services.execution import ExecutionService
+from hw_checker.services.publishing import PublishService
 from hw_checker.services.repo_fetch import RepoFetchService
 from hw_checker.services.reports import ReportService
 from hw_checker.services.roster import RosterService
@@ -87,6 +88,8 @@ def build_graph_services(settings: Settings) -> GraphServices:
     workspace = settings.workspace_dir.resolve()
     columns = settings.roster.columns
     git = settings.git
+    report_writer = MarkdownReportWriter(workspace / RUNS_FOLDER)
+    clock = SystemClock()
     return GraphServices(
         roster=RosterService(
             ExcelRosterReader(
@@ -120,8 +123,16 @@ def build_graph_services(settings: Settings) -> GraphServices:
             settings.runner.logs_root,
         ),
         checks=DeterministicCheckService(DeterministicRequirementChecker(registry)),
-        run_records=RunRecordService(storage.runs, SystemClock()),
-        reports=ReportService(MarkdownReportWriter(workspace / RUNS_FOLDER)),
+        run_records=RunRecordService(storage.runs, clock),
+        reports=ReportService(report_writer),
+        publishing=PublishService(
+            storage.proposals,
+            build_code_host(settings),
+            build_publishing_git(settings),
+            report_writer,
+            clock,
+            commit_author_configured=bool(git.commit_author_name and git.commit_author_email),
+        ),
     )
 
 
