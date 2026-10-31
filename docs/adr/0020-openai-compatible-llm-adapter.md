@@ -14,6 +14,13 @@ OpenRouter is reachable and speaks the same OpenAI-compatible chat completions A
 - One adapter, `adapters/llm_openai_compatible`, implements `LLMClient` with `langchain-openai`'s `ChatOpenAI` against any OpenAI-compatible endpoint: `llm.base_url`, the key `HW_CHECKER_LLM__API_KEY` (in `.env`), and a model id per role in `llm.roles`. Replies are structured output (`json_schema`) validated into the caller's Pydantic model.
 - Development uses OpenRouter (`https://openrouter.ai/api/v1`).
 - On OpenRouter every request carries the provider routing option `data_collection: "deny"`, so providers that may train on the data are never used, and `require_parameters: true`, so only providers that support structured output are used. Both are sent in `llm.extra_body`. The settings refuse an OpenRouter `base_url` whose `extra_body` does not deny data collection.
+- Send only parameters that every configured model supports (2026-11-01). With
+  `require_parameters: true`, one unsupported parameter filters out every provider
+  (HTTP 404 "No endpoints found"); the Anthropic models on OpenRouter do not accept
+  `temperature`, so `llm.temperature` is null and not sent.
+- Always cap the output tokens (`llm.max_output_tokens`, sent as `max_completion_tokens`).
+  Without a cap OpenRouter reserves the model's whole output limit against the credit
+  (HTTP 402).
 - Switching to GitHub Models or OpenAI is configuration only: change `base_url`, the model ids and the key, and drop the OpenRouter-only `extra_body`.
 - Retries (rate limits, timeouts, server errors), the prompt size limit, error mapping to `LLMError` and per-call logging (role, model, duration, tokens, outcome; never the prompt, the reply or the key) live in the adapter.
 - `python -m hw_checker llm-check` sends one tiny synthetic prompt per role, to check the key, the models and the network.

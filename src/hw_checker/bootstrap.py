@@ -247,6 +247,7 @@ def llm_config(llm: LlmSettings) -> LlmClientConfig:
         base_url=llm.base_url,
         models={str(role): model for role, model in llm.roles.items()},
         temperature=llm.temperature,
+        max_output_tokens=llm.max_output_tokens,
         timeout_seconds=llm.timeout_seconds,
         max_retries=llm.max_retries,
         retry_backoff_seconds=llm.retry_backoff_seconds,

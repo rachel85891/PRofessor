@@ -112,7 +112,7 @@ def test_llm_calls_trust_the_system_certificate_store(monkeypatch: pytest.Monkey
 
 
 def test_llm_config_maps_every_role_and_limit() -> None:
-    llm = LlmSettings(max_retries=4, max_prompt_chars=99)
+    llm = LlmSettings(max_retries=4, max_prompt_chars=99, max_output_tokens=512)
 
     config = bootstrap.llm_config(llm)
 
@@ -123,6 +123,7 @@ def test_llm_config_maps_every_role_and_limit() -> None:
         99,
     )
     assert config.extra_body == llm.extra_body
+    assert (config.temperature, config.max_output_tokens) == (None, 512)
 
 
 def test_the_real_client_and_the_fake_satisfy_the_port() -> None:
