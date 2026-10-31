@@ -124,8 +124,14 @@ llm:
     writer: anthropic/claude-haiku-5.5
     judge: anthropic/claude-sonnet-5.5
     fixer: anthropic/claude-sonnet-5.5
-  # Low, so the same prompt gives (nearly) the same answer.
-  temperature: 0
+  # null: not sent. These models do not accept temperature on OpenRouter, and with
+  # require_parameters (below) any parameter a model does not support makes the request
+  # unroutable (HTTP 404 "No endpoints found"). Set a number only for models that list
+  # temperature in their supported parameters.
+  temperature: null
+  # The most tokens one reply may have, always sent. Without it OpenRouter reserves the
+  # model's whole output limit against the key's credit (HTTP 402).
+  max_output_tokens: 4096
   # Seconds to wait for one reply.
   timeout_seconds: 60
   # Retries after a rate limit, a timeout or a server error, waiting retry_backoff_seconds

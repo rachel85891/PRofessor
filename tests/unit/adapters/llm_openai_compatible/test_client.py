@@ -73,13 +73,18 @@ class Transport:
 
 
 def client(
-    transport: Transport, *, max_retries: int = 2, max_prompt_chars: int = 1000
+    transport: Transport,
+    *,
+    max_retries: int = 2,
+    max_prompt_chars: int = 1000,
+    temperature: float | None = 0,
 ) -> tuple[OpenAICompatibleLLMClient, list[float]]:
     sleeps: list[float] = []
     config = LlmClientConfig(
         base_url="https://llm.test/api/v1",
         models=MODELS,
-        temperature=0,
+        temperature=temperature,
+        max_output_tokens=256,
         timeout_seconds=5,
         max_retries=max_retries,
         retry_backoff_seconds=1,
@@ -106,9 +111,21 @@ def test_each_role_calls_its_own_model_with_the_routing_options() -> None:
     assert (first["model"], second["model"]) == ("cheap/model-a", "strong/model-b")
     assert first["provider"] == {"data_collection": "deny", "require_parameters": True}
     assert first["temperature"] == 0
+    assert first["max_completion_tokens"] == 256
     assert first["response_format"]["type"] == "json_schema"
     assert first["response_format"]["json_schema"]["name"] == "Pong"
     assert str(transport.requests[0].url) == "https://llm.test/api/v1/chat/completions"
+
+
+def test_no_temperature_is_sent_when_it_is_not_set() -> None:
+    transport = Transport(pong)
+    llm, _ = client(transport, temperature=None)
+
+    llm.complete("reviewer", PROMPT, Pong)
+
+    [body] = transport.bodies()
+    assert "temperature" not in body
+    assert body["max_completion_tokens"] == 256
 
 
 def test_a_valid_reply_is_parsed_into_the_model() -> None:
@@ -154,12 +171,34 @@ def test_a_reply_that_is_not_an_api_reply_is_an_llm_error() -> None:
         (status(401, "No auth credentials found"), "refused the API key \\(HTTP 401\\)", 1),
         (status(403, "Forbidden"), "refused the API key \\(HTTP 403\\)", 1),
         (status(404, "No such model"), "does not know the model cheap/model-a", 1),
+        (
+            status(404, "No endpoints found that can handle the requested parameters."),
+            r"No provider accepts the requested parameters for the model cheap/model-a "
+            r"\(HTTP 404\): No endpoints found that can handle the requested parameters\.$",
+            1,
+        ),
+        (
+            status(402, "This request requires more credits, or fewer max_tokens."),
+            r"out of credit, or the request asks for too many tokens \(HTTP 402\): "
+            r"This request requires more credits",
+            1,
+        ),
         (status(400, "No endpoints found"), "rejected the request \\(HTTP 400\\)", 1),
         (status(429, "Rate limited"), "rate limit was reached \\(after 3 attempts\\)", 3),
         (status(503, "Upstream down"), "failed \\(HTTP 503\\) \\(after 3 attempts\\)", 3),
         (timeout, "did not answer within 5 s \\(after 3 attempts\\)", 3),
     ],
-    ids=["auth", "forbidden", "unknown-model", "bad-request", "rate-limit", "5xx", "timeout"],
+    ids=[
+        "auth",
+        "forbidden",
+        "unknown-model",
+        "unroutable",
+        "no-credit",
+        "bad-request",
+        "rate-limit",
+        "5xx",
+        "timeout",
+    ],
 )
 def test_failures_become_llm_errors_and_only_transient_ones_are_retried(
     handler: Handler, message: str, requests: int
@@ -242,8 +281,14 @@ def test_a_prompt_that_is_too_long_is_refused_before_sending() -> None:
 
 @pytest.mark.parametrize(
     "handler",
-    [status(401, f"Invalid key {FAKE_KEY}"), status(400, f"Bad request for {FAKE_KEY}"), pong],
-    ids=["auth", "echoed-key", "success"],
+    [
+        status(401, f"Invalid key {FAKE_KEY}"),
+        status(400, f"Bad request for {FAKE_KEY}"),
+        status(404, f"No endpoints found for {FAKE_KEY}"),
+        status(402, f"More credits needed for {FAKE_KEY}"),
+        pong,
+    ],
+    ids=["auth", "echoed-key", "unroutable", "no-credit", "success"],
 )
 def test_the_key_never_appears_in_an_error_or_a_log_record(
     handler: Handler, caplog: pytest.LogCaptureFixture

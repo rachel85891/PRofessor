@@ -9,6 +9,7 @@ and the reply are never logged, and the API key never appears in a message or a 
 """
 
 import logging
+import re
 import ssl
 import time
 from collections.abc import Callable, Mapping
@@ -32,6 +33,11 @@ MAX_BACKOFF_SECONDS = 30.0
 MAX_PROVIDER_MESSAGE_CHARS = 200
 REDACTED = "[redacted]"
 SERVER_ERROR_STATUS = 500
+PAYMENT_REQUIRED_STATUS = 402
+ROUTING_FAILURE = re.compile(r"no endpoints found|parameter", re.IGNORECASE)
+"""A 404 whose provider message matches is a routing failure, not an unknown model."""
+SDK_STATUS_PREFIX = re.compile(r"^Error code: \d+ - ")
+"""The SDK's own prefix on the provider's message; our messages give the status already."""
 
 
 @dataclass(frozen=True)
@@ -41,7 +47,9 @@ class LlmClientConfig:
     base_url: str
     models: Mapping[str, str]
     """The model id for each role."""
-    temperature: float
+    temperature: float | None
+    """None leaves it out of the request."""
+    max_output_tokens: int
     timeout_seconds: float
     max_retries: int
     retry_backoff_seconds: float
@@ -86,6 +94,7 @@ class OpenAICompatibleLLMClient:
                 openai_api_base=config.base_url,
                 openai_api_key=api_key,
                 temperature=config.temperature,
+                max_tokens=config.max_output_tokens,
                 request_timeout=config.timeout_seconds,
                 max_retries=0,  # retried here, so only the right errors are
                 extra_body=dict(config.extra_body) or None,
@@ -211,6 +220,20 @@ class OpenAICompatibleLLMClient:
                     f"The LLM endpoint failed (HTTP {error.status_code}).",
                     retryable=True,
                 )
+            if error.status_code == PAYMENT_REQUIRED_STATUS:
+                return _AttemptError(
+                    "no_credit",
+                    "The LLM account is out of credit, or the request asks for too many "
+                    f"tokens (HTTP 402): {self._provider_message(error)}",
+                )
+            if isinstance(error, openai.NotFoundError) and ROUTING_FAILURE.search(
+                str(error.message)
+            ):
+                return _AttemptError(
+                    "unroutable",
+                    "No provider accepts the requested parameters for the model "
+                    f"{model} (HTTP 404): {self._provider_message(error)}",
+                )
             if isinstance(error, openai.NotFoundError):
                 return _AttemptError(
                     "not_found",
@@ -236,7 +259,8 @@ class OpenAICompatibleLLMClient:
 
     def _provider_message(self, error: openai.APIStatusError) -> str:
         """The provider's own message, short and with the key removed, just in case."""
-        message = " ".join(str(error.message).split())[:MAX_PROVIDER_MESSAGE_CHARS]
+        message = SDK_STATUS_PREFIX.sub("", " ".join(str(error.message).split()))
+        message = message[:MAX_PROVIDER_MESSAGE_CHARS]
         key = self._api_key.get_secret_value()
         return message.replace(key, REDACTED) if key else message
 

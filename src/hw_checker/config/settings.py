@@ -198,7 +198,12 @@ class LlmSettings(BaseModel):
         "writer": "anthropic/claude-haiku-5.5",
     }
     """The model id for each role, as the endpoint names it."""
-    temperature: float = Field(default=0, ge=0, le=1)
+    temperature: float | None = Field(default=None, ge=0, le=1)
+    """None leaves it out of the request: with OpenRouter's `require_parameters`, a
+    parameter the model does not support makes the request unroutable (ADR 0020)."""
+    max_output_tokens: int = Field(default=4096, ge=1)
+    """The most tokens a reply may have; always sent, so a call never reserves the
+    model's whole output limit (ADR 0020)."""
     timeout_seconds: float = Field(default=60, gt=0)
     max_retries: int = Field(default=2, ge=0, le=10)
     """Retries after a rate limit, a timeout or a server error; never after other errors."""

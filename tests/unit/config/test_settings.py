@@ -411,7 +411,20 @@ def test_repo_config_maps_every_llm_role_to_a_model(tmp_path: Path) -> None:
     assert llm.roles["judge"] == llm.roles["fixer"]
     assert llm.base_url == "https://openrouter.ai/api/v1"
     assert llm.extra_body["provider"]["data_collection"] == "deny"
+    assert llm.temperature is None
+    assert llm.max_output_tokens == 4096
     assert llm.api_key is None
+
+
+@pytest.mark.parametrize("value", [0, -1])
+def test_llm_max_output_tokens_must_be_positive(tmp_path: Path, value: int) -> None:
+    with pytest.raises(ConfigurationError, match="max_output_tokens"):
+        _load(tmp_path, f"llm:\n  max_output_tokens: {value}\n")
+
+
+def test_llm_temperature_is_optional(tmp_path: Path) -> None:
+    assert _load(tmp_path, "llm:\n  temperature: 0.2\n").llm.temperature == 0.2
+    assert _load(tmp_path, "llm:\n  temperature: null\n").llm.temperature is None
 
 
 def test_an_unknown_llm_role_is_rejected_at_startup(tmp_path: Path) -> None:
