@@ -13,7 +13,7 @@ The system is a LangGraph-based agent that, twice a week, checks the homework of
 - Check each repo against the general requirements and the requirements of every assignment up to the current one (regression).
 - Build and actually run the project and verify HTTP behavior, not only read the code.
 - Find only real, substantive problems: precision before recall.
-- Produce a Hebrew report for the reviewer, a grades file per assignment, and plain-English feedback for the student.
+- Produce an English report for the reviewer, the round's counts (a grades file once there is a formula), and plain-English feedback for the student.
 - Propose minimal, student-level fixes, and publish them as a PR only after manual approval.
 - Collect AI-use signals and present them as a flag for human review.
 - Be easy to extend (a new assignment = a data file) and easy to hand over to another developer.
@@ -37,7 +37,7 @@ The table lists the functional requirements and their priority for the first ver
 | F4 | Check general requirements and the requirements of all assignments 1..N | Must |
 | F5 | HTTP checks against expected status codes, including allowed alternatives | Must |
 | F6 | Filter findings through judge rails (deterministic + LLM) | Must |
-| F7 | Hebrew report per repo, grades file per assignment, plain-English feedback | Must |
+| F7 | English report per repo, the round's counts (grades once there is a formula), plain-English feedback | Must |
 | F8 | UI to start a round, track progress, review and approve | Must |
 | F9 | Publish a PR to the student's repo only after approval | Should |
 | F10 | Targeted fixes verified by a rebuild | Should |
@@ -177,7 +177,7 @@ Every external capability is defined as a narrow interface in `ports/` and imple
 | LLMClient | Call with structured output, by role name | LangChainLLMClient (init\_chat\_model) | Any provider |
 | Storage (repositories) | RunRepository, FindingRepository, ProposalRepository | SQLAlchemy + SQLite | PostgreSQL |
 | AssignmentSource | Load assignments and requirements | YamlAssignmentSource | Database / editing UI |
-| ReportWriter | Write reports and the grades file | Jinja2 to Markdown/CSV files |  |
+| ReportWriter | Write the reviewer's reports and the round's files | Jinja2 to Markdown, plus a CSV counts file |  |
 | Clock | Current time | SystemClock | FixedClock in tests |
 
 **Principles**
@@ -198,9 +198,10 @@ The round sends each repo to its own subgraph (at most `max_parallel_repos` at a
 
 1. `start_round` – load the roster (pairs and warnings), select `_general` and assignments 1..N, prepare the runner (sweep leftovers, check the environment), and start the run in storage. Input: `assignment_id`, `roster_path`, and optionally `repo_ids` (check only these), `limit` (the first N repos) and `run_id`.
 2. `check_repo` – the repo subgraph, sent once per repo with Send; `max_concurrency` is `max_parallel_repos` from configuration (default 3).
-3. `finish_round` – mark the run completed (failed only if no repo could be checked at all) and put the round's summary in state.
+3. `finish_round` – mark the run completed (failed only if no repo could be checked at all) and put the round's summary in state: one line per repo in roster order, with its counts, a short list of its findings (requirement, severity, first line of the message) and its report's path.
+4. `write_round_report` – write `round.md` (one row per repo, in roster order) and `counts.csv` to `workspace/runs/<run_id>/reports/`, and add the reports folder to the summary. A failure is a round error; the run is already saved.
 
-Planned: `share_partner_hints` (see note), the grades file (11a), and the approval gate with publishing (13a, ADR 0018).
+Planned: `share_partner_hints` (see note), the grade once there is a formula, and the approval gate with publishing (13a, ADR 0018).
 
 **Level 2: repo subgraph** (`build_repo_graph`)
 
@@ -208,15 +209,16 @@ Planned: `share_partner_hints` (see note), the grades file (11a), and the approv
 2. `build_and_run` – build, run and probe the repo in Docker with the probes of every selected assignment; logs go to `workspace/runs/<run_id>/logs/<repo_id>`. The runner always cleans up after itself. A failed build still runs the assignment nodes; their checks mark build and HTTP requirements not evaluated.
 3. `assignment_<id>` – one node per assignment in the catalog (`assignment__general`, `assignment_hw01`, ...), generated when the graph is built and run in parallel (ADR 0019). Each wraps its assignment subgraph.
 4. `record_repo` – save the repo's result (status, commit, execution, assignment results, errors) in the run.
+5. `write_report` – write the reviewer's report, `workspace/runs/<run_id>/reports/<repo_id>.md`. A report that cannot be written is a round error; the repo keeps its status.
 
-Planned: `validate_findings`, `judge_findings`, `score_and_report`, `propose_fixes`.
+Planned: `validate_findings`, `judge_findings`, `score`, `propose_fixes`.
 
 **Level 3: assignment subgraph** (`build_assignment_graph`) – one node now, `deterministic_checks` (structure, custom, build and HTTP requirements). Later `llm_review → judge` for the code requirements.
 
 **State**
 
-- Round: the input fields, `run_id`, `repos`, `selected_assignment_ids`, `roster_warnings`, `recorded_repos` and `round_errors` (reducer: append), `summary`.
-- Repo: `run_id`, `repo`, `selected_assignment_ids`, `fetched` (working copy and commit sha), `execution`, `assignment_results` and `errors` (reducer: append). Only `recorded_repos` and `round_errors` flow back to the round.
+- Round: the input fields, `run_id`, `repos`, `selected_assignment_ids`, `roster_warnings`, `partners`, `recorded_repos` and `round_errors` (reducer: append), `report_paths` (reducer: merge), `summary`.
+- Repo: `run_id`, `assignment_id`, `repo`, `selected_assignment_ids`, `partner`, `fetched` (working copy and commit sha), `execution`, `assignment_results` and `errors` (reducer: append). Only `recorded_repos`, `round_errors` and `report_paths` flow back to the round.
 - State holds only ids and small models; clones and logs live on disk, results in the database.
 
 **Persistence and errors**
@@ -361,13 +363,15 @@ Publishing happens only through the round's approval gate (ADR 0018, stage 13a):
 
 | Output | Audience | Language | Destination |
 | --- | --- | --- | --- |
-| Repo report | The reviewer | Hebrew | Review screen + Markdown file |
-| Assignment grades file | Reviewer and lecturer | Hebrew | CSV/Markdown in the reviewer's grades repo, a new file per assignment |
+| Repo report | The reviewer | English | `workspace/runs/<run_id>/reports/<repo_id>.md` |
+| Round files: `round.md` and `counts.csv` | Reviewer and lecturer | English | `workspace/runs/<run_id>/reports/`; counts only until there is a grade formula |
 | Student feedback | The student | Plain English | PR description + `FEEDBACK.md` in the branch |
 
 The LLM writes only the message text of each finding; structure, headings and score are set by the template and code, so the format is stable.
 
-**Score:** a simple, transparent formula in configuration (weight by severity; minor does not lower the grade in v1). The final rubric will be set with the lecturer; the formula is isolated in a single service so it is easy to replace.
+**Reviewer reports (stage 11a, developer decision 2026-10-29):** in English, since findings already carry `message_en`. A repo report has the student (and partner), repo, checked commit, run and assignment; the build and run outcome in plain English; the findings grouped by severity with their evidence; the requirements not evaluated, each with a one-sentence reason; and the repo's errors. A repo with nothing to report says so in one line. `round.md` has one row per repo in roster order with its counts and a link to its report, then the roster warnings. `counts.csv` has the same columns plus the partner, in UTF-8 with a BOM so Excel shows Hebrew names. `ReportService` writes them through the `ReportWriter` port; the Jinja2 templates are in `reporting/templates/`.
+
+**Score:** none yet. The round's files hold counts only until the lecturer sets a formula. Then: a simple, transparent formula in configuration (weight by severity; minor does not lower the grade in v1), isolated in a single service so it is easy to replace.
 
 **Fixes (should, in v1)**
 
@@ -472,7 +476,7 @@ The first phase has 17 implementation stages; 15 of them are required for the st
 | 8 | Checks | Deterministic checks + LLM reviewer + prompts as files | The sample repo yields structured findings with evidence | Must | 3, 5b, 7 |
 | 9 | Judge rails | Validators + LLM judge + storing rejected findings | Fake findings are filtered out in tests | Must | 8 |
 | 10a | Round graph | Round, repo and assignment graphs (Send per repo, one node per assignment), checkpointer, error isolation, CLI, LangGraph Studio | A round over 2–3 repos runs end to end from the CLI and from Studio and is saved | Must | 2–8 |
-| 11a | Reports | Jinja2 templates, score, grades file, English feedback | All three outputs produced from a real round | Must | 10 |
+| 11a | Reports | Jinja2 templates, English repo reports, `round.md` and `counts.csv` (no score until there is a formula; student feedback moves to 13a) | Every repo of a real round has a report, and the round has its files | Must | 10 |
 | 12 | Streamlit UI (deferred, ADR 0017) | The four screens from section 12, background run, requirements editor | A full round runs from the UI without a terminal | Deferred | 13a |
 | 13a | Approval gate and publishing | One interrupt per round (ADR 0018), PublishService, GitHubCodeHost, head check before publishing | A PR opens only for an approved repo; re-publishing updates it | Should | 10a, 11a |
 | 14 | Fixes | fixer, patch application, rebuild, diff in the UI | A fix that breaks the build is dropped automatically | Should | 10a |

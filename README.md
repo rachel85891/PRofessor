@@ -1,6 +1,6 @@
 # HW Checker
 
-HW Checker is a Python LangGraph agent that checks homework for a .NET 10 Web API course. It builds and runs each student's repo, checks it against the requirements of every assignment so far, and writes a Hebrew report for the reviewer. After manual approval it can also propose fixes as a PR.
+HW Checker is a Python LangGraph agent that checks homework for a .NET 10 Web API course. It builds and runs each student's repo, checks it against the requirements of every assignment so far, and writes an English report for the reviewer. After manual approval it can also propose fixes as a PR.
 
 "HW Checker" is a working name; the final project name is still open.
 
@@ -48,7 +48,7 @@ uv run python -m hw_checker round --assignment hw01 --roster C:\path\to\roster.x
 uv run python -m hw_checker round --assignment hw01 --roster C:\path\to\roster.xlsx --repo owner__name --repo other__name
 ```
 
-The round checks `_general` and every assignment up to the one given, saves the run in the database (`storage.database_url`), and prints one line per repo (status, findings by severity, checks not evaluated, errors), the roster warnings and the run id. Clones go to `workspace/clones/`, build and run logs to `workspace/runs/<run_id>/logs/<repo_id>/`, and the graph's checkpoints to `workspace/checkpoints.sqlite` (thread id = run id). The exit code is 0 when the round completed and 1 when it failed or could not start.
+The round checks `_general` and every assignment up to the one given, saves the run in the database (`storage.database_url`), and prints one line per repo (status, findings by severity, checks not evaluated, errors), the roster warnings, the run id and the path of the round's report. Reports go to `workspace/runs/<run_id>/reports/`: one English Markdown report per repo, `round.md` (one row per repo, in roster order) and `counts.csv` (counts only, no grade yet; UTF-8 with a BOM for Excel). They hold students' names and findings, so keep them out of the repo. Clones go to `workspace/clones/`, build and run logs to `workspace/runs/<run_id>/logs/<repo_id>/`, and the graph's checkpoints to `workspace/checkpoints.sqlite` (thread id = run id). The exit code is 0 when the round completed and 1 when it failed or could not start.
 
 ### From LangGraph Studio
 
@@ -57,7 +57,7 @@ $env:LANGGRAPH_CLI_NO_ANALYTICS = "1"   # Git Bash: export LANGGRAPH_CLI_NO_ANAL
 uv run python -m langgraph_cli dev --no-browser --allow-blocking --no-reload
 ```
 
-Then open <https://smith.langchain.com/studio/?baseUrl=http://127.0.0.1:2024>, choose the graph `round`, fill in `assignment_id` and `roster_path` (optionally `repo_ids` and `limit` for a quick round), and submit. Each repo passes through `check_repo`: `fetch_repo`, `build_and_run`, one `assignment_<id>` node per assignment, and `record_repo`. Results are saved in the database as for a command-line round.
+Then open <https://smith.langchain.com/studio/?baseUrl=http://127.0.0.1:2024>, choose the graph `round`, fill in `assignment_id` and `roster_path` (optionally `repo_ids` and `limit` for a quick round), and submit. Each repo passes through `check_repo`: `fetch_repo`, `build_and_run`, one `assignment_<id>` node per assignment, `record_repo` and `write_report`; then `finish_round` and `write_round_report`. Results are saved in the database and the reports written as for a command-line round, and the output's `summary` lists each repo's findings.
 
 - `python -m langgraph_cli` is used because the `langgraph` launcher (`.exe`) hangs on some machines.
 - `--allow-blocking`: the graph is built (database migration, Docker connection, assignment files) when the server first needs it, which the dev server would otherwise refuse as blocking I/O.
@@ -77,7 +77,7 @@ src/hw_checker/
   services/          application logic, one responsibility each
   checks/, judge/    registered checks and the judge rails
   graph/             LangGraph state, thin nodes, builders
-  reporting/         reports, grades file, feedback
+  reporting/         reviewer reports and the round's counts (Jinja2 templates)
   config/            settings and logging
   ui/                Streamlit app (deferred, ADR 0017)
   bootstrap.py       composition root: creates adapters, builds the graph
