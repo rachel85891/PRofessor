@@ -1,3 +1,4 @@
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -10,6 +11,7 @@ from hw_checker.domain import (
     ReviewDecision,
     ReviewOutcome,
 )
+from hw_checker.domain.errors import ReviewError
 from tests.unit.domain import builders
 
 
@@ -53,17 +55,58 @@ def test_patch_rejects_blank_explanation() -> None:
         patch(explanation="")
 
 
-def test_fix_proposal_defaults_to_pending_review() -> None:
-    proposal = FixProposal(
-        proposal_id="p-1",
-        repo_run_id="run-1/dana-api",
-        repo=builders.repo_target(),
-        branch_name="hw-review/hw03-2026-10-20",
-        patches=(patch(),),
-        verified=True,
-    )
+def proposal(**overrides: Any) -> FixProposal:
+    values: dict[str, Any] = {
+        "proposal_id": "p-1",
+        "repo_run_id": "run-1/dana-api",
+        "repo": builders.repo_target(),
+        "branch_name": "hw-review/hw03-2026-10-20",
+        "base_sha": "1" * 40,
+        "head_sha": "2" * 40,
+        "local_repo_dir": Path("workspace/clones/dana-api"),
+        "pr_title": "HW3 review: small fixes and questions",
+        "pr_body": "Your API builds and runs.",
+        "patches": (patch(),),
+        "verified": True,
+    }
+    return FixProposal.model_validate(values | overrides)
 
-    assert proposal.status is ProposalStatus.PENDING_REVIEW
+
+def test_fix_proposal_defaults_to_pending_review() -> None:
+    assert proposal().status is ProposalStatus.PENDING_REVIEW
+
+
+@pytest.mark.parametrize("field", ["base_sha", "head_sha", "pr_title", "pr_body"])
+def test_fix_proposal_rejects_blank_publishing_fields(field: str) -> None:
+    with pytest.raises(ValidationError):
+        proposal(**{field: " "})
+
+
+@pytest.mark.parametrize(
+    ("start", "end"),
+    [
+        (ProposalStatus.PENDING_REVIEW, ProposalStatus.APPROVED),
+        (ProposalStatus.PENDING_REVIEW, ProposalStatus.REJECTED),
+        (ProposalStatus.APPROVED, ProposalStatus.PUBLISHED),
+        (ProposalStatus.APPROVED, ProposalStatus.PENDING_REVIEW),
+    ],
+)
+def test_proposal_moves_along_its_lifecycle(start: ProposalStatus, end: ProposalStatus) -> None:
+    assert proposal(status=start).moved_to(end).status is end
+
+
+@pytest.mark.parametrize(
+    ("start", "end"),
+    [
+        (ProposalStatus.PENDING_REVIEW, ProposalStatus.PUBLISHED),
+        (ProposalStatus.REJECTED, ProposalStatus.APPROVED),
+        (ProposalStatus.PUBLISHED, ProposalStatus.PENDING_REVIEW),
+        (ProposalStatus.APPROVED, ProposalStatus.REJECTED),
+    ],
+)
+def test_proposal_refuses_other_moves(start: ProposalStatus, end: ProposalStatus) -> None:
+    with pytest.raises(ReviewError, match=f"is {start.value}; it cannot become {end.value}"):
+        proposal(status=start).moved_to(end)
 
 
 def test_proposal_statuses() -> None:
@@ -77,13 +120,7 @@ def test_proposal_statuses() -> None:
 
 def test_fix_proposal_rejects_blank_branch_name() -> None:
     with pytest.raises(ValidationError):
-        FixProposal(
-            proposal_id="p-1",
-            repo_run_id="run-1/dana-api",
-            repo=builders.repo_target(),
-            branch_name=" ",
-            verified=False,
-        )
+        proposal(branch_name=" ")
 
 
 def test_review_decision_builds() -> None:

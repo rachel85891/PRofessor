@@ -1,5 +1,5 @@
 """SQLAlchemy table models for runs, repo runs, findings, not-evaluated requirements,
-proposals and review decisions.
+proposals, review decisions and the publish log.
 
 Columns that are filtered or sorted on are real columns; nested value objects are stored as
 JSON written with the domain models' own JSON serialization. Only portable types are used.
@@ -150,6 +150,11 @@ class ProposalRow(Base):
     )
     repo: Mapped[dict[str, Any]] = mapped_column(JSON)
     branch_name: Mapped[str] = mapped_column(String(255))
+    base_sha: Mapped[str] = mapped_column(ID_TYPE)
+    head_sha: Mapped[str] = mapped_column(ID_TYPE)
+    local_repo_dir: Mapped[str] = mapped_column(Text)
+    pr_title: Mapped[str] = mapped_column(Text)
+    pr_body: Mapped[str] = mapped_column(Text)
     patches: Mapped[list[dict[str, Any]]] = mapped_column(JSON)
     diff: Mapped[str] = mapped_column(Text)
     verified: Mapped[bool] = mapped_column(Boolean)
@@ -165,3 +170,22 @@ class ReviewDecisionRow(Base):
     )
     outcome: Mapped[str] = mapped_column(String(16))
     reviewer_notes: Mapped[str] = mapped_column(Text)
+
+
+class PublishLogRow(Base):
+    """One attempt to publish a repo run's proposal."""
+
+    __tablename__ = "publish_log"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    repo_run_id: Mapped[str] = mapped_column(
+        ID_TYPE, ForeignKey("repo_runs.repo_run_id", ondelete="CASCADE"), index=True
+    )
+    repo_id: Mapped[str] = mapped_column(ID_TYPE)
+    branch_name: Mapped[str] = mapped_column(String(255))
+    fork: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    pr_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    pr_number: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    published_at: Mapped[datetime] = mapped_column(UtcDateTime)
+    outcome: Mapped[str] = mapped_column(String(16), index=True)
+    message: Mapped[str] = mapped_column(Text)

@@ -7,6 +7,7 @@ from hw_checker.domain import (
     FixProposal,
     JudgedFinding,
     ProposalStatus,
+    PublishRecord,
     RepoRunResult,
     ReviewDecision,
     Run,
@@ -24,6 +25,7 @@ class _Store:
     judged: dict[str, tuple[JudgedFinding, ...]] = field(default_factory=dict)
     proposals: dict[str, FixProposal] = field(default_factory=dict)
     decisions: dict[str, list[ReviewDecision]] = field(default_factory=dict)
+    publish_log: dict[str, list[PublishRecord]] = field(default_factory=dict)
 
     def require_repo_run(self, repo_run_id: str) -> None:
         if repo_run_id not in self.repo_runs:
@@ -95,7 +97,7 @@ class FakeFindingRepository:
 
 
 class FakeProposalRepository:
-    """In-memory `ProposalRepository`; review decisions are kept as history."""
+    """In-memory `ProposalRepository`; review decisions and the publish log are history."""
 
     def __init__(self, store: _Store) -> None:
         self._store = store
@@ -115,6 +117,19 @@ class FakeProposalRepository:
         with self._store.lock:
             return tuple(p for p in self._store.proposals.values() if p.status is status)
 
+    def list_for_run(self, run_id: str) -> tuple[FixProposal, ...]:
+        with self._store.lock:
+            return tuple(
+                proposal
+                for proposal in self._store.proposals.values()
+                if self._store.repo_runs.get(proposal.repo_run_id, ("",))[0] == run_id
+            )
+
+    def get_for_repo_run(self, repo_run_id: str) -> FixProposal | None:
+        with self._store.lock:
+            found = [p for p in self._store.proposals.values() if p.repo_run_id == repo_run_id]
+            return found[-1] if found else None
+
     def save_review_decision(self, decision: ReviewDecision) -> None:
         with self._store.lock:
             self._store.require_repo_run(decision.repo_run_id)
@@ -124,6 +139,15 @@ class FakeProposalRepository:
         with self._store.lock:
             history = self._store.decisions.get(repo_run_id, [])
             return history[-1] if history else None
+
+    def save_publish_record(self, record: PublishRecord) -> None:
+        with self._store.lock:
+            self._store.require_repo_run(record.repo_run_id)
+            self._store.publish_log.setdefault(record.repo_run_id, []).append(record)
+
+    def list_publish_records(self, repo_run_id: str) -> tuple[PublishRecord, ...]:
+        with self._store.lock:
+            return tuple(self._store.publish_log.get(repo_run_id, []))
 
 
 class InMemoryStorage:

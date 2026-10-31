@@ -12,6 +12,7 @@ from hw_checker.domain import (
     AssignmentResult,
     CaptureFailure,
     ProposalStatus,
+    PublishOutcome,
     ResponseShape,
     ReviewOutcome,
     Verdict,
@@ -303,6 +304,52 @@ def test_list_by_status_filters_and_keeps_creation_order(
     assert [p.proposal_id for p in pending] == ["p-1", "p-3"]
     assert storage.proposals.list_by_status(ProposalStatus.APPROVED) == (approved,)
     assert storage.proposals.list_by_status(ProposalStatus.PUBLISHED) == ()
+
+
+def test_list_for_run_returns_only_that_runs_proposals_in_creation_order(
+    storage: Storage, repo_run_id: str
+) -> None:
+    other_run = builders.full_run("run-2")
+    storage.runs.save(other_run)
+    other = builders.proposal("p-9", other_run.repo_runs[2].repo_run_id, ProposalStatus.APPROVED)
+    first = builders.proposal("p-1", repo_run_id, ProposalStatus.PENDING_REVIEW)
+    second = builders.proposal("p-2", repo_run_id, ProposalStatus.REJECTED)
+    for proposal in (first, other, second):
+        storage.proposals.save(proposal)
+    updated = first.model_copy(update={"status": ProposalStatus.APPROVED})
+    storage.proposals.save(updated)
+
+    assert storage.proposals.list_for_run("run-1") == (updated, second)
+    assert storage.proposals.list_for_run("run-2") == (other,)
+    assert storage.proposals.list_for_run("missing") == ()
+
+
+def test_get_for_repo_run_returns_the_proposal_created_last(
+    storage: Storage, repo_run_id: str
+) -> None:
+    assert storage.proposals.get_for_repo_run(repo_run_id) is None
+    storage.proposals.save(builders.proposal("p-1", repo_run_id, ProposalStatus.REJECTED))
+    latest = builders.proposal("p-2", repo_run_id, ProposalStatus.PENDING_REVIEW)
+    storage.proposals.save(latest)
+
+    assert storage.proposals.get_for_repo_run(repo_run_id) == latest
+
+
+def test_publish_log_keeps_every_record_in_order(storage: Storage, repo_run_id: str) -> None:
+    stale = builders.publish_record(repo_run_id, PublishOutcome.STALE)
+    published = builders.publish_record(repo_run_id)
+    updated = builders.publish_record(repo_run_id, PublishOutcome.UPDATED)
+
+    for record in (stale, published, updated):
+        storage.proposals.save_publish_record(record)
+
+    assert storage.proposals.list_publish_records(repo_run_id) == (stale, published, updated)
+    assert storage.proposals.list_publish_records("other") == ()
+
+
+def test_publish_record_needs_an_existing_repo_run(storage: Storage) -> None:
+    with pytest.raises(NotFoundError):
+        storage.proposals.save_publish_record(builders.publish_record("missing"))
 
 
 def test_review_decision_is_none_until_one_is_saved(storage: Storage, repo_run_id: str) -> None:

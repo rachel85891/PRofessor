@@ -29,6 +29,8 @@ from hw_checker.domain import (
     Patch,
     ProbeResult,
     ProposalStatus,
+    PublishOutcome,
+    PublishRecord,
     RepoRunResult,
     RepoRunStatus,
     RepoTarget,
@@ -354,6 +356,11 @@ def proposal(proposal_id: str, repo_run_id: str, status: ProposalStatus) -> FixP
         repo_run_id=repo_run_id,
         repo=repo_target("avi"),
         branch_name="hw-review/hw01-2026-10-21",
+        base_sha="2" * 40,
+        head_sha="3" * 40,
+        local_repo_dir=Path("workspace/clones/avi__api"),
+        pr_title="HW1 review: small fixes and questions",
+        pr_body="Your API builds and runs.\n\n## Fixed in this PR\n- A missing break.",
         patches=(
             Patch(
                 file_path="Controllers/ProductsController.cs",
@@ -371,6 +378,23 @@ def proposal(proposal_id: str, repo_run_id: str, status: ProposalStatus) -> FixP
 
 def decision(repo_run_id: str, outcome: ReviewOutcome, notes: str = "") -> ReviewDecision:
     return ReviewDecision(repo_run_id=repo_run_id, outcome=outcome, reviewer_notes=notes)
+
+
+def publish_record(
+    repo_run_id: str, outcome: PublishOutcome = PublishOutcome.PUBLISHED, number: int = 7
+) -> PublishRecord:
+    published = outcome in {PublishOutcome.PUBLISHED, PublishOutcome.UPDATED}
+    return PublishRecord(
+        repo_run_id=repo_run_id,
+        repo_id="avi__api",
+        branch_name="hw-review/hw01-2026-10-21",
+        fork="review-bot/check_avi" if published else None,
+        pr_url=f"https://github.com/avi/api/pull/{number}" if published else None,
+        pr_number=number if published else None,
+        published_at=datetime(2026, 11, 1, 10, 0, tzinfo=ISRAEL),
+        outcome=outcome,
+        message="" if published else "The student pushed new commits since the check.",
+    )
 
 
 STARTED = datetime(2026, 10, 21, 9, 0, tzinfo=UTC)

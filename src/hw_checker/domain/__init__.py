@@ -54,6 +54,7 @@ from hw_checker.domain.proposal import (
     ReviewDecision,
     ReviewOutcome,
 )
+from hw_checker.domain.publishing import PublishOutcome, PublishRecord
 from hw_checker.domain.roster import (
     GitHubRepo,
     Pair,
@@ -123,6 +124,8 @@ __all__ = [
     "ProbeCapture",
     "ProbeResult",
     "ProposalStatus",
+    "PublishOutcome",
+    "PublishRecord",
     "PullRequestRef",
     "RepoRunResult",
     "RepoRunStatus",
