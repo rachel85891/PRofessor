@@ -326,7 +326,7 @@ The LLM is used only where a deterministic check is not enough, and every findin
 | fixer | Write a targeted fix and its explanation | Strong |
 | writer | Phrase plain-English feedback | Cheap |
 
-The role → provider + model mapping lives in configuration. The provider will be chosen once API access through Copilot is clarified; the code does not depend on the provider.
+The role → model mapping lives in configuration (`llm.roles`). The LLM is reached through one OpenAI-compatible adapter (ADR 0020): OpenRouter for development, with provider routing `data_collection: deny` so no provider that may train on the data is used; GitHub Models (blocked on the developer's network) or OpenAI later by configuration only. `python -m hw_checker llm-check` checks the key, the models and the network with synthetic text. No student code or names are sent to an LLM until the lecturer approves it.
 
 **Prompt rules**
 

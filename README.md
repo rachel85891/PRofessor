@@ -36,6 +36,20 @@ uv run pre-commit run --all-files
 
 If console-script launchers hang on your machine, run the Python tools as modules instead, for example `uv run python -m mypy` or `uv run python -m pytest`. import-linter has no module entry point; use `uv run python -c "from importlinter.cli import lint_imports_command; lint_imports_command()"`.
 
+## The LLM key
+
+The LLM layer (ADR 0020) calls an OpenAI-compatible endpoint, OpenRouter for development. Nothing in a round needs it yet. To set it up:
+
+1. Create a key at <https://openrouter.ai/settings/keys>.
+2. Put it in `.env` as `HW_CHECKER_LLM__API_KEY=<your key>` (never in `config.yaml` or the repo).
+3. Check it:
+
+```powershell
+uv run python -m hw_checker llm-check
+```
+
+It sends one tiny synthetic prompt (no student data) to the model of each role in `config.yaml` (`llm.roles`) and prints the role, the model, ok or the error, and the time taken. The exit code is 0 only when every role answered.
+
 ## Running a round
 
 Start Docker Desktop first. The roster `.xlsx` file holds students' names, so keep it outside the repo.
@@ -81,7 +95,7 @@ src/hw_checker/
   config/            settings and logging
   ui/                Streamlit app (deferred, ADR 0017)
   bootstrap.py       composition root: creates adapters, builds the graph
-  cli.py             `python -m hw_checker round ...`
+  cli.py             `python -m hw_checker round ...` and `llm-check`
 tests/unit/          unit tests (integration tests are marked `integration`)
 ```
 
