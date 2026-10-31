@@ -178,7 +178,7 @@ class StorageSettings(BaseModel):
 
 LlmRole = Literal["reviewer", "judge", "fixer", "writer"]
 """The roles the LLM is called for (ADR 0008); code names a role, never a model."""
-LLM_ROLES: tuple[str, ...] = get_args(LlmRole)
+LLM_ROLES: tuple[LlmRole, ...] = get_args(LlmRole)
 OPENROUTER_HOST = "openrouter.ai"
 
 
