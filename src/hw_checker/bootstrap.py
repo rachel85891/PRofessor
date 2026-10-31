@@ -29,6 +29,7 @@ from hw_checker.adapters.docker_runner.runner_config import (
     FrameworkImages as RunnerImages,
 )
 from hw_checker.adapters.git_local import LocalGitClient
+from hw_checker.adapters.llm_openai_compatible import LlmClientConfig, OpenAICompatibleLLMClient
 from hw_checker.adapters.roster_excel import ExcelRosterReader, RosterColumns
 from hw_checker.adapters.storage_sqlite import SqlStorage, migrate
 from hw_checker.adapters.system_clock import SystemClock
@@ -37,9 +38,16 @@ from hw_checker.checks.deterministic.checker import DeterministicRequirementChec
 from hw_checker.checks.registry import CheckRegistry
 from hw_checker.config.errors import ConfigurationError
 from hw_checker.config.logging_setup import configure_logging
-from hw_checker.config.settings import RunnerSettings, Settings, StepLimits, load_settings
+from hw_checker.config.settings import (
+    LlmSettings,
+    RunnerSettings,
+    Settings,
+    StepLimits,
+    load_settings,
+)
 from hw_checker.domain.errors import ExecutionEnvironmentError
 from hw_checker.graph import GraphServices, RoundGraph, build_round_graph
+from hw_checker.ports import LLMClient
 from hw_checker.reporting.writer import MarkdownReportWriter
 from hw_checker.services.assignments import AssignmentCatalogService
 from hw_checker.services.deterministic_checks import DeterministicCheckService
@@ -201,6 +209,37 @@ def domain_state_types() -> tuple[type, ...]:
             and issubclass(value, (BaseModel, Enum))
         )
     return tuple(found)
+
+
+def build_llm_client(settings: Settings) -> LLMClient:
+    """The LLM client for the configured endpoint and roles (ADR 0020).
+
+    Nothing in a round uses it yet, so a missing key only matters to its callers.
+
+    Raises:
+        ConfigurationError: `HW_CHECKER_LLM__API_KEY` is not set.
+    """
+    api_key = settings.llm.api_key
+    if api_key is None or not api_key.get_secret_value().strip():
+        raise ConfigurationError(
+            "The LLM API key is not set. Add HW_CHECKER_LLM__API_KEY=<your key> to .env "
+            f"(see .env.example); it is the key for {settings.llm.base_url}."
+        )
+    return OpenAICompatibleLLMClient(llm_config(settings.llm), api_key)
+
+
+def llm_config(llm: LlmSettings) -> LlmClientConfig:
+    """The LLM client's configuration from the LLM settings."""
+    return LlmClientConfig(
+        base_url=llm.base_url,
+        models={str(role): model for role, model in llm.roles.items()},
+        temperature=llm.temperature,
+        timeout_seconds=llm.timeout_seconds,
+        max_retries=llm.max_retries,
+        retry_backoff_seconds=llm.retry_backoff_seconds,
+        max_prompt_chars=llm.max_prompt_chars,
+        extra_body=llm.extra_body,
+    )
 
 
 def runner_config(runner: RunnerSettings) -> DockerRunnerConfig:

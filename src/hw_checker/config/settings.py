@@ -1,7 +1,8 @@
 """Application settings: secrets from the environment or `.env`, the rest from `config.yaml`."""
 
 from pathlib import Path
-from typing import Annotated, Any, Literal, Self
+from typing import Annotated, Any, Literal, Self, get_args
+from urllib.parse import urlsplit
 
 import yaml
 from pydantic import (
@@ -175,6 +176,63 @@ class StorageSettings(BaseModel):
     database_url: NonBlankText = "sqlite:///workspace/hw_checker.db"
 
 
+LlmRole = Literal["reviewer", "judge", "fixer", "writer"]
+"""The roles the LLM is called for (ADR 0008); code names a role, never a model."""
+LLM_ROLES: tuple[str, ...] = get_args(LlmRole)
+OPENROUTER_HOST = "openrouter.ai"
+
+
+class LlmSettings(BaseModel):
+    """The OpenAI-compatible LLM endpoint and the model for each role (ADR 0008, ADR 0020).
+
+    The API key comes only from `.env` (`HW_CHECKER_LLM__API_KEY`), never from `config.yaml`.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    base_url: NonBlankText = "https://openrouter.ai/api/v1"
+    roles: dict[LlmRole, NonBlankText] = {
+        "reviewer": "anthropic/claude-haiku-5.5",
+        "judge": "anthropic/claude-sonnet-5.5",
+        "fixer": "anthropic/claude-sonnet-5.5",
+        "writer": "anthropic/claude-haiku-5.5",
+    }
+    """The model id for each role, as the endpoint names it."""
+    temperature: float = Field(default=0, ge=0, le=1)
+    timeout_seconds: float = Field(default=60, gt=0)
+    max_retries: int = Field(default=2, ge=0, le=10)
+    """Retries after a rate limit, a timeout or a server error; never after other errors."""
+    retry_backoff_seconds: float = Field(default=2, ge=0, le=60)
+    """The wait before the first retry; it doubles for each retry after that."""
+    max_prompt_chars: int = Field(default=60_000, ge=1)
+    """A longer prompt is refused before it is sent."""
+    extra_body: dict[str, Any] = {
+        "provider": {"data_collection": "deny", "require_parameters": True}
+    }
+    """Extra JSON fields sent with every request. On OpenRouter, `provider.data_collection`
+    must be `deny`, so providers that train on the data are never used (ADR 0020)."""
+    api_key: SecretStr | None = None
+
+    @field_validator("roles")
+    @classmethod
+    def _every_role_has_a_model(cls, value: dict[str, str]) -> dict[str, str]:
+        missing = [role for role in LLM_ROLES if role not in value]
+        if missing:
+            raise ValueError(f"no model for the roles: {', '.join(missing)}")
+        return value
+
+    @model_validator(mode="after")
+    def _openrouter_denies_data_collection(self) -> Self:
+        if urlsplit(self.base_url).hostname != OPENROUTER_HOST:
+            return self
+        provider = self.extra_body.get("provider")
+        if not isinstance(provider, dict) or provider.get("data_collection") != "deny":
+            raise ValueError(
+                "on OpenRouter, extra_body.provider.data_collection must be 'deny' (ADR 0020)"
+            )
+        return self
+
+
 class Settings(BaseSettings):
     """All runtime settings.
 
@@ -200,6 +258,7 @@ class Settings(BaseSettings):
     git: GitSettings = GitSettings()
     runner: RunnerSettings = RunnerSettings()
     storage: StorageSettings = StorageSettings()
+    llm: LlmSettings = LlmSettings()
     github_token: SecretStr | None = None
 
     @classmethod

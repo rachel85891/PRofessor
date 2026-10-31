@@ -17,6 +17,8 @@ def _isolate_environment(monkeypatch: pytest.MonkeyPatch) -> None:
         "HW_CHECKER_GITHUB_TOKEN",
         "HW_CHECKER_GIT__COMMIT_AUTHOR_NAME",
         "HW_CHECKER_GIT__COMMIT_AUTHOR_EMAIL",
+        "HW_CHECKER_LLM__API_KEY",
+        "HW_CHECKER_LLM__BASE_URL",
     ):
         monkeypatch.delenv(name, raising=False)
 
@@ -394,3 +396,54 @@ def test_storage_database_url_default_and_override(tmp_path: Path) -> None:
 def test_storage_blank_database_url_is_rejected(tmp_path: Path) -> None:
     with pytest.raises(ConfigurationError, match=r"storage\.database_url"):
         _load(tmp_path, "storage:\n  database_url: ' '\n")
+
+
+LLM_FAKE_KEY = "sk-or-not-a-real-key"  # pragma: allowlist secret
+
+
+def test_repo_config_maps_every_llm_role_to_a_model(tmp_path: Path) -> None:
+    from hw_checker.config.settings import DEFAULT_CONFIG_PATH, LLM_ROLES
+
+    llm = load_settings(config_path=DEFAULT_CONFIG_PATH, env_path=tmp_path / ".env").llm
+
+    assert sorted(llm.roles) == sorted(LLM_ROLES)
+    assert llm.roles["reviewer"] == llm.roles["writer"]
+    assert llm.roles["judge"] == llm.roles["fixer"]
+    assert llm.base_url == "https://openrouter.ai/api/v1"
+    assert llm.extra_body["provider"]["data_collection"] == "deny"
+    assert llm.api_key is None
+
+
+def test_an_unknown_llm_role_is_rejected_at_startup(tmp_path: Path) -> None:
+    yaml_text = "llm:\n  roles: {reviewer: a, judge: b, fixer: b, writer: a, grader: c}\n"
+
+    with pytest.raises(ConfigurationError, match=r"llm\.roles\.grader"):
+        _load(tmp_path, yaml_text)
+
+
+def test_a_role_without_a_model_is_rejected_at_startup(tmp_path: Path) -> None:
+    with pytest.raises(ConfigurationError, match="no model for the roles: fixer, writer"):
+        _load(tmp_path, "llm:\n  roles: {reviewer: a, judge: b}\n")
+
+
+def test_openrouter_must_deny_data_collection(tmp_path: Path) -> None:
+    yaml_text = "llm:\n  extra_body: {provider: {data_collection: allow}}\n"
+
+    with pytest.raises(ConfigurationError, match="data_collection must be 'deny'"):
+        _load(tmp_path, yaml_text)
+
+
+def test_another_endpoint_needs_no_openrouter_routing(tmp_path: Path) -> None:
+    yaml_text = "llm:\n  base_url: https://models.github.ai/inference\n  extra_body: {}\n"
+
+    llm = _load(tmp_path, yaml_text).llm
+
+    assert (llm.base_url, llm.extra_body) == ("https://models.github.ai/inference", {})
+
+
+def test_llm_api_key_loads_from_env_file_as_a_secret(tmp_path: Path) -> None:
+    settings = _load(tmp_path, "", f"HW_CHECKER_LLM__API_KEY={LLM_FAKE_KEY}\n")
+
+    assert settings.llm.api_key is not None
+    assert settings.llm.api_key.get_secret_value() == LLM_FAKE_KEY
+    assert LLM_FAKE_KEY not in repr(settings)

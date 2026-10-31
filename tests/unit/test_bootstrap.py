@@ -1,11 +1,18 @@
 from pathlib import Path
 
 import pytest
-from pydantic import BaseModel
+from pydantic import BaseModel, SecretStr
 
 from hw_checker import bootstrap
+from hw_checker.adapters.llm_openai_compatible import OpenAICompatibleLLMClient
 from hw_checker.config.errors import ConfigurationError
-from hw_checker.config.settings import REPO_ROOT, RunnerSettings, Settings, StorageSettings
+from hw_checker.config.settings import (
+    REPO_ROOT,
+    LlmSettings,
+    RunnerSettings,
+    Settings,
+    StorageSettings,
+)
 from hw_checker.domain import (
     AssignmentResult,
     ExecutionResult,
@@ -21,6 +28,8 @@ from hw_checker.domain import (
     Severity,
     StepStatus,
 )
+from hw_checker.ports import LLMClient
+from tests.fakes.llm import FakeLLMClient
 from tests.unit.domain import builders
 
 FAKE_KEY = "not-a-real-key"  # pragma: allowlist secret
@@ -60,6 +69,41 @@ def test_studio_graph_refuses_to_build_with_tracing_on(monkeypatch: pytest.Monke
 
     with pytest.raises(ConfigurationError):
         bootstrap.studio_graph()
+
+
+def test_llm_client_needs_the_api_key() -> None:
+    with pytest.raises(ConfigurationError, match="HW_CHECKER_LLM__API_KEY"):
+        bootstrap.build_llm_client(Settings(llm=LlmSettings()))
+
+
+def test_llm_client_is_built_with_the_api_key() -> None:
+    settings = Settings(llm=LlmSettings(api_key=SecretStr(FAKE_KEY)))
+
+    client = bootstrap.build_llm_client(settings)
+
+    assert isinstance(client, OpenAICompatibleLLMClient)
+
+
+def test_llm_config_maps_every_role_and_limit() -> None:
+    llm = LlmSettings(max_retries=4, max_prompt_chars=99)
+
+    config = bootstrap.llm_config(llm)
+
+    assert dict(config.models) == dict(llm.roles)
+    assert (config.base_url, config.max_retries, config.max_prompt_chars) == (
+        llm.base_url,
+        4,
+        99,
+    )
+    assert config.extra_body == llm.extra_body
+
+
+def test_the_real_client_and_the_fake_satisfy_the_port() -> None:
+    clients: list[LLMClient] = [
+        bootstrap.build_llm_client(Settings(llm=LlmSettings(api_key=SecretStr(FAKE_KEY)))),
+        FakeLLMClient(),
+    ]
+    assert all(callable(client.complete) for client in clients)
 
 
 def test_runner_config_maps_sizes_and_images() -> None:
