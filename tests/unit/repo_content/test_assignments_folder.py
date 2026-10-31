@@ -33,9 +33,11 @@ def test_committed_assignments_folder_loads_general_and_hw01() -> None:
         ("hw01-create", "critical"),
         ("hw01-read-back", "critical"),
         ("hw01-login", "major"),
+        ("hw01-login-returns-user", "minor"),
         ("hw01-login-wrong", "minor"),
         ("hw01-login-wrong-204", "minor"),
         ("hw01-update", "major"),
+        ("hw01-update-read-back", "major"),
     ]
     assert all(r.kind is RequirementKind.HTTP for r in hw01.requirements)
 
@@ -51,6 +53,13 @@ def test_hw01_content_checks_and_wrong_login_statuses() -> None:
     assert probes["hw01-update"].allowed_statuses == (200, 204)
     assert probes["hw01-login-wrong"].allowed_statuses == (204, 401, 404, 400)
     assert probes["hw01-login-wrong-204"].allowed_statuses == (204,)
+    assert probes["hw01-login-returns-user"].expect_json is ExpectedJson.OBJECT
+    assert probes["hw01-login-returns-user"].expect_values == ("{user_id}",)
+    assert probes["hw01-update-read-back"].expect_json is ExpectedJson.OBJECT
+    assert probes["hw01-update-read-back"].expect_values == (
+        "probe.updated@example.com",
+        "{user_id}",
+    )
 
 
 def test_committed_requirements_validate_against_the_builtin_checks() -> None:
@@ -70,4 +79,9 @@ def test_the_created_user_id_is_captured_before_it_is_used() -> None:
     assert capturing.capture is not None
     assert (capturing.capture.name, capturing.capture.source) == ("user_id", "body:id")
     users = [p.requirement_id for p in probes if "user_id" in p.variables_used]
-    assert users == ["hw01-read-back", "hw01-update"]
+    assert users == [
+        "hw01-read-back",
+        "hw01-login-returns-user",
+        "hw01-update",
+        "hw01-update-read-back",
+    ]

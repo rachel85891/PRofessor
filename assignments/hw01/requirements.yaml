@@ -2,6 +2,7 @@
 # Approved by the developer on 2026-10-25 as a starting point; to be finalized with the lecturer.
 # Updated by the developer on 2026-10-26 (lecturer input): DELETE not required, PUT required, wrong login returns 204, content checks added.
 # Updated by the developer on 2026-10-28 (lecturer input): GET all not required, PUT returns Ok().
+# Updated by the developer on 2026-10-29: update-then-read-back and login-returns-user added (from the manual review).
 # taught_techniques: to be filled from the course slides.
 id: hw01
 order: 1
@@ -84,6 +85,29 @@ requirements:
         expected_status: 200
         allowed_statuses: [200, 201]
 
+  - id: hw01-login-returns-user
+    kind: http
+    title: Login returns the stored user, including its id
+    severity: minor
+    probes:
+      - method: POST
+        path: /api/users/login
+        path_alternatives:
+          - /api/user/login
+          - /users/login
+          - /user/login
+          - /api/login/login
+          - /api/users/signin
+          - /api/user/signin
+          - /users/loginpost
+        body:
+          userName|email|name: probe.user@example.com
+          password: "123456"
+        expected_status: 200
+        allowed_statuses: [200, 201]
+        expect_json: object
+        expect_values: ["{user_id}"]
+
   - id: hw01-login-wrong
     kind: http
     title: Login with a wrong password does not succeed
@@ -143,3 +167,15 @@ requirements:
           password: "123456"
         expected_status: 200
         allowed_statuses: [200, 204]
+
+  - id: hw01-update-read-back
+    kind: http
+    title: After PUT, the user is read back by the same id with the new details
+    severity: major
+    probes:
+      - method: GET
+        path: "/api/users/{user_id}"
+        path_alternatives: ["/api/user/{user_id}", "/users/{user_id}", "/user/{user_id}", "/api/login/{user_id}"]
+        expected_status: 200
+        expect_json: object
+        expect_values: ["probe.updated@example.com", "{user_id}"]
