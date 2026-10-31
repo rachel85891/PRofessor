@@ -1,8 +1,10 @@
 """Run models: one checking round and the result for each repo in it."""
 
 import uuid
+from collections.abc import Mapping, Sequence
 from datetime import datetime
 from enum import StrEnum
+from pathlib import Path
 from typing import Self
 
 from pydantic import AwareDatetime, Field, model_validator
@@ -140,8 +142,16 @@ def new_run_id(started_at: datetime) -> str:
     return f"{started_at:%Y%m%d-%H%M%S}-{suffix}"
 
 
+class FindingBrief(DomainModel):
+    """One finding in a round summary: its requirement, severity and first message line."""
+
+    requirement_id: Identifier
+    severity: Severity
+    message: NonBlankStr
+
+
 class RepoSummary(DomainModel):
-    """One repo's line in a round summary: status, finding counts and errors."""
+    """One repo's line in a round summary: status, finding counts, findings and errors."""
 
     repo_id: Identifier
     status: RepoRunStatus
@@ -149,10 +159,14 @@ class RepoSummary(DomainModel):
     major: int = Field(default=0, ge=0)
     minor: int = Field(default=0, ge=0)
     not_evaluated: int = Field(default=0, ge=0)
+    findings: tuple[FindingBrief, ...] = ()
+    """Each finding (before judging), briefly, in the order the checks reported them."""
     errors: tuple[NonBlankStr, ...] = ()
+    report_path: Path | None = None
+    """The repo's reviewer report; None when it was not written."""
 
     @classmethod
-    def from_repo_run(cls, repo_run: RepoRunResult) -> Self:
+    def from_repo_run(cls, repo_run: RepoRunResult, report_path: Path | None = None) -> Self:
         """Count the repo's findings (before judging) by severity, and its skipped checks."""
         findings = [
             finding for result in repo_run.assignment_results for finding in result.findings
@@ -164,24 +178,57 @@ class RepoSummary(DomainModel):
             major=sum(finding.severity is Severity.MAJOR for finding in findings),
             minor=sum(finding.severity is Severity.MINOR for finding in findings),
             not_evaluated=sum(len(result.not_evaluated) for result in repo_run.assignment_results),
+            findings=tuple(
+                FindingBrief(
+                    requirement_id=finding.requirement_id,
+                    severity=finding.severity,
+                    message=finding.message_en.strip().splitlines()[0],
+                )
+                for finding in findings
+            ),
             errors=repo_run.errors,
+            report_path=report_path,
         )
 
 
 class RunSummary(DomainModel):
-    """A short account of a round: its status and one line per repo."""
+    """A short account of a round: its status, one line per repo and where its reports are."""
 
     run_id: Identifier
     assignment_id: Identifier
     status: RunStatus
+    started_at: AwareDatetime | None = None
     repos: tuple[RepoSummary, ...] = ()
+    reports_dir: Path | None = None
+    """The folder of the round's reports; None until they are written."""
+    round_report: Path | None = None
+    """The round's index report (`round.md`); None until it is written."""
 
     @classmethod
-    def from_run(cls, run: Run) -> Self:
-        """Summarize `run` and every repo run it holds, in the order they were saved."""
+    def from_run(
+        cls,
+        run: Run,
+        repo_order: Sequence[str] = (),
+        report_paths: Mapping[str, Path] | None = None,
+    ) -> Self:
+        """Summarize `run` and every repo run it holds.
+
+        Repos are listed in `repo_order` (the roster's order); repos missing from it follow
+        in the order they were saved. `report_paths` maps a repo id to its report.
+        """
+        position = {repo_id: index for index, repo_id in enumerate(repo_order)}
+        repo_runs = sorted(
+            run.repo_runs,
+            key=lambda repo_run: position.get(repo_run.repo.repo_id, len(position)),
+        )
+        paths = report_paths or {}
         return cls(
             run_id=run.run_id,
             assignment_id=run.assignment_id,
             status=run.status,
-            repos=tuple(RepoSummary.from_repo_run(repo_run) for repo_run in run.repo_runs),
+            started_at=run.started_at,
+            repos=tuple(
+                RepoSummary.from_repo_run(repo_run, paths.get(repo_run.repo.repo_id))
+                for repo_run in repo_runs
+            ),
         )

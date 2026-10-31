@@ -1,0 +1,69 @@
+{#- The reviewer's report for one repo, in English. Context: see MarkdownReportWriter. -#}
+# {{ repo.student.name }}{% if report.partner %} and {{ report.partner }}{% endif %}: {{ report.assignment_id }}
+
+- Student: {{ repo.student.name }}
+{% if report.partner %}
+- Partner: {{ report.partner }}
+{% endif %}
+- Repo: {{ repo.url }}
+- Commit: {{ short_sha or "not fetched" }}
+- Run: {{ report.run_id }}
+- Assignment: {{ report.assignment_id }}
+- Status: {{ report.repo_run.status.value }}
+
+## Build and run
+
+{% if execution is none %}
+The repo was not built or run.
+{% else %}
+- Target framework: {{ execution.target_framework or "not read" }}{% if execution.framework_outdated %} (older than the course's; the student is asked to move to it, and it never lowers the grade){% endif %}
+
+- Prepare: {{ execution.prepare_status.value }}; build: {{ execution.build_status.value }}; run: {{ execution.run_status.value }}
+{% if failure %}
+- Failure: {{ failure }}
+{% endif %}
+{% endif %}
+
+{% if not sections and not not_evaluated and not report.repo_run.errors %}
+Nothing to report: every checked requirement passed.
+{% else %}
+{% if sections %}
+## Findings
+
+{% for section in sections %}
+### {{ section.label }} ({{ section.items | length }})
+
+{% for item in section.items %}
+- **{{ item.finding.requirement_id }}**: {{ item.title }}
+
+  {{ item.finding.message_en | trim | indent(2) }}
+{% if item.finding.evidence %}
+{% set evidence = item.finding.evidence %}
+
+  Evidence: `{{ evidence.file_path }}`, {% if evidence.line_start == evidence.line_end %}line {{ evidence.line_start }}{% else %}lines {{ evidence.line_start }}-{{ evidence.line_end }}{% endif %}:
+
+  {{ evidence.quote | fence }}
+  {{ evidence.quote | indent(2) }}
+  {{ evidence.quote | fence }}
+{% endif %}
+
+{% endfor %}
+{% endfor %}
+{% endif %}
+{% if not_evaluated %}
+## Not evaluated
+
+{% for item in not_evaluated %}
+- **{{ item.requirement_id }}**: {{ item.title }}. {{ item.reason }}
+{% endfor %}
+
+{% endif %}
+{% if report.repo_run.errors %}
+## Errors
+
+{% for error in report.repo_run.errors %}
+- {{ error }}
+{% endfor %}
+
+{% endif %}
+{% endif %}

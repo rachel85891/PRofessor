@@ -68,6 +68,7 @@ from hw_checker.domain.roster import (
 from hw_checker.domain.run import (
     AssignmentResult,
     AssignmentVersion,
+    FindingBrief,
     NotEvaluated,
     NotEvaluatedReason,
     RepoRunResult,
@@ -103,6 +104,7 @@ __all__ = [
     "FetchedRepo",
     "FileFact",
     "Finding",
+    "FindingBrief",
     "FindingSource",
     "FixProposal",
     "GitHubRepo",

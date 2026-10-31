@@ -1,5 +1,6 @@
 import re
 from datetime import UTC, datetime, timedelta, timezone
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -8,6 +9,7 @@ from pydantic import ValidationError
 from hw_checker.domain import (
     AssignmentResult,
     AssignmentVersion,
+    FindingBrief,
     NotEvaluated,
     NotEvaluatedReason,
     RepoRunResult,
@@ -278,13 +280,28 @@ def test_run_summary_counts_findings_by_severity_and_skipped_checks() -> None:
 
     summary = RunSummary.from_run(run)
 
+    brief = FindingBrief(
+        requirement_id="hw03-r2",
+        severity=Severity.MAJOR,
+        message="The action returns 200 with null.",
+    )
     assert summary == RunSummary(
         run_id="run-1",
         assignment_id="hw01",
         status=RunStatus.COMPLETED,
+        started_at=STARTED_AT,
         repos=(
             RepoSummary(
-                repo_id="dana-api", status=RepoRunStatus.DONE, major=2, minor=1, not_evaluated=1
+                repo_id="dana-api",
+                status=RepoRunStatus.DONE,
+                major=2,
+                minor=1,
+                not_evaluated=1,
+                findings=(
+                    brief,
+                    brief,
+                    brief.model_copy(update={"severity": Severity.MINOR}),
+                ),
             ),
             RepoSummary(
                 repo_id="other-api",
@@ -293,3 +310,56 @@ def test_run_summary_counts_findings_by_severity_and_skipped_checks() -> None:
             ),
         ),
     )
+
+
+def summary_run(*repo_ids: str) -> Run:
+    return Run(
+        run_id="run-1",
+        assignment_id="hw01",
+        started_at=STARTED_AT,
+        status=RunStatus.COMPLETED,
+        repo_runs=tuple(
+            repo_run(repo_run_id=f"run-1/{repo_id}", repo=builders.repo_target(repo_id=repo_id))
+            for repo_id in repo_ids
+        ),
+    )
+
+
+def test_run_summary_follows_the_roster_order_not_the_save_order() -> None:
+    run = summary_run("chana-api", "avigail-api", "extra-api", "batya-api")
+
+    summary = RunSummary.from_run(run, repo_order=("avigail-api", "batya-api", "chana-api"))
+
+    assert [line.repo_id for line in summary.repos] == [
+        "avigail-api",
+        "batya-api",
+        "chana-api",
+        "extra-api",
+    ]
+
+
+def test_run_summary_carries_report_paths() -> None:
+    run = summary_run("avigail-api", "batya-api")
+
+    summary = RunSummary.from_run(run, report_paths={"batya-api": Path("r/batya-api.md")})
+
+    assert [line.report_path for line in summary.repos] == [None, Path("r/batya-api.md")]
+
+
+def test_finding_brief_is_the_first_line_of_the_english_message() -> None:
+    finding = builders.finding(message_en="  POST /api/users: expected 201, got 500.\nMore.  ")
+    run = summary_run("dana-api").model_copy(
+        update={
+            "repo_runs": (
+                repo_run(
+                    assignment_results=(
+                        AssignmentResult(assignment_id="hw03", findings=(finding,)),
+                    )
+                ),
+            )
+        }
+    )
+
+    [line] = RunSummary.from_run(run).repos
+
+    assert [brief.message for brief in line.findings] == ["POST /api/users: expected 201, got 500."]
