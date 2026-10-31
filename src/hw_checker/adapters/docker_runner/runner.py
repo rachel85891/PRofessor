@@ -11,6 +11,7 @@ own, while the source and the published output stay read-only.
 import dataclasses
 import logging
 import re
+import threading
 import time
 import uuid
 from collections.abc import Callable
@@ -113,7 +114,11 @@ Sleep = Callable[[float], None]
 
 
 class DockerCodeRunner:
-    """`CodeRunner` that builds and runs student projects in hardened Docker containers."""
+    """`CodeRunner` that builds and runs student projects in hardened Docker containers.
+
+    One instance is shared by every repo of a round, and `execute` may be called from
+    several threads at once. Only the restore step is serialized (see `_restore_lock`).
+    """
 
     def __init__(
         self,
@@ -126,6 +131,10 @@ class DockerCodeRunner:
         self._engine = engine
         self._clock = clock
         self._sleep = sleep
+        # NuGet's file locks protect the shared package cache between processes on one
+        # machine, but not between containers sharing the volume: two restores extracting
+        # the same uncached package race on its temporary files. One restore at a time.
+        self._restore_lock = threading.Lock()
 
     def execute(self, request: ExecutionRequest) -> ExecutionResult:
         """Prepare, restore, build, run and probe one repo, and always clean up after it.
@@ -135,7 +144,14 @@ class DockerCodeRunner:
                 missing, or the package cache volume does not exist, so no step could start.
         """
         with log_context(run_id=request.run_id, repo_id=request.repo_id):
-            execution = _Execution(self._config, self._engine, request, self._clock, self._sleep)
+            execution = _Execution(
+                self._config,
+                self._engine,
+                request,
+                self._clock,
+                self._sleep,
+                self._restore_lock,
+            )
             return execution.run()
 
     def check_environment(self) -> None:
@@ -256,6 +272,8 @@ class _Execution:
     request: ExecutionRequest
     clock: Clock
     sleep: Sleep
+    restore_lock: threading.Lock
+    """Held around the restore step only; shared by every execution of the runner."""
     containers: list[str] = field(default_factory=list)
     networks: list[str] = field(default_factory=list)
     volumes: list[str] = field(default_factory=list)
@@ -363,19 +381,24 @@ class _Execution:
             )
 
         project = f"{WORK_MOUNT}/src/{discovery.path}"
-        restore = self._run_step(
-            RunnerStep.RESTORE,
-            self._step_spec(
-                "restore",
-                self._images().sdk,
-                ("dotnet", "restore", project),
-                work_volume,
-                cache_read_only=False,
-                network_mode="bridge",
-                limits=self.config.restore_limits,
-            ),
-            self.config.restore_timeout_seconds,
-        )
+        waiting_since = self.clock()
+        with self.restore_lock:
+            logger.debug(
+                "Restore waited %.1f s for the package cache", self.clock() - waiting_since
+            )
+            restore = self._run_step(
+                RunnerStep.RESTORE,
+                self._step_spec(
+                    "restore",
+                    self._images().sdk,
+                    ("dotnet", "restore", project),
+                    work_volume,
+                    cache_read_only=False,
+                    network_mode="bridge",
+                    limits=self.config.restore_limits,
+                ),
+                self.config.restore_timeout_seconds,
+            )
         if (kind := classify(restore.outcome)) is not None:
             return self._build_failed(kind, restore.log)
         build = self._run_step(
