@@ -40,10 +40,12 @@ from hw_checker.config.logging_setup import configure_logging
 from hw_checker.config.settings import RunnerSettings, Settings, StepLimits, load_settings
 from hw_checker.domain.errors import ExecutionEnvironmentError
 from hw_checker.graph import GraphServices, RoundGraph, build_round_graph
+from hw_checker.reporting.writer import MarkdownReportWriter
 from hw_checker.services.assignments import AssignmentCatalogService
 from hw_checker.services.deterministic_checks import DeterministicCheckService
 from hw_checker.services.execution import ExecutionService
 from hw_checker.services.repo_fetch import RepoFetchService
+from hw_checker.services.reports import ReportService
 from hw_checker.services.roster import RosterService
 from hw_checker.services.run_record import RunRecordService
 
@@ -107,6 +109,7 @@ def build_graph_services(settings: Settings) -> GraphServices:
         ),
         checks=DeterministicCheckService(DeterministicRequirementChecker(registry)),
         run_records=RunRecordService(storage.runs, SystemClock()),
+        reports=ReportService(MarkdownReportWriter(workspace / RUNS_FOLDER)),
     )
 
 

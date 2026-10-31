@@ -17,6 +17,11 @@ from hw_checker.domain import (
 )
 
 
+def merge(left: dict[str, str], right: dict[str, str]) -> dict[str, str]:
+    """Reducer for a mapping that parallel branches add keys to."""
+    return {**left, **right}
+
+
 class AssignmentInput(TypedDict):
     """What an assignment subgraph reads from its repo."""
 
@@ -42,8 +47,12 @@ class RepoInput(TypedDict):
     """What the round sends to each repo subgraph."""
 
     run_id: str
+    assignment_id: str
+    """The round's assignment."""
     repo: RepoTarget
     selected_assignment_ids: list[str]
+    partner: NotRequired[str]
+    """The partner's name when the repo belongs to a pair."""
 
 
 class RepoOutput(TypedDict):
@@ -52,7 +61,9 @@ class RepoOutput(TypedDict):
     recorded_repos: Annotated[list[str], operator.add]
     """Ids of the repos whose result was saved."""
     round_errors: Annotated[list[str], operator.add]
-    """Problems that kept a repo's result from being saved."""
+    """Problems that kept a repo's result or report from being saved."""
+    report_paths: Annotated[dict[str, str], merge]
+    """The path of each repo's report, by repo id, for the reports that were written."""
 
 
 class RepoState(RepoInput, RepoOutput):
@@ -94,6 +105,9 @@ class RoundState(RoundInput):
     repos: NotRequired[list[RepoTarget]]
     selected_assignment_ids: NotRequired[list[str]]
     roster_warnings: NotRequired[list[RosterWarning]]
+    partners: NotRequired[dict[str, str]]
+    """The partner's name, by repo id, for repos that belong to a pair."""
     recorded_repos: Annotated[list[str], operator.add]
     round_errors: Annotated[list[str], operator.add]
+    report_paths: Annotated[dict[str, str], merge]
     summary: NotRequired[RunSummary]

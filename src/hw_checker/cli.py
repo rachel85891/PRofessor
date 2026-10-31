@@ -86,7 +86,8 @@ def print_summary(
     round_errors: Sequence[str],
     out: TextIO,
 ) -> None:
-    """Print one line per repo, then the roster warnings, the round's problems and its run id."""
+    """Print one line per repo, the roster warnings, the round's problems, its run id and
+    the path of its report."""
     print(f"Round for {summary.assignment_id}: {summary.status.value}", file=out)
     width = max((len(line.repo_id) for line in summary.repos), default=0)
     for line in summary.repos:
@@ -100,8 +101,10 @@ def print_summary(
         for warning in roster_warnings:
             print(f"  - {warning.message}", file=out)
     for error in round_errors:
-        print(f"Not saved: {error}", file=out)
+        print(f"Round error: {error}", file=out)
     print(f"Run id: {summary.run_id}", file=out)
+    if summary.round_report is not None:
+        print(f"Round report: {summary.round_report}", file=out)
 
 
 def _describe(line: RepoSummary) -> str:

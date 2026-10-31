@@ -83,9 +83,23 @@ def test_print_summary_lists_repos_warnings_errors_and_the_run_id() -> None:
         "                  error: fetch_repo: repository not found",
         "Roster warnings (1):",
         "  - Row 3: no partner",
-        "Not saved: c__api: record_repo: disk full",
+        "Round error: c__api: record_repo: disk full",
         "Run id: 20261029-090000-abc123",
     ]
+
+
+def test_print_summary_ends_with_the_round_report_path() -> None:
+    summary = RunSummary(
+        run_id="r",
+        assignment_id="hw01",
+        status=RunStatus.COMPLETED,
+        round_report=Path("runs/r/reports/round.md"),
+    )
+    out = io.StringIO()
+
+    cli.print_summary(summary, [], [], out)
+
+    assert out.getvalue().splitlines()[-1] == f"Round report: {Path('runs/r/reports/round.md')}"
 
 
 def test_print_summary_says_when_no_repo_was_checked() -> None:
@@ -134,6 +148,8 @@ def test_main_runs_a_round_and_prints_its_summary(
     assert "chana__api" not in out
     run_id = re.search(r"^Run id: (\S+)$", out, re.MULTILINE)
     assert run_id is not None
+    report = Path("reports", run_id.group(1), "round.md")
+    assert out.splitlines()[-1] == f"Round report: {report}"
     settings = Settings(workspace_dir=tmp_path / "workspace")
     with open_checkpointer(settings) as checkpointer:
         saved = checkpointer.get_tuple({"configurable": {"thread_id": run_id.group(1)}})

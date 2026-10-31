@@ -13,13 +13,17 @@ RepoGraph = CompiledStateGraph[RepoState, None, RepoInput, RepoOutput]
 
 
 def build_repo_graph(assignments: tuple[Assignment, ...], services: GraphServices) -> RepoGraph:
-    """Build `fetch_repo → build_and_run → assignment_<id> (in parallel) → record_repo`.
+    """Build `fetch_repo → build_and_run → assignment_<id> (in parallel) → record_repo →
+    write_report`.
 
     `assignments` is the whole catalog, so every assignment gets a node (ADR 0019); the
     ones outside a round's selection return no result. A failed fetch goes straight to
     `record_repo`; a failed build still runs the assignment nodes.
     """
     by_id = {assignment.id: assignment for assignment in assignments}
+
+    def selected(state: RepoState) -> tuple[Assignment, ...]:
+        return tuple(by_id[i] for i in state["selected_assignment_ids"] if i in by_id)
 
     def fetch_repo(state: RepoState) -> Update:
         return guarded(
@@ -30,7 +34,6 @@ def build_repo_graph(assignments: tuple[Assignment, ...], services: GraphService
         )
 
     def build_and_run(state: RepoState) -> Update:
-        selected = tuple(by_id[i] for i in state["selected_assignment_ids"] if i in by_id)
         return guarded(
             "build_and_run",
             state["run_id"],
@@ -40,7 +43,7 @@ def build_repo_graph(assignments: tuple[Assignment, ...], services: GraphService
                     state["run_id"],
                     state["repo"].repo_id,
                     state["fetched"].working_copy,
-                    selected,
+                    selected(state),
                 )
             },
         )
@@ -60,10 +63,33 @@ def build_repo_graph(assignments: tuple[Assignment, ...], services: GraphService
             on_error=lambda message: {"round_errors": [f"{repo_id}: {message}"]},
         )
 
+    def write_report(state: RepoState) -> Update:
+        repo_id = state["repo"].repo_id
+
+        def write() -> Update:
+            path = services.reports.write_repo_report(
+                state["run_id"],
+                state["assignment_id"],
+                repo_run_result(state),
+                selected(state),
+                state.get("partner"),
+            )
+            return {"report_paths": {repo_id: str(path)}}
+
+        # A report that cannot be written is a round error; the repo keeps its status.
+        return guarded(
+            "write_report",
+            state["run_id"],
+            repo_id,
+            write,
+            on_error=lambda message: {"round_errors": [f"{repo_id}: {message}"]},
+        )
+
     builder = StateGraph(RepoState, input_schema=RepoInput, output_schema=RepoOutput)
     builder.add_node("fetch_repo", fetch_repo)
     builder.add_node("build_and_run", build_and_run)
     builder.add_node("record_repo", record_repo)
+    builder.add_node("write_report", write_report)
     builder.add_edge(START, "fetch_repo")
     builder.add_conditional_edges("fetch_repo", _after_fetch, ["build_and_run", "record_repo"])
     node_names = [assignment_node_name(assignment.id) for assignment in assignments]
@@ -71,7 +97,8 @@ def build_repo_graph(assignments: tuple[Assignment, ...], services: GraphService
         builder.add_node(node_name, build_assignment_graph(assignment, services))
         builder.add_edge("build_and_run", node_name)
     builder.add_edge(node_names or "build_and_run", "record_repo")
-    builder.add_edge("record_repo", END)
+    builder.add_edge("record_repo", "write_report")
+    builder.add_edge("write_report", END)
     return builder.compile(name="check_repo")
 
 

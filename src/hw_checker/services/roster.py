@@ -105,6 +105,21 @@ class RosterService:
         selected = tuple(repo for repo in repos if not repo_ids or repo.repo_id in repo_ids)
         return selected if limit is None else selected[:limit]
 
+    @staticmethod
+    def partner_names(roster: RosterResult) -> dict[str, str]:
+        """Return each paired repo's partner name, by repo id; single repos are left out."""
+        pairs = {pair.pair_id: pair for pair in roster.pairs}
+        partners: dict[str, str] = {}
+        for repo in roster.repos:
+            others = [
+                member.name
+                for member in pairs[repo.pair_id].members
+                if member.github_url != repo.url
+            ]
+            if others:
+                partners[repo.repo_id] = " and ".join(others)
+        return partners
+
 
 def _parse_rows(rows: tuple[RosterRow, ...], warnings: list[RosterWarning]) -> list[_Entry]:
     entries: list[_Entry] = []
