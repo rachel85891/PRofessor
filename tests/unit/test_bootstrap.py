@@ -1,5 +1,8 @@
+import ssl
 from pathlib import Path
+from typing import Any
 
+import httpx2
 import pytest
 from pydantic import BaseModel, SecretStr
 
@@ -82,6 +85,30 @@ def test_llm_client_is_built_with_the_api_key() -> None:
     client = bootstrap.build_llm_client(settings)
 
     assert isinstance(client, OpenAICompatibleLLMClient)
+
+
+def test_llm_calls_trust_the_system_certificate_store(monkeypatch: pytest.MonkeyPatch) -> None:
+    real_default_context = ssl.create_default_context
+    system_context = real_default_context()
+
+    def default_context(*args: Any, **kwargs: Any) -> ssl.SSLContext:
+        # Only the no-argument call is the system store; the SDK's own calls pass cafile.
+        return real_default_context(*args, **kwargs) if args or kwargs else system_context
+
+    monkeypatch.setattr(ssl, "create_default_context", default_context)
+    built: list[dict[str, Any]] = []
+
+    class RecordingClient(httpx2.Client):
+        def __init__(self, **kwargs: Any) -> None:
+            built.append(kwargs)
+            super().__init__(**kwargs)
+
+    monkeypatch.setattr(httpx2, "Client", RecordingClient)
+    settings = Settings(llm=LlmSettings(api_key=SecretStr(FAKE_KEY), timeout_seconds=45))
+
+    bootstrap.build_llm_client(settings)
+
+    assert built == [{"verify": system_context, "timeout": 45}]
 
 
 def test_llm_config_maps_every_role_and_limit() -> None:

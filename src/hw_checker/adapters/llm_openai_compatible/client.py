@@ -9,6 +9,7 @@ and the reply are never logged, and the API key never appears in a message or a 
 """
 
 import logging
+import ssl
 import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
@@ -192,6 +193,13 @@ class OpenAICompatibleLLMClient:
                 retryable=True,
             )
         if isinstance(error, openai.APIConnectionError):
+            if _caused_by_tls(error):
+                return _AttemptError(
+                    "network",
+                    "The LLM endpoint's TLS certificate is not trusted; check the network's "
+                    "certificate (a TLS-inspecting proxy needs its root certificate in the "
+                    "system store).",
+                )
             return _AttemptError(
                 "network",
                 f"Cannot reach the LLM endpoint {self._config.base_url}; check the network.",
@@ -243,6 +251,15 @@ def _usage(raw: object) -> _Usage:
     if not metadata:
         return _Usage()
     return _Usage(metadata.get("input_tokens"), metadata.get("output_tokens"))
+
+
+def _caused_by_tls(error: BaseException) -> bool:
+    cause: BaseException | None = error
+    while cause is not None:
+        if isinstance(cause, ssl.SSLError):
+            return True
+        cause = cause.__cause__ or cause.__context__
+    return False
 
 
 def _with_attempts(message: str, attempts: int) -> str:

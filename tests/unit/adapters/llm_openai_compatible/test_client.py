@@ -2,6 +2,7 @@
 
 import json
 import logging
+import ssl
 from collections.abc import Callable
 from typing import Any
 
@@ -198,6 +199,36 @@ def test_a_network_failure_is_an_llm_error() -> None:
 
     with pytest.raises(LLMError, match=r"Cannot reach the LLM endpoint https://llm\.test/api/v1"):
         llm.complete("reviewer", PROMPT, Pong)
+
+
+def test_an_untrusted_certificate_names_the_tls_cause() -> None:
+    def untrusted(request: httpx2.Request) -> httpx2.Response:
+        raise httpx2.ConnectError("certificate verify failed", request=request) from (
+            ssl.SSLCertVerificationError("unable to get local issuer certificate")
+        )
+
+    llm, _ = client(Transport(untrusted), max_retries=0)
+
+    with pytest.raises(LLMError) as raised:
+        llm.complete("reviewer", PROMPT, Pong)
+
+    assert str(raised.value) == (
+        "The LLM endpoint's TLS certificate is not trusted; check the network's certificate "
+        "(a TLS-inspecting proxy needs its root certificate in the system store)."
+    )
+
+
+def test_a_network_failure_is_not_retried() -> None:
+    def refused(request: httpx2.Request) -> httpx2.Response:
+        raise httpx2.ConnectError("connection refused", request=request)
+
+    transport = Transport(refused)
+    llm, _ = client(transport)
+
+    with pytest.raises(LLMError, match=r"check the network\.$"):
+        llm.complete("reviewer", PROMPT, Pong)
+
+    assert len(transport.requests) == 1
 
 
 def test_a_prompt_that_is_too_long_is_refused_before_sending() -> None:

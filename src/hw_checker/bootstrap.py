@@ -8,10 +8,12 @@ import importlib
 import os
 import pkgutil
 import sqlite3
+import ssl
 from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
 from enum import Enum
 
+import httpx2
 from langgraph.checkpoint.serde.jsonplus import JsonPlusSerializer
 from langgraph.checkpoint.sqlite import SqliteSaver
 from langgraph.types import Checkpointer
@@ -225,7 +227,18 @@ def build_llm_client(settings: Settings) -> LLMClient:
             "The LLM API key is not set. Add HW_CHECKER_LLM__API_KEY=<your key> to .env "
             f"(see .env.example); it is the key for {settings.llm.base_url}."
         )
-    return OpenAICompatibleLLMClient(llm_config(settings.llm), api_key)
+    return OpenAICompatibleLLMClient(
+        llm_config(settings.llm), api_key, http_client=llm_http_client(settings.llm)
+    )
+
+
+def llm_http_client(llm: LlmSettings) -> httpx2.Client:
+    """The HTTP client for LLM calls, trusting the system certificate store.
+
+    The SDK's default trusts only certifi's bundle, which rejects a TLS-inspecting
+    proxy whose root certificate is installed in the system store.
+    """
+    return httpx2.Client(verify=ssl.create_default_context(), timeout=llm.timeout_seconds)
 
 
 def llm_config(llm: LlmSettings) -> LlmClientConfig:
