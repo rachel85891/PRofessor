@@ -16,10 +16,12 @@ from hw_checker.checks.registry import CheckRegistry
 from hw_checker.config.settings import REPO_ROOT
 from hw_checker.domain import RepoRunStatus, RosterRow, RunStatus, StepStatus
 from hw_checker.graph import GraphServices, RoundInput, build_round_graph
+from hw_checker.reporting.writer import MarkdownReportWriter
 from hw_checker.services.assignments import AssignmentCatalogService
 from hw_checker.services.deterministic_checks import DeterministicCheckService
 from hw_checker.services.execution import ExecutionService
 from hw_checker.services.repo_fetch import RepoFetchService
+from hw_checker.services.reports import ReportService
 from hw_checker.services.roster import RosterService
 from hw_checker.services.run_record import RunRecordService
 from tests.fakes.clock import FakeClock
@@ -51,6 +53,7 @@ def test_round_graph_checks_the_sample_solution_end_to_end(
         execution=ExecutionService(docker_runner, tmp_path / "runs", Path("logs")),
         checks=DeterministicCheckService(DeterministicRequirementChecker(registry)),
         run_records=RunRecordService(storage.runs, FakeClock()),
+        reports=ReportService(MarkdownReportWriter(tmp_path / "runs")),
     )
     graph = build_round_graph(catalog.list_assignments(), services, max_parallel_repos=1)
 
@@ -72,3 +75,14 @@ def test_round_graph_checks_the_sample_solution_end_to_end(
     assert run.status is RunStatus.COMPLETED
     assert output["summary"].repos[0].repo_id == REPO_ID
     assert (tmp_path / "runs" / "it-round" / "logs" / REPO_ID).is_dir()
+    reports = tmp_path / "runs" / "it-round" / "reports"
+    assert output["summary"].reports_dir == reports
+    assert output["summary"].repos[0].report_path == reports / f"{REPO_ID}.md"
+    repo_report = (reports / f"{REPO_ID}.md").read_text(encoding="utf-8")
+    assert "# Test Student: hw01" in repo_report
+    assert STUDENT_URL in repo_report
+    assert "Nothing to report" in repo_report
+    round_report = (reports / "round.md").read_text(encoding="utf-8")
+    assert f"[report]({REPO_ID}.md)" in round_report
+    assert "Test Student" in round_report
+    assert "Test Student" in (reports / "counts.csv").read_text(encoding="utf-8-sig")

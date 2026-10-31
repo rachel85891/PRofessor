@@ -30,13 +30,15 @@ from hw_checker.services.assignments import AssignmentCatalogService
 from hw_checker.services.deterministic_checks import DeterministicCheckService
 from hw_checker.services.execution import ExecutionService
 from hw_checker.services.repo_fetch import RepoFetchService
+from hw_checker.services.reports import ReportService
 from hw_checker.services.roster import RosterService
 from hw_checker.services.run_record import RunRecordService
 from tests.fakes.assignments import FakeAssignmentSource
-from tests.fakes.checks import FakeCheckCatalog, FakeRequirementChecker
+from tests.fakes.checks import FakeCheckCatalog, FakeRequirementChecker, Outcome
 from tests.fakes.clock import FakeClock
 from tests.fakes.execution import FakeCodeRunner
 from tests.fakes.git import FakeGitClient
+from tests.fakes.reporting import FakeReportWriter
 from tests.fakes.roster import FakeRosterReader
 from tests.fakes.storage import InMemoryStorage
 from tests.unit.domain import builders
@@ -48,6 +50,10 @@ REPO_IDS = tuple(f"{name}__api" for name in NAMES)
 
 def url(name: str) -> str:
     return f"https://github.com/{name}/api"
+
+
+def student_name(name: str) -> str:
+    return f"{name.title()} Test"
 
 
 def http_requirement(assignment_id: str, path: str) -> Requirement:
@@ -119,17 +125,29 @@ class Harness:
     names: tuple[str, ...] = NAMES
     storage: InMemoryStorage = field(default_factory=InMemoryStorage)
     source: FakeAssignmentSource | None = None
+    outcomes: Mapping[str, Outcome] = field(default_factory=dict)
+    """Check outcomes by requirement id, on top of hw01-build being not evaluated."""
+    partners: Mapping[str, str] = field(default_factory=dict)
+    """The partner each roster row names, by the row's name."""
+    report_writer: FakeReportWriter = field(default_factory=FakeReportWriter)
 
     def __post_init__(self) -> None:
         self.runner = self.runner or FakeCodeRunner(results=self.results)
         self.source = self.source or FakeAssignmentSource(self.catalog)
         self.git = FakeGitClient(errors=self.git_errors)
-        self.checker = FakeRequirementChecker({"hw01-build": NotEvaluatedReason.BUILD_FAILED})
+        self.checker = FakeRequirementChecker(
+            {"hw01-build": NotEvaluatedReason.BUILD_FAILED} | dict(self.outcomes)
+        )
 
     def services(self, **overrides: Any) -> GraphServices:
         assert self.runner is not None and self.source is not None
         rows = [
-            RosterRow(row_number=index + 2, name=f"{name.title()} Test", github_url=url(name))
+            RosterRow(
+                row_number=index + 2,
+                name=student_name(name),
+                github_url=url(name),
+                partner_name=self.partners.get(name),
+            )
             for index, name in enumerate(self.names)
         ]
         values: dict[str, Any] = {
@@ -139,6 +157,7 @@ class Harness:
             "execution": ExecutionService(self.runner, self.tmp_path / "runs", Path("logs")),
             "checks": DeterministicCheckService(self.checker),
             "run_records": RunRecordService(self.storage.runs, FakeClock()),
+            "reports": ReportService(self.report_writer),
         }
         return GraphServices(**(values | overrides))
 

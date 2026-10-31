@@ -336,3 +336,16 @@ def test_select_repos_rejects_an_id_that_is_not_in_the_roster() -> None:
 def test_select_repos_rejects_a_limit_below_one() -> None:
     with pytest.raises(RosterError, match="at least 1"):
         RosterService.select_repos(three_repos().repos, limit=0)
+
+
+def test_partner_names_map_each_paired_repo_to_the_other_member() -> None:
+    result = load(
+        row(2, "Avigail Test", gh("avigail"), partner="Batya Test"),
+        row(3, "Batya Test", gh("batya"), partner="Avigail Test"),
+        row(4, "Chana Test", gh("chana")),
+    )
+
+    assert RosterService.partner_names(result) == {
+        "avigail__api": "Batya Test",
+        "batya__api": "Avigail Test",
+    }

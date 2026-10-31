@@ -1,0 +1,25 @@
+{#- The round's index report, in English, one row per repo in roster order. Counts only: no grade yet. -#}
+# Round {{ summary.run_id }}: {{ summary.assignment_id }}
+
+- Assignment: {{ summary.assignment_id }}
+- Run: {{ summary.run_id }}
+- Started: {{ started }}
+- Status: {{ summary.status.value }}
+
+{% if rows %}
+| Student | Repo | Status | Critical | Major | Minor | Not evaluated | Report |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+{% for row in rows %}
+| {{ row.repo.student.name | cell }} | [{{ row.repo.owner | cell }}/{{ row.repo.name | cell }}]({{ row.repo.url }}) | {{ row.status }} | {% if row.line %}{{ row.line.critical }} | {{ row.line.major }} | {{ row.line.minor }} | {{ row.line.not_evaluated }}{% else %}- | - | - | -{% endif %} | {% if row.report_name %}[report]({{ row.report_name }}){% else %}not written{% endif %} |
+{% endfor %}
+{% else %}
+No repos were checked.
+{% endif %}
+{% if roster_warnings %}
+
+## Roster warnings ({{ roster_warnings | length }})
+
+{% for warning in roster_warnings %}
+- {{ warning.message }}
+{% endfor %}
+{% endif %}
