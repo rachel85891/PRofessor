@@ -4,7 +4,7 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from hw_checker.domain import CommitInfo, FetchedRepo, PullRequestRef
+from hw_checker.domain import BranchHead, CommitInfo, FetchedRepo, ForkRef, PullRequestRef
 
 AUTHORED_AT = datetime(2026, 10, 19, 21, 30, tzinfo=UTC)
 
@@ -31,14 +31,25 @@ def test_commit_info_rejects_empty_sha() -> None:
 
 
 def test_pull_request_ref_builds() -> None:
-    ref = PullRequestRef(number=3, url="https://github.com/dana/api/pull/3")
+    ref = PullRequestRef(number=3, url="https://github.com/dana/api/pull/3", created=True)
 
-    assert ref.number == 3
+    assert (ref.number, ref.created) == (3, True)
 
 
 def test_pull_request_ref_rejects_number_below_one() -> None:
     with pytest.raises(ValidationError):
-        PullRequestRef(number=0, url="https://github.com/dana/api/pull/0")
+        PullRequestRef(number=0, url="https://github.com/dana/api/pull/0", created=True)
+
+
+def test_fork_ref_has_a_full_name() -> None:
+    fork = ForkRef(owner="review-bot", name="check_dana", push_url="https://github.com/x.git")
+
+    assert fork.full_name == "review-bot/check_dana"
+
+
+def test_branch_head_needs_a_sha() -> None:
+    with pytest.raises(ValidationError):
+        BranchHead(name="main", sha="")
 
 
 def test_fetched_repo_requires_a_commit_sha() -> None:

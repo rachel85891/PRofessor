@@ -31,6 +31,7 @@ from hw_checker.adapters.docker_runner.runner_config import (
     FrameworkImages as RunnerImages,
 )
 from hw_checker.adapters.git_local import LocalGitClient
+from hw_checker.adapters.github_api import GitHubCodeHost, GitHubConfig
 from hw_checker.adapters.llm_openai_compatible import LlmClientConfig, OpenAICompatibleLLMClient
 from hw_checker.adapters.roster_excel import ExcelRosterReader, RosterColumns
 from hw_checker.adapters.storage_sqlite import SqlStorage, migrate
@@ -41,6 +42,7 @@ from hw_checker.checks.registry import CheckRegistry
 from hw_checker.config.errors import ConfigurationError
 from hw_checker.config.logging_setup import configure_logging
 from hw_checker.config.settings import (
+    GitHubSettings,
     LlmSettings,
     RunnerSettings,
     Settings,
@@ -239,6 +241,42 @@ def llm_http_client(llm: LlmSettings) -> httpx2.Client:
     proxy whose root certificate is installed in the system store.
     """
     return httpx2.Client(verify=ssl.create_default_context(), timeout=llm.timeout_seconds)
+
+
+def build_code_host(settings: Settings) -> GitHubCodeHost:
+    """The GitHub code host for the publishing account; a missing token fails on first use."""
+    return GitHubCodeHost(github_config(settings.github), settings.github_token)
+
+
+def github_config(github: GitHubSettings) -> GitHubConfig:
+    """The GitHub code host's configuration from the GitHub settings."""
+    return GitHubConfig(
+        api_url=github.api_url,
+        web_url=github.web_url,
+        account=github.account,
+        fork_prefix=github.fork_prefix,
+        timeout_seconds=github.timeout_seconds,
+        fork_wait_seconds=github.fork_wait_seconds,
+        fork_poll_seconds=github.fork_poll_seconds,
+    )
+
+
+def build_publishing_git(settings: Settings) -> LocalGitClient:
+    """The git client that pushes review branches, with the publishing account's token.
+
+    The round's fetches use a client without the token.
+    """
+    git = settings.git
+    return LocalGitClient(
+        git.executable,
+        git.timeout_seconds,
+        git.commit_author_name,
+        git.commit_author_email,
+        ssl_backend=git.ssl_backend,
+        network_retries=git.network_retries,
+        retry_backoff_seconds=git.retry_backoff_seconds,
+        push_token=settings.github_token,
+    )
 
 
 def llm_config(llm: LlmSettings) -> LlmClientConfig:

@@ -4,7 +4,7 @@ import pytest
 from pydantic import SecretStr
 
 from hw_checker.config.errors import ConfigurationError
-from hw_checker.config.settings import Settings, load_settings
+from hw_checker.config.settings import DEFAULT_CONFIG_PATH, Settings, load_settings
 
 
 @pytest.fixture(autouse=True)
@@ -401,8 +401,16 @@ def test_storage_blank_database_url_is_rejected(tmp_path: Path) -> None:
 LLM_FAKE_KEY = "sk-or-not-a-real-key"  # pragma: allowlist secret
 
 
+def test_repo_config_names_the_publishing_account(tmp_path: Path) -> None:
+    settings = load_settings(config_path=DEFAULT_CONFIG_PATH, env_path=tmp_path / ".env")
+
+    assert settings.github.account == "seeandbesharp-code-review"
+    assert settings.github.fork_prefix == "check_"
+    assert settings.github_token is None
+
+
 def test_repo_config_maps_every_llm_role_to_a_model(tmp_path: Path) -> None:
-    from hw_checker.config.settings import DEFAULT_CONFIG_PATH, LLM_ROLES
+    from hw_checker.config.settings import LLM_ROLES
 
     llm = load_settings(config_path=DEFAULT_CONFIG_PATH, env_path=tmp_path / ".env").llm
 

@@ -10,6 +10,8 @@ import uuid
 from collections.abc import Callable
 from pathlib import Path
 
+from pydantic import SecretStr
+
 from hw_checker.adapters.git_local.log_format import LOG_FORMAT, parse_log_output
 from hw_checker.adapters.git_local.network_errors import transient_failure
 from hw_checker.adapters.git_local.runner import CommandRunner, GitRunner, run_subprocess
@@ -25,6 +27,14 @@ logger = logging.getLogger(__name__)
 
 _SHA_PATTERN = re.compile(r"^[0-9a-f]{40}(?:[0-9a-f]{24})?$")
 _REMOTE_HEAD_PREFIX = "origin/"
+PUSH_TOKEN_VARIABLE = "HWC_GIT_PUSH_TOKEN"
+"""The environment variable that holds the push token, set for the push command only."""
+# Answers git's credential request with the token from that variable. The helper's text
+# names the variable, never the token, so the token is in no argument, URL or config.
+CREDENTIAL_HELPER = (
+    '!f() { test "$1" = get || exit 0; echo username=x-access-token; '
+    f'echo "password=${PUSH_TOKEN_VARIABLE}"; }}; f'
+)
 
 
 class LocalGitClient:
@@ -33,7 +43,8 @@ class LocalGitClient:
     Working copies always hold the repo's exact bytes (`core.autocrlf=false`). When
     `ssl_backend` is set, every command uses that TLS backend (`http.sslBackend`). A clone
     or fetch that fails with a transient network error is retried up to `network_retries`
-    times, `retry_backoff_seconds` apart.
+    times, `retry_backoff_seconds` apart. With a `push_token`, pushes authenticate with it
+    through a credential helper that reads it from the push command's environment.
     """
 
     def __init__(
@@ -47,6 +58,7 @@ class LocalGitClient:
         network_retries: int = 2,
         retry_backoff_seconds: float = 3.0,
         sleep: Callable[[float], None] = time.sleep,
+        push_token: SecretStr | None = None,
     ) -> None:
         if network_retries < 0 or retry_backoff_seconds < 0:
             raise ValueError("network_retries and retry_backoff_seconds cannot be negative")
@@ -56,6 +68,7 @@ class LocalGitClient:
         self._network_retries = network_retries
         self._retry_backoff = retry_backoff_seconds
         self._sleep = sleep
+        self._push_token = push_token
 
     def clone_or_fetch(self, url: str, destination: Path) -> None:
         """Clone `url` into `destination`, or update an existing clone to the remote head.
@@ -208,6 +221,9 @@ class LocalGitClient:
     def push(self, repo_dir: Path, branch_name: str, remote_url: str) -> None:
         """Push `branch_name` to the same name at `remote_url`. Never force-pushes.
 
+        With a push token, the token reaches git only through this command's environment;
+        it is never put in the URL, the repo config or a log record.
+
         Raises:
             PublishError: the name or URL is invalid, or the push was rejected or failed.
             ExecutionEnvironmentError: the git executable is not available.
@@ -216,7 +232,16 @@ class LocalGitClient:
         _reject_option_like(remote_url, "remote URL", PublishError)
         ref = f"refs/heads/{branch_name}"
         # No '+' in the refspec and no --force: a non-fast-forward push is rejected.
-        self._git.run(["push", "--", remote_url, f"{ref}:{ref}"], repo_dir, PublishError)
+        push = ["push", "--", remote_url, f"{ref}:{ref}"]
+        if self._push_token is None:
+            self._git.run(push, repo_dir, PublishError)
+            return
+        self._git.run(
+            ["-c", f"credential.helper={CREDENTIAL_HELPER}", *push],
+            repo_dir,
+            PublishError,
+            secret_env={PUSH_TOKEN_VARIABLE: self._push_token.get_secret_value()},
+        )
 
     def _validate_branch_name(
         self, repo_dir: Path, branch_name: str, error: type[HwCheckerError]
