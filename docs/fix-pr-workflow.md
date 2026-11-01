@@ -3,7 +3,7 @@
 Written by the planner on 2026-10-29 from the manual pilot of 32 review PRs, which the developer and the lecturer approved (2026-10-31). Publishing (stage 13a, ADR 0018) and the fixer (stage 14) reproduce it exactly.
 
 ## 1. Accounts and repos
-- **Publishing account:** `seeandbesharp-code-review`, a dedicated review account, never the developer's personal account. Its token is a classic PAT with the `public_repo` scope only, stored in `.env.github` (ignored by git), never in `.env.example`, logs or reports.
+- **Publishing account:** `seeandbesharp-code-review`, a dedicated review account, never the developer's personal account. Its token is a classic PAT with the `public_repo` scope only, stored as `HW_CHECKER_GITHUB_TOKEN` in `.env` (ignored by git; see `.env.example`), never in logs or reports.
 - **One fork per student repo,** in the publishing account, named `check_<student-github-username>`, created once with `default_branch_only: true`, and reused every round.
 - **One branch per assignment round:** `hw-review/<assignment-id>-<YYYY-MM-DD>`, based on the commit of the student's default branch (`main` or `master`) that was checked.
 - **Commit author:** `seeandbesharp-code-review <243667946+seeandbesharp-code-review@users.noreply.github.com>`, never a personal email.
