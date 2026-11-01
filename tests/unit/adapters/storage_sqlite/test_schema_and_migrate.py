@@ -24,7 +24,9 @@ TABLES = {
     "judged_findings",
     "proposals",
     "review_decisions",
+    "publish_log",
 }
+PUBLISHING_COLUMNS = {"base_sha", "head_sha", "local_repo_dir", "pr_title", "pr_body"}
 
 
 def url_for(path: Path) -> str:
@@ -63,7 +65,7 @@ def test_migrate_is_idempotent(tmp_path: Path) -> None:
     try:
         with db.engine.connect() as connection:
             versions = connection.execute(text("SELECT version_num FROM alembic_version")).all()
-        assert versions == [("0002",)]
+        assert versions == [("0003",)]
     finally:
         db.dispose()
 
@@ -128,8 +130,70 @@ def test_downgrade_to_0001_drops_only_the_not_evaluated_table(tmp_path: Path) ->
     db = Database(url)
     try:
         tables = set(inspect(db.engine).get_table_names())
-        assert "not_evaluated" not in tables
-        assert tables >= TABLES - {"not_evaluated"}
+        assert not tables & {"not_evaluated", "publish_log"}
+        assert tables >= TABLES - {"not_evaluated", "publish_log"}
+        with db.session("count") as session:
+            assert len(session.scalars(select(RepoRunRow)).all()) == 3
+    finally:
+        db.dispose()
+    migrate(url)
+
+
+def test_migrate_upgrades_a_0002_database_and_keeps_its_proposals(tmp_path: Path) -> None:
+    url = url_for(tmp_path / "hw.db")
+    run_alembic(url, "upgrade", "0002")
+    storage = SqlStorage(url)
+    try:
+        storage.runs.save(builders.full_run())
+    finally:
+        storage.close()
+    repo_run_id = builders.full_run().repo_runs[2].repo_run_id
+    db = Database(url)
+    try:
+        with db.engine.begin() as connection:
+            connection.execute(
+                text(
+                    "INSERT INTO proposals (proposal_id, repo_run_id, repo, branch_name, patches,"
+                    " diff, verified, status) VALUES ('p-old', :repo_run_id, '{}', 'b', '[]', '',"
+                    " 1, 'pending_review')"
+                ),
+                {"repo_run_id": repo_run_id},
+            )
+    finally:
+        db.dispose()
+
+    migrate(url)
+
+    db = Database(url)
+    try:
+        inspector = inspect(db.engine)
+        columns = {column["name"] for column in inspector.get_columns("proposals")}
+        assert columns >= PUBLISHING_COLUMNS
+        assert "publish_log" in inspector.get_table_names()
+        with db.engine.connect() as connection:
+            row = connection.execute(text("SELECT base_sha, pr_title FROM proposals")).one()
+        assert tuple(row) == ("", "")
+    finally:
+        db.dispose()
+
+
+def test_downgrade_to_0002_drops_the_publishing_data_only(tmp_path: Path) -> None:
+    url = url_for(tmp_path / "hw.db")
+    migrate(url)
+    storage = SqlStorage(url)
+    try:
+        storage.runs.save(builders.full_run())
+    finally:
+        storage.close()
+
+    run_alembic(url, "downgrade", "0002")
+
+    db = Database(url)
+    try:
+        inspector = inspect(db.engine)
+        assert "publish_log" not in inspector.get_table_names()
+        columns = {column["name"] for column in inspector.get_columns("proposals")}
+        assert not columns & PUBLISHING_COLUMNS
         with db.session("count") as session:
             assert len(session.scalars(select(RepoRunRow)).all()) == 3
     finally:

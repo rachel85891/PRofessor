@@ -65,3 +65,11 @@ class ReportWriter(Protocol):
             StorageError: the files cannot be written.
         """
         ...
+
+    def write_diff(self, run_id: str, repo_id: str, diff: str) -> Path:
+        """Write a repo's proposed changes (`<repo_id>.diff`) next to its report.
+
+        Raises:
+            StorageError: the file cannot be written.
+        """
+        ...

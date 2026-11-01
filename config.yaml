@@ -47,6 +47,21 @@ git:
   # The author of fix commits (commit_author_name, commit_author_email) is a personal
   # identity, so it is set in .env, not here. See .env.example.
 
+github:
+  # Publishing review pull requests (docs/fix-pr-workflow.md, ADR 0018). The account is the
+  # dedicated review account, never a personal one; its token is HW_CHECKER_GITHUB_TOKEN in
+  # .env (see .env.example).
+  api_url: https://api.github.com
+  web_url: https://github.com
+  account: seeandbesharp-code-review
+  # Each student repo gets one fork in the account, named <fork_prefix><student's username>,
+  # created once and reused every round.
+  fork_prefix: check_
+  timeout_seconds: 30
+  # How long to wait for a new fork to answer, checking every fork_poll_seconds.
+  fork_wait_seconds: 60
+  fork_poll_seconds: 2
+
 runner:
   # Images pinned by digest, so a patch release never changes results mid-semester.
   # Update the digests at the start of each semester, and when a .NET security patch is

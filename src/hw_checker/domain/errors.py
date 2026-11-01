@@ -37,6 +37,10 @@ class PublishError(HwCheckerError):
     """Pushing a branch or opening or updating a pull request failed."""
 
 
+class ReviewError(HwCheckerError):
+    """A review decision cannot be applied (an unknown repo, or a proposal in the wrong status)."""
+
+
 class InvalidAssignmentError(HwCheckerError):
     """Assignment data exists but is invalid (for example a malformed requirements file)."""
 

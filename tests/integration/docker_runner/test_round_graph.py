@@ -20,11 +20,13 @@ from hw_checker.reporting.writer import MarkdownReportWriter
 from hw_checker.services.assignments import AssignmentCatalogService
 from hw_checker.services.deterministic_checks import DeterministicCheckService
 from hw_checker.services.execution import ExecutionService
+from hw_checker.services.publishing import PublishService
 from hw_checker.services.repo_fetch import RepoFetchService
 from hw_checker.services.reports import ReportService
 from hw_checker.services.roster import RosterService
 from hw_checker.services.run_record import RunRecordService
 from tests.fakes.clock import FakeClock
+from tests.fakes.code_host import FakeCodeHost
 from tests.fakes.git import FakeGitClient
 from tests.fakes.roster import FakeRosterReader
 from tests.integration.docker_runner.conftest import FIXTURE
@@ -46,14 +48,19 @@ def test_round_graph_checks_the_sample_solution_end_to_end(
     roster = FakeRosterReader(
         [RosterRow(row_number=2, name="Test Student", github_url=STUDENT_URL)]
     )
+    git = FakeGitClient(sources={STUDENT_URL: FIXTURE})
+    writer = MarkdownReportWriter(tmp_path / "runs")
     services = GraphServices(
         roster=RosterService(roster),
         assignments=catalog,
-        fetch=RepoFetchService(FakeGitClient(sources={STUDENT_URL: FIXTURE}), tmp_path / "clones"),
+        fetch=RepoFetchService(git, tmp_path / "clones"),
         execution=ExecutionService(docker_runner, tmp_path / "runs", Path("logs")),
         checks=DeterministicCheckService(DeterministicRequirementChecker(registry)),
         run_records=RunRecordService(storage.runs, FakeClock()),
-        reports=ReportService(MarkdownReportWriter(tmp_path / "runs")),
+        reports=ReportService(writer),
+        publishing=PublishService(
+            storage.proposals, FakeCodeHost(), git, writer, FakeClock(), True
+        ),
     )
     graph = build_round_graph(catalog.list_assignments(), services, max_parallel_repos=1)
 

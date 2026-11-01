@@ -7,10 +7,13 @@ import pytest
 from pydantic import BaseModel, SecretStr
 
 from hw_checker import bootstrap
+from hw_checker.adapters.git_local import LocalGitClient
+from hw_checker.adapters.github_api import GitHubCodeHost
 from hw_checker.adapters.llm_openai_compatible import OpenAICompatibleLLMClient
 from hw_checker.config.errors import ConfigurationError
 from hw_checker.config.settings import (
     REPO_ROOT,
+    GitHubSettings,
     LlmSettings,
     RunnerSettings,
     Settings,
@@ -109,6 +112,26 @@ def test_llm_calls_trust_the_system_certificate_store(monkeypatch: pytest.Monkey
     bootstrap.build_llm_client(settings)
 
     assert built == [{"verify": system_context, "timeout": 45}]
+
+
+def test_github_config_maps_the_account_and_limits() -> None:
+    github = GitHubSettings(account="review-bot", fork_prefix="fork_", fork_wait_seconds=9)
+
+    config = bootstrap.github_config(github)
+
+    assert (config.account, config.fork_prefix, config.fork_wait_seconds) == (
+        "review-bot",
+        "fork_",
+        9,
+    )
+    assert (config.api_url, config.web_url) == (github.api_url, github.web_url)
+
+
+def test_publishing_clients_are_built_without_a_token_too() -> None:
+    settings = Settings()
+
+    assert isinstance(bootstrap.build_code_host(settings), GitHubCodeHost)
+    assert isinstance(bootstrap.build_publishing_git(settings), LocalGitClient)
 
 
 def test_llm_config_maps_every_role_and_limit() -> None:

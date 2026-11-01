@@ -14,6 +14,7 @@ from hw_checker.adapters.storage_sqlite.schema import (
     JudgedFindingRow,
     NotEvaluatedRow,
     ProposalRow,
+    PublishLogRow,
     RepoRunRow,
     ReviewDecisionRow,
     RunRow,
@@ -22,6 +23,7 @@ from hw_checker.domain import (
     FixProposal,
     JudgedFinding,
     ProposalStatus,
+    PublishRecord,
     RepoRunResult,
     ReviewDecision,
     Run,
@@ -163,7 +165,7 @@ class SqlFindingRepository:
 
 
 class SqlProposalRepository:
-    """`ProposalRepository` over SQL. Review decisions are kept as history."""
+    """`ProposalRepository` over SQL. Review decisions and the publish log are kept as history."""
 
     def __init__(self, database: Database) -> None:
         self._database = database
@@ -199,6 +201,30 @@ class SqlProposalRepository:
             with _loading("proposals"):
                 return tuple(mapping.proposal_from_row(row) for row in rows)
 
+    def list_for_run(self, run_id: str) -> tuple[FixProposal, ...]:
+        with self._database.session(f"list proposals of run {run_id}") as session:
+            rows = session.scalars(
+                select(ProposalRow)
+                .join(RepoRunRow, RepoRunRow.repo_run_id == ProposalRow.repo_run_id)
+                .where(RepoRunRow.run_id == run_id)
+                .order_by(ProposalRow.id)
+            ).all()
+            with _loading(f"proposals of run {run_id}"):
+                return tuple(mapping.proposal_from_row(row) for row in rows)
+
+    def get_for_repo_run(self, repo_run_id: str) -> FixProposal | None:
+        with self._database.session(f"load the proposal for {repo_run_id}") as session:
+            row = session.scalars(
+                select(ProposalRow)
+                .where(ProposalRow.repo_run_id == repo_run_id)
+                .order_by(ProposalRow.id.desc())
+                .limit(1)
+            ).one_or_none()
+            if row is None:
+                return None
+            with _loading(f"proposal for {repo_run_id}"):
+                return mapping.proposal_from_row(row)
+
     def save_review_decision(self, decision: ReviewDecision) -> None:
         with self._database.session(f"save review decision for {decision.repo_run_id}") as session:
             _require_repo_run(session, decision.repo_run_id)
@@ -216,6 +242,21 @@ class SqlProposalRepository:
                 return None
             with _loading(f"review decision for {repo_run_id}"):
                 return mapping.decision_from_row(row)
+
+    def save_publish_record(self, record: PublishRecord) -> None:
+        with self._database.session(f"save publish record for {record.repo_run_id}") as session:
+            _require_repo_run(session, record.repo_run_id)
+            session.add(mapping.publish_log_row(record))
+
+    def list_publish_records(self, repo_run_id: str) -> tuple[PublishRecord, ...]:
+        with self._database.session(f"load the publish log of {repo_run_id}") as session:
+            rows = session.scalars(
+                select(PublishLogRow)
+                .where(PublishLogRow.repo_run_id == repo_run_id)
+                .order_by(PublishLogRow.id)
+            ).all()
+            with _loading(f"publish log of {repo_run_id}"):
+                return tuple(mapping.publish_record_from_row(row) for row in rows)
 
 
 class SqlStorage:

@@ -54,6 +54,13 @@ from hw_checker.domain.proposal import (
     ReviewDecision,
     ReviewOutcome,
 )
+from hw_checker.domain.publishing import (
+    GateDecision,
+    PendingReview,
+    PublishOutcome,
+    PublishRecord,
+    ReviewPrompt,
+)
 from hw_checker.domain.roster import (
     GitHubRepo,
     Pair,
@@ -79,7 +86,7 @@ from hw_checker.domain.run import (
     RunSummary,
     new_run_id,
 )
-from hw_checker.domain.vcs import CommitInfo, FetchedRepo, PullRequestRef
+from hw_checker.domain.vcs import BranchHead, CommitInfo, FetchedRepo, ForkRef, PullRequestRef
 
 __all__ = [
     "Assignment",
@@ -88,6 +95,7 @@ __all__ = [
     "BodyAdaptation",
     "BodyFieldNote",
     "BodyFieldOutcome",
+    "BranchHead",
     "CaptureFailure",
     "CaptureResult",
     "CheckDescription",
@@ -107,6 +115,8 @@ __all__ = [
     "FindingBrief",
     "FindingSource",
     "FixProposal",
+    "ForkRef",
+    "GateDecision",
     "GitHubRepo",
     "HttpMethod",
     "HttpProbe",
@@ -120,9 +130,12 @@ __all__ = [
     "PathFixKind",
     "PathNotRewrittenReason",
     "PathRewrite",
+    "PendingReview",
     "ProbeCapture",
     "ProbeResult",
     "ProposalStatus",
+    "PublishOutcome",
+    "PublishRecord",
     "PullRequestRef",
     "RepoRunResult",
     "RepoRunStatus",
@@ -133,6 +146,7 @@ __all__ = [
     "ResponseShape",
     "ReviewDecision",
     "ReviewOutcome",
+    "ReviewPrompt",
     "RosterResult",
     "RosterRow",
     "RosterWarning",

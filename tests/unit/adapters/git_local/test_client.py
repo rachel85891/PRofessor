@@ -1,10 +1,13 @@
+import logging
 import subprocess
 from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 
 import pytest
+from pydantic import SecretStr
 
 from hw_checker.adapters.git_local import LocalGitClient
+from hw_checker.adapters.git_local.client import CREDENTIAL_HELPER, PUSH_TOKEN_VARIABLE
 from hw_checker.adapters.git_local.runner import BASE_CONFIG
 from hw_checker.domain.errors import (
     ExecutionEnvironmentError,
@@ -22,12 +25,14 @@ class FakeCommandRunner:
     def __init__(self, respond: Responder) -> None:
         self._respond = respond
         self.commands: list[list[str]] = []
+        self.envs: list[Mapping[str, str]] = []
 
     def __call__(
         self, args: Sequence[str], *, cwd: Path, timeout: float, env: Mapping[str, str]
     ) -> subprocess.CompletedProcess[str]:
         git_args = _strip_base_config(list(args))
         self.commands.append(git_args)
+        self.envs.append(env)
         return self._respond(git_args)
 
 
@@ -186,6 +191,55 @@ def test_push_failure_maps_to_publish_error(tmp_path: Path) -> None:
 
     with pytest.raises(PublishError, match="non-fast-forward"):
         client(FakeCommandRunner(respond)).push(tmp_path, "fix", "https://github.com/a/b")
+
+
+PUSH_TOKEN = "ghp_not-a-real-token-1111"  # pragma: allowlist secret
+
+
+def branch_ok(args: list[str]) -> subprocess.CompletedProcess[str]:
+    return ok("hw-review/hw03\n") if args[0] == "check-ref-format" else ok()
+
+
+def test_push_with_a_token_passes_it_only_in_that_commands_environment(tmp_path: Path) -> None:
+    runner = FakeCommandRunner(branch_ok)
+    git = LocalGitClient(
+        "git", 10, "HW Checker", "hw@example.invalid", runner, push_token=SecretStr(PUSH_TOKEN)
+    )
+
+    git.push(tmp_path, "hw-review/hw03", "https://github.com/a/b.git")
+
+    push = runner.commands[-1]
+    assert push[:2] == ["-c", f"credential.helper={CREDENTIAL_HELPER}"]
+    assert push[2:4] == ["push", "--"]
+    assert runner.envs[-1][PUSH_TOKEN_VARIABLE] == PUSH_TOKEN
+    assert all(PUSH_TOKEN not in arg for command in runner.commands for arg in command)
+    assert all(PUSH_TOKEN_VARIABLE not in env for env in runner.envs[:-1])
+    assert "config" not in [command[0] for command in runner.commands]
+
+
+def test_a_failed_push_never_shows_the_token(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    def respond(args: list[str]) -> subprocess.CompletedProcess[str]:
+        if args[0] == "check-ref-format":
+            return ok("fix\n")
+        return failed(f"remote: Invalid username or password {PUSH_TOKEN}")
+
+    git = LocalGitClient(
+        "git",
+        10,
+        "HW Checker",
+        "hw@example.invalid",
+        FakeCommandRunner(respond),
+        push_token=SecretStr(PUSH_TOKEN),
+    )
+
+    with caplog.at_level(logging.DEBUG), pytest.raises(PublishError) as raised:
+        git.push(tmp_path, "fix", "https://github.com/a/b.git")
+
+    assert PUSH_TOKEN not in str(raised.value)
+    assert "Invalid username or password ***" in str(raised.value)
+    assert all(PUSH_TOKEN not in record.getMessage() for record in caplog.records)
 
 
 def test_branch_shorthand_is_not_accepted_as_a_name(tmp_path: Path) -> None:

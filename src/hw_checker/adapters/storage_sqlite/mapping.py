@@ -1,6 +1,7 @@
 """Conversions between domain models and table rows. JSON uses the models' own serialization."""
 
 from collections.abc import Sequence
+from pathlib import Path
 from typing import Any
 
 from hw_checker.adapters.storage_sqlite.schema import (
@@ -8,6 +9,7 @@ from hw_checker.adapters.storage_sqlite.schema import (
     JudgedFindingRow,
     NotEvaluatedRow,
     ProposalRow,
+    PublishLogRow,
     RepoRunRow,
     ReviewDecisionRow,
     RunRow,
@@ -25,6 +27,8 @@ from hw_checker.domain import (
     NotEvaluatedReason,
     Patch,
     ProposalStatus,
+    PublishOutcome,
+    PublishRecord,
     RepoRunResult,
     RepoRunStatus,
     RepoTarget,
@@ -192,6 +196,11 @@ def fill_proposal_row(row: ProposalRow, proposal: FixProposal) -> None:
     row.repo_run_id = proposal.repo_run_id
     row.repo = proposal.repo.model_dump(mode="json")
     row.branch_name = proposal.branch_name
+    row.base_sha = proposal.base_sha
+    row.head_sha = proposal.head_sha
+    row.local_repo_dir = str(proposal.local_repo_dir)
+    row.pr_title = proposal.pr_title
+    row.pr_body = proposal.pr_body
     row.patches = [patch.model_dump(mode="json") for patch in proposal.patches]
     row.diff = proposal.diff
     row.verified = proposal.verified
@@ -204,6 +213,11 @@ def proposal_from_row(row: ProposalRow) -> FixProposal:
         repo_run_id=row.repo_run_id,
         repo=RepoTarget.model_validate(row.repo),
         branch_name=row.branch_name,
+        base_sha=row.base_sha,
+        head_sha=row.head_sha,
+        local_repo_dir=Path(row.local_repo_dir),
+        pr_title=row.pr_title,
+        pr_body=row.pr_body,
         patches=tuple(Patch.model_validate(item) for item in row.patches),
         diff=row.diff,
         verified=row.verified,
@@ -224,4 +238,32 @@ def decision_from_row(row: ReviewDecisionRow) -> ReviewDecision:
         repo_run_id=row.repo_run_id,
         outcome=ReviewOutcome(row.outcome),
         reviewer_notes=row.reviewer_notes,
+    )
+
+
+def publish_log_row(record: PublishRecord) -> PublishLogRow:
+    return PublishLogRow(
+        repo_run_id=record.repo_run_id,
+        repo_id=record.repo_id,
+        branch_name=record.branch_name,
+        fork=record.fork,
+        pr_url=record.pr_url,
+        pr_number=record.pr_number,
+        published_at=record.published_at,
+        outcome=record.outcome.value,
+        message=record.message,
+    )
+
+
+def publish_record_from_row(row: PublishLogRow) -> PublishRecord:
+    return PublishRecord(
+        repo_run_id=row.repo_run_id,
+        repo_id=row.repo_id,
+        branch_name=row.branch_name,
+        fork=row.fork,
+        pr_url=row.pr_url,
+        pr_number=row.pr_number,
+        published_at=row.published_at,
+        outcome=PublishOutcome(row.outcome),
+        message=row.message,
     )

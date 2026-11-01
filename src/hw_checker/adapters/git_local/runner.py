@@ -63,9 +63,13 @@ def run_subprocess(
     )
 
 
-def redact(text: str) -> str:
-    """Hide credentials in the user-info part of URLs before logging."""
-    return _URL_CREDENTIALS.sub("***@", text)
+def redact(text: str, secrets: Sequence[str] = ()) -> str:
+    """Hide credentials in the user-info part of URLs, and every value in `secrets`."""
+    text = _URL_CREDENTIALS.sub("***@", text)
+    for secret in secrets:
+        if secret:
+            text = text.replace(secret, "***")
+    return text
 
 
 class GitRunner:
@@ -85,27 +89,41 @@ class GitRunner:
         tls_config = () if ssl_backend is None else ("-c", f"http.sslBackend={ssl_backend}")
         self._config = (*BASE_CONFIG, *tls_config)
 
-    def run(self, args: Sequence[str], cwd: Path, error: type[HwCheckerError]) -> str:
+    def run(
+        self,
+        args: Sequence[str],
+        cwd: Path,
+        error: type[HwCheckerError],
+        secret_env: Mapping[str, str] | None = None,
+    ) -> str:
         """Run `git <args>` in `cwd` and return stdout; raise `error` on a non-zero exit.
+
+        `secret_env` is added to this command's environment only; its values never appear
+        in a log record or an error message.
 
         Raises:
             ExecutionEnvironmentError: the git executable cannot be started.
             error: git failed, timed out, or `cwd` does not exist.
         """
-        result = self.probe(args, cwd, error)
+        result = self.probe(args, cwd, error, secret_env)
         if result.returncode != 0:
-            stderr = result.stderr.strip()
+            secrets = tuple((secret_env or {}).values())
+            stderr = redact(result.stderr.strip(), secrets)
             logger.warning(
                 "git %s failed with exit code %d: %s",
-                redact(" ".join(args)),
+                redact(" ".join(args), secrets),
                 result.returncode,
-                redact(stderr[:MAX_LOGGED_STDERR_CHARS]),
+                stderr[:MAX_LOGGED_STDERR_CHARS],
             )
-            raise error(f"git {redact(' '.join(args))} failed: {redact(stderr) or 'no output'}")
+            raise error(f"git {redact(' '.join(args), secrets)} failed: {stderr or 'no output'}")
         return result.stdout
 
     def probe(
-        self, args: Sequence[str], cwd: Path, error: type[HwCheckerError]
+        self,
+        args: Sequence[str],
+        cwd: Path,
+        error: type[HwCheckerError],
+        secret_env: Mapping[str, str] | None = None,
     ) -> subprocess.CompletedProcess[str]:
         """Run `git <args>` in `cwd` and return the result, whatever the exit code.
 
@@ -122,7 +140,7 @@ class GitRunner:
                 [self._executable, *self._config, *args],
                 cwd=cwd,
                 timeout=self._timeout,
-                env={**os.environ, **PROMPT_FREE_ENVIRONMENT},
+                env={**os.environ, **PROMPT_FREE_ENVIRONMENT, **(secret_env or {})},
             )
         except FileNotFoundError as exc:
             raise ExecutionEnvironmentError(

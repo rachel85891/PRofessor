@@ -1,27 +1,47 @@
-"""Port for the code host (pull requests and permissions)."""
+"""Port for the code host: student repos' default branches, review forks, pull requests."""
 
 from typing import Protocol
 
-from hw_checker.domain import PullRequestRef, RepoTarget
+from hw_checker.domain import BranchHead, ForkRef, PullRequestRef, RepoTarget
 
 
 class CodeHost(Protocol):
-    """Opens pull requests and checks permissions. Knows nothing about cloning."""
+    """Reads default branches, keeps the publishing account's forks and opens pull requests.
 
-    def has_push_access(self, repo: RepoTarget) -> bool:
-        """Return whether the configured account may push branches to `repo`.
+    Knows nothing about cloning or pushing (docs/fix-pr-workflow.md §1, §2.6).
+    """
+
+    def default_branch_head(self, repo: RepoTarget) -> BranchHead:
+        """Return `repo`'s default branch and the commit it points to now.
 
         Raises:
-            PublishError: the code host cannot be reached or the repo cannot be queried.
+            PublishError: the code host cannot be reached or the repo cannot be read.
+        """
+        ...
+
+    def ensure_fork(self, repo: RepoTarget) -> ForkRef:
+        """Return the publishing account's fork of `repo`, creating it if needed.
+
+        The fork is reused across rounds; it is ready to receive a push when this returns.
+
+        Raises:
+            PublishError: the fork cannot be created, or is not ready in time.
         """
         ...
 
     def open_or_update_pull_request(
-        self, repo: RepoTarget, branch_name: str, title: str, body: str
+        self,
+        repo: RepoTarget,
+        fork: ForkRef,
+        branch_name: str,
+        base_branch: str,
+        title: str,
+        body: str,
     ) -> PullRequestRef:
-        """Open a pull request from `branch_name` in `repo`, or update the open one.
+        """Open a pull request on `repo` from `branch_name` in `fork` into `base_branch`.
 
-        Publishing again for the same branch updates the existing pull request.
+        If a pull request from that branch is already open, update its title and body
+        instead, so publishing again never opens a second one.
 
         Raises:
             PublishError: the pull request cannot be opened or updated.

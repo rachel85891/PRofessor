@@ -1,10 +1,11 @@
 import csv
 import io
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
 
-from hw_checker.domain import FailureKind, NotEvaluatedReason
+from hw_checker.domain import FailureKind, NotEvaluatedReason, PublishOutcome, PublishRecord
 from hw_checker.domain.errors import StorageError
 from hw_checker.reporting.wording import FAILURE_KINDS, NOT_EVALUATED_REASONS
 from hw_checker.reporting.writer import (
@@ -56,6 +57,62 @@ def test_round_report_follows_roster_order(tmp_path: Path) -> None:
     assert "Started: 2026-10-29 09:00 UTC" in text
     assert "## Roster warnings (1)" in text
     assert files.reports_dir == reports_dir(tmp_path)
+
+
+def publish_record(repo_id: str, outcome: PublishOutcome) -> PublishRecord:
+    published = outcome is PublishOutcome.PUBLISHED
+    return PublishRecord(
+        repo_run_id=f"{data.RUN_ID}/{repo_id}",
+        repo_id=repo_id,
+        branch_name="hw-review/hw01-2026-11-01",
+        fork="review-bot/check_noa" if published else None,
+        pr_url="https://github.com/noa/webapi/pull/5" if published else None,
+        pr_number=5 if published else None,
+        published_at=datetime(2026, 11, 1, 9, 0, tzinfo=UTC),
+        outcome=outcome,
+        message="" if published else "tamar/webapi moved | since the check",
+    )
+
+
+def test_round_report_lists_the_pull_requests_after_publishing(tmp_path: Path) -> None:
+    report = data.round_report(reports_dir(tmp_path))
+    summary = report.summary.with_publish_records(
+        [
+            publish_record("noa__webapi", PublishOutcome.PUBLISHED),
+            publish_record("tamar__webapi", PublishOutcome.STALE),
+        ]
+    )
+
+    files = MarkdownReportWriter(tmp_path).write_round_report(
+        report.model_copy(update={"summary": summary})
+    )
+
+    text = files.round_report.read_text(encoding="utf-8")
+    assert "## Pull requests\n" in text
+    assert (
+        "| Tamar Testson | tamar/webapi | stale | tamar/webapi moved \\| since the check |" in text
+    )
+    assert (
+        "| Noa Testman | noa/webapi | published | [#5](https://github.com/noa/webapi/pull/5) |"
+        in text
+    )
+
+
+def test_round_report_has_no_pull_requests_before_publishing(tmp_path: Path) -> None:
+    files = MarkdownReportWriter(tmp_path).write_round_report(
+        data.round_report(reports_dir(tmp_path))
+    )
+
+    assert "Pull requests" not in files.round_report.read_text(encoding="utf-8")
+
+
+def test_a_diff_is_written_next_to_the_reports(tmp_path: Path) -> None:
+    diff = "--- a/Program.cs\n+++ b/Program.cs\n+// fix: a missing break\n"
+
+    path = MarkdownReportWriter(tmp_path).write_diff(data.RUN_ID, "noa__webapi", diff)
+
+    assert path == reports_dir(tmp_path) / "noa__webapi.diff"
+    assert path.read_bytes() == diff.encode("utf-8")
 
 
 def test_counts_file_has_a_bom_and_the_columns_in_roster_order(tmp_path: Path) -> None:

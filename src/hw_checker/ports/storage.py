@@ -10,6 +10,7 @@ from hw_checker.domain import (
     FixProposal,
     JudgedFinding,
     ProposalStatus,
+    PublishRecord,
     RepoRunResult,
     ReviewDecision,
     Run,
@@ -85,7 +86,7 @@ class FindingRepository(Protocol):
 
 
 class ProposalRepository(Protocol):
-    """Stores fix proposals and the reviewer's decisions on them."""
+    """Stores fix proposals, the reviewer's decisions on them and the publish log."""
 
     def save(self, proposal: FixProposal) -> None:
         """Insert `proposal`, or update the stored proposal with the same `proposal_id`.
@@ -115,6 +116,24 @@ class ProposalRepository(Protocol):
         """
         ...
 
+    def list_for_run(self, run_id: str) -> tuple[FixProposal, ...]:
+        """Return the proposals of every repo run in the run `run_id`, in the order first saved.
+
+        Returns an empty tuple for a run without proposals or an unknown run.
+
+        Raises:
+            StorageError: the proposals cannot be loaded.
+        """
+        ...
+
+    def get_for_repo_run(self, repo_run_id: str) -> FixProposal | None:
+        """Return the proposal created last for `repo_run_id`, or None if there is none.
+
+        Raises:
+            StorageError: the proposal cannot be loaded.
+        """
+        ...
+
     def save_review_decision(self, decision: ReviewDecision) -> None:
         """Add `decision` for `decision.repo_run_id`, keeping earlier decisions as history.
 
@@ -129,5 +148,22 @@ class ProposalRepository(Protocol):
 
         Raises:
             StorageError: the decision cannot be loaded.
+        """
+        ...
+
+    def save_publish_record(self, record: PublishRecord) -> None:
+        """Add `record` to the publish log of `record.repo_run_id`.
+
+        Raises:
+            NotFoundError: no repo run with `record.repo_run_id` exists.
+            StorageError: the record cannot be stored.
+        """
+        ...
+
+    def list_publish_records(self, repo_run_id: str) -> tuple[PublishRecord, ...]:
+        """Return the publish log of `repo_run_id`, oldest first; empty if there is none.
+
+        Raises:
+            StorageError: the records cannot be loaded.
         """
         ...

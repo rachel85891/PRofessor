@@ -8,7 +8,9 @@ from typing import Any, cast
 from hw_checker.domain import (
     Assignment,
     AssignmentResult,
+    BranchHead,
     ExecutionResult,
+    FixProposal,
     NotEvaluatedReason,
     RepoRunResult,
     Requirement,
@@ -29,6 +31,7 @@ from hw_checker.graph import (
 from hw_checker.services.assignments import AssignmentCatalogService
 from hw_checker.services.deterministic_checks import DeterministicCheckService
 from hw_checker.services.execution import ExecutionService
+from hw_checker.services.publishing import PublishService
 from hw_checker.services.repo_fetch import RepoFetchService
 from hw_checker.services.reports import ReportService
 from hw_checker.services.roster import RosterService
@@ -36,8 +39,9 @@ from hw_checker.services.run_record import RunRecordService
 from tests.fakes.assignments import FakeAssignmentSource
 from tests.fakes.checks import FakeCheckCatalog, FakeRequirementChecker, Outcome
 from tests.fakes.clock import FakeClock
+from tests.fakes.code_host import FakeCodeHost
 from tests.fakes.execution import FakeCodeRunner
-from tests.fakes.git import FakeGitClient
+from tests.fakes.git import DEFAULT_SHA, FakeGitClient
 from tests.fakes.reporting import FakeReportWriter
 from tests.fakes.roster import FakeRosterReader
 from tests.fakes.storage import InMemoryStorage
@@ -113,6 +117,40 @@ class FailingRecords(RunRecordService):
         super().record_repo(run_id, result)
 
 
+class ProposingRecords(RunRecordService):
+    """Saves a pending fix proposal for some repos once their result is recorded, as the
+    fixer (stage 14) will."""
+
+    def __init__(self, storage: InMemoryStorage, repo_ids: tuple[str, ...], clones: Path) -> None:
+        super().__init__(storage.runs, FakeClock())
+        self._proposals = storage.proposals
+        self._repo_ids = repo_ids
+        self._clones = clones
+
+    def record_repo(self, run_id: str, result: RepoRunResult) -> None:
+        super().record_repo(run_id, result)
+        if result.repo.repo_id in self._repo_ids:
+            self._proposals.save(proposal_for(result, self._clones))
+
+
+def proposal_for(result: RepoRunResult, clones: Path) -> FixProposal:
+    """A pending proposal on the repo's checked commit, with a one-line diff."""
+    repo_id = result.repo.repo_id
+    return FixProposal(
+        proposal_id=f"{result.repo_run_id}/p",
+        repo_run_id=result.repo_run_id,
+        repo=result.repo,
+        branch_name="hw-review/hw01-2026-11-01",
+        base_sha=result.commit_sha or DEFAULT_SHA,
+        head_sha="cd" * 20,
+        local_repo_dir=clones / repo_id,
+        pr_title="HW1 review: small fixes and questions",
+        pr_body=f"Review for {repo_id}.",
+        diff=f"--- a/{repo_id}.cs\n+++ b/{repo_id}.cs\n",
+        verified=True,
+    )
+
+
 @dataclass
 class Harness:
     """Fakes for every port, and the services and graph built over them."""
@@ -130,6 +168,9 @@ class Harness:
     partners: Mapping[str, str] = field(default_factory=dict)
     """The partner each roster row names, by the row's name."""
     report_writer: FakeReportWriter = field(default_factory=FakeReportWriter)
+    code_host: FakeCodeHost = field(default_factory=FakeCodeHost)
+    propose: tuple[str, ...] = ()
+    """Repo ids that get a pending fix proposal when their result is recorded."""
 
     def __post_init__(self) -> None:
         self.runner = self.runner or FakeCodeRunner(results=self.results)
@@ -138,6 +179,8 @@ class Harness:
         self.checker = FakeRequirementChecker(
             {"hw01-build": NotEvaluatedReason.BUILD_FAILED} | dict(self.outcomes)
         )
+        for repo_id in REPO_IDS:
+            self.code_host.heads.setdefault(repo_id, BranchHead(name="main", sha=DEFAULT_SHA))
 
     def services(self, **overrides: Any) -> GraphServices:
         assert self.runner is not None and self.source is not None
@@ -156,8 +199,20 @@ class Harness:
             "fetch": RepoFetchService(self.git, self.tmp_path / "clones"),
             "execution": ExecutionService(self.runner, self.tmp_path / "runs", Path("logs")),
             "checks": DeterministicCheckService(self.checker),
-            "run_records": RunRecordService(self.storage.runs, FakeClock()),
+            "run_records": (
+                ProposingRecords(self.storage, self.propose, self.tmp_path / "clones")
+                if self.propose
+                else RunRecordService(self.storage.runs, FakeClock())
+            ),
             "reports": ReportService(self.report_writer),
+            "publishing": PublishService(
+                self.storage.proposals,
+                self.code_host,
+                self.git,
+                self.report_writer,
+                FakeClock(),
+                commit_author_configured=True,
+            ),
         }
         return GraphServices(**(values | overrides))
 

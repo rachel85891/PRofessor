@@ -14,7 +14,8 @@ class FakeGitClient:
     """Clones by copying a local folder (or creating an empty one) and records each call.
 
     `sources` maps a URL to the folder copied as its working copy; any other URL gets an
-    empty folder. `errors` maps a URL to the error its clone raises.
+    empty folder. `errors` maps a URL to the error its clone raises; `push_error` is raised
+    by every push.
     """
 
     def __init__(
@@ -22,10 +23,12 @@ class FakeGitClient:
         sources: Mapping[str, Path] | None = None,
         errors: Mapping[str, HwCheckerError] | None = None,
         sha: str = DEFAULT_SHA,
+        push_error: HwCheckerError | None = None,
     ) -> None:
         self._sources = dict(sources or {})
         self._errors = dict(errors or {})
         self._sha = sha
+        self._push_error = push_error
         self.cloned: list[tuple[str, Path]] = []
         self.pushed: list[tuple[Path, str, str]] = []
 
@@ -62,4 +65,6 @@ class FakeGitClient:
         return self._sha
 
     def push(self, repo_dir: Path, branch_name: str, remote_url: str) -> None:
+        if self._push_error is not None:
+            raise self._push_error
         self.pushed.append((repo_dir, branch_name, remote_url))

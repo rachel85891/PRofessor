@@ -78,6 +78,36 @@ Then open <https://smith.langchain.com/studio/?baseUrl=http://127.0.0.1:2024>, c
 - `--no-reload`: otherwise the server restarts whenever any file changes, including files in `.venv`. The graph is built from the assignment files when the server starts, so restart it after adding or editing an assignment.
 - Privacy: the round's state holds students' names and findings. LangSmith tracing stays off: `langgraph.json` sets `LANGSMITH_TRACING=false`, and the program refuses to run if a tracing switch is on or `LANGSMITH_API_KEY` / `LANGCHAIN_API_KEY` is set. The Studio page is served by smith.langchain.com, but it reads the state from your local server in the browser; the dev server keeps it on this machine in `.langgraph_api/` (git-ignored). Do not put `LANGSMITH_*` variables in `.env`.
 
+## Approving and publishing pull requests
+
+After every repo is checked, the round stops at one approval gate (ADR 0018) if any repo has a fix proposal waiting for review. Proposals come from the fixer (stage 14); until then no round has any, and every round ends without stopping. A repo without a proposal is never published. Publishing follows [docs/fix-pr-workflow.md](docs/fix-pr-workflow.md): the branch is pushed to the publishing account's fork of the student repo (`check_<username>`, created once and reused) and opened as a pull request on the student's repo; publishing again updates the same pull request. Before each publish the student's default branch is checked again: if it moved since the check, nothing is pushed (`stale`), and the repo needs a new round.
+
+Publishing needs, in `.env` (see `.env.example`):
+
+- `HW_CHECKER_GITHUB_TOKEN`: the publishing account's classic token with the `public_repo` scope only. It is sent only in the GitHub API's `Authorization` header and to `git push` through that command's environment, never in a URL, the git config or a log.
+- `HW_CHECKER_GIT__COMMIT_AUTHOR_NAME` and `HW_CHECKER_GIT__COMMIT_AUTHOR_EMAIL`: the publishing account and its no-reply address. Publishing refuses to run without them.
+
+The account and the fork prefix are in `config.yaml` (`github:`).
+
+### From the command line
+
+A command-line round that stops at the gate ends with `Waiting for approval: N repos`. Its state is kept in `workspace/checkpoints.sqlite`, so the answer can come days later:
+
+```powershell
+uv run python -m hw_checker review 20261101-090000-a1b2c3
+uv run python -m hw_checker approve 20261101-090000-a1b2c3 --repo dana__api --repo noa__webapi --decline tamar__webapi --note tamar__webapi="Fix by hand first"
+```
+
+`review` lists each waiting repo with its counts, branch, pull request title, report and diff (`workspace/runs/<run_id>/reports/<repo_id>.diff`), and the last publish attempt if one failed. `approve` resumes the round: approved repos are published one after another, declined repos are never published, and repos not mentioned stay pending, so the gate asks again for them. It prints one line per publish (`published` or `updated` with the pull request's link, `stale` or `failed` with the reason) and whether repos are still waiting. A failed publish goes back to waiting, so it can be approved again. The pull request links also go into `round.md`. An unknown repo id records nothing and the gate asks again with the reason. `review` and `approve` build the round graph, so Docker Desktop must be running.
+
+### From LangGraph Studio
+
+When the round stops at `approval_gate`, Studio shows the interrupt's value: the pending repos and how to answer. Resume the thread with the same JSON as the command line:
+
+```json
+{"approve": ["dana__api", "noa__webapi"], "decline": ["tamar__webapi"], "notes": {"tamar__webapi": "Fix by hand first"}}
+```
+
 ## Folder layout
 
 ```
@@ -95,7 +125,7 @@ src/hw_checker/
   config/            settings and logging
   ui/                Streamlit app (deferred, ADR 0017)
   bootstrap.py       composition root: creates adapters, builds the graph
-  cli.py             `python -m hw_checker round ...` and `llm-check`
+  cli.py             `python -m hw_checker round ...`, `review`, `approve` and `llm-check`
 tests/unit/          unit tests (integration tests are marked `integration`)
 ```
 
@@ -104,6 +134,7 @@ Dependencies point inward only; see the layer table in [CLAUDE.md](CLAUDE.md).
 ## Documentation
 
 - [docs/design.md](docs/design.md): system design and stage plan
+- [docs/fix-pr-workflow.md](docs/fix-pr-workflow.md): the approved fix-PR workflow (publishing and the fixer)
 - [docs/adr/](docs/adr/): architecture decision records
 - [CLAUDE.md](CLAUDE.md): working rules for the implementing agent
 - [docs/planner-guide.md](docs/planner-guide.md): guide for the planner/reviewer agent

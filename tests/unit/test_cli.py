@@ -17,10 +17,11 @@ from hw_checker.domain import (
     RunStatus,
     RunSummary,
 )
-from hw_checker.domain.errors import LLMError, RepoUnavailableError
+from hw_checker.domain.errors import LLMError, PublishError, RepoUnavailableError
 from hw_checker.graph import RoundGraph, build_round_graph
+from tests.fakes.code_host import FakeCodeHost
 from tests.fakes.llm import FakeLLMClient
-from tests.unit.graph.harness import CATALOG, Harness, url
+from tests.unit.graph.harness import CATALOG, REPO_IDS, Harness, url
 
 
 def test_parser_reads_the_round_command() -> None:
@@ -117,6 +118,11 @@ def test_print_summary_says_when_no_repo_was_checked() -> None:
 def fake_round(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Harness:
     """The CLI over fake services, with settings pointing at tmp_path."""
     harness = Harness(tmp_path, git_errors={url("batya"): RepoUnavailableError("not found")})
+    return install(harness, tmp_path, monkeypatch)
+
+
+def install(harness: Harness, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Harness:
+    """Make the CLI use `harness`'s services and a checkpointer under tmp_path."""
     settings = Settings(workspace_dir=tmp_path / "workspace")
     for name in (
         "LANGSMITH_TRACING",
@@ -187,6 +193,135 @@ def test_main_refuses_to_run_with_tracing_on(
 
     assert code == cli.EXIT_FAILED
     assert "tracing must stay off" in capsys.readouterr().err
+
+
+AVIGAIL, BATYA, CHANA = REPO_IDS
+
+
+@pytest.fixture
+def gated_round(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> tuple[Harness, str]:
+    """A round run from the CLI whose three repos wait at the approval gate."""
+    harness = install(Harness(tmp_path, propose=REPO_IDS), tmp_path, monkeypatch)
+    cli.main(["round", "--assignment", "hw01", "--roster", "r.xlsx"])
+    out = capsys.readouterr().out
+    run_id = re.search(r"^Run id: (\S+)$", out, re.MULTILINE)
+    assert run_id is not None
+    assert out.splitlines()[-1] == (
+        f"Waiting for approval: 3 repos. See them with: python -m hw_checker review "
+        f"{run_id.group(1)}"
+    )
+    return harness, run_id.group(1)
+
+
+def test_parser_reads_the_approve_command() -> None:
+    args = cli.build_parser().parse_args(
+        [
+            *("approve", "run-1", "--repo", "a__b", "--repo", "c__d", "--decline", "e__f"),
+            *("--note", "a__b=Looks good = ready", "--note", "e__f="),
+        ]
+    )
+
+    assert (args.command, args.run_id) == ("approve", "run-1")
+    assert (args.approve, args.decline) == (["a__b", "c__d"], ["e__f"])
+    assert args.note == [("a__b", "Looks good = ready"), ("e__f", "")]
+
+
+@pytest.mark.parametrize("note", ["no-separator", "=text"])
+def test_parser_rejects_a_note_without_a_repo(note: str) -> None:
+    with pytest.raises(SystemExit):
+        cli.build_parser().parse_args(["approve", "run-1", "--note", note])
+
+
+def test_review_lists_the_repos_waiting_at_the_gate(
+    gated_round: tuple[Harness, str], capsys: pytest.CaptureFixture[str]
+) -> None:
+    _, run_id = gated_round
+
+    code = cli.main(["review", run_id])
+
+    out = capsys.readouterr().out
+    assert code == cli.EXIT_OK
+    assert out.startswith(f"Round {run_id}: 3 repos waiting for approval\n")
+    assert f"  {AVIGAIL}  (Avigail Test)\n" in out
+    assert "    branch: hw-review/hw01-2026-11-01\n" in out
+    assert "    pull request: HW1 review: small fixes and questions\n" in out
+    assert f"    diff: {Path('reports', run_id, f'{AVIGAIL}.diff')}\n" in out
+    assert out.splitlines()[-1].startswith(f"Approve with: python -m hw_checker approve {run_id}")
+
+
+def test_approve_resumes_the_round_publishes_and_shows_what_is_left(
+    gated_round: tuple[Harness, str], capsys: pytest.CaptureFixture[str]
+) -> None:
+    harness, run_id = gated_round
+
+    code = cli.main(["approve", run_id, "--repo", AVIGAIL, "--decline", BATYA])
+
+    out = capsys.readouterr().out
+    assert code == cli.EXIT_OK
+    assert re.search(
+        rf"^  {AVIGAIL}  published  https://github\.test/avigail/api/pull/1$", out, re.M
+    )
+    assert out.splitlines()[-1] == (
+        f"Waiting for approval: 1 repos. See them with: python -m hw_checker review {run_id}"
+    )
+    assert [pull.repo_id for pull in harness.code_host.pulls] == [AVIGAIL]
+
+    code = cli.main(["approve", run_id, "--repo", CHANA])
+
+    out = capsys.readouterr().out
+    assert code == cli.EXIT_OK
+    assert f"  {CHANA}  published" in out
+    assert AVIGAIL not in out
+    assert out.splitlines()[-1] == "No repos are waiting for approval; the round is done."
+    assert cli.main(["review", run_id]) == cli.EXIT_FAILED
+    assert capsys.readouterr().out == f"Round {run_id} is not waiting for approval.\n"
+
+
+def test_approve_shows_why_an_answer_was_not_applied(
+    gated_round: tuple[Harness, str], capsys: pytest.CaptureFixture[str]
+) -> None:
+    harness, run_id = gated_round
+
+    cli.main(["approve", run_id, "--repo", "nobody__api"])
+
+    out = capsys.readouterr().out
+    assert "Approval error: Nothing was recorded; not pending: nobody__api." in out
+    assert out.splitlines()[-1].startswith("Waiting for approval: 3 repos.")
+    assert harness.code_host.pulls == []
+
+
+def test_approve_fails_when_a_publish_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    code_host = FakeCodeHost(errors={AVIGAIL: PublishError("GitHub is down")})
+    install(Harness(tmp_path, propose=(AVIGAIL,), code_host=code_host), tmp_path, monkeypatch)
+    cli.main(["round", "--assignment", "hw01", "--roster", "r.xlsx"])
+    run_id = re.search(r"^Run id: (\S+)$", capsys.readouterr().out, re.MULTILINE)
+    assert run_id is not None
+
+    code = cli.main(["approve", run_id.group(1), "--repo", AVIGAIL])
+
+    out = capsys.readouterr().out
+    assert code == cli.EXIT_FAILED
+    assert f"  {AVIGAIL}  failed     GitHub is down" in out
+
+
+def test_approve_needs_a_decision(
+    gated_round: tuple[Harness, str], capsys: pytest.CaptureFixture[str]
+) -> None:
+    _, run_id = gated_round
+
+    assert cli.main(["approve", run_id]) == cli.EXIT_FAILED
+    assert "Nothing to do" in capsys.readouterr().out
+
+
+def test_approve_refuses_a_round_that_is_not_waiting(
+    fake_round: Harness, capsys: pytest.CaptureFixture[str]
+) -> None:
+    assert cli.main(["approve", "no-such-run", "--repo", AVIGAIL]) == cli.EXIT_FAILED
+    assert capsys.readouterr().out == "Round no-such-run is not waiting for approval.\n"
 
 
 def test_checkpoints_stay_out_of_the_business_database(fake_round: Harness, tmp_path: Path) -> None:

@@ -157,7 +157,8 @@ The unit of work is a repo, not a student; a pair is a group of two separate rep
 | JudgedFinding | finding, verdict (accepted/rejected), reason | Rejected findings are kept for calibration |
 | ExecutionResult | build\_status, run\_status, failure\_kind, logs\_excerpt, probe\_results | failure\_kind separates student issues from environment issues |
 | RepoRunResult | repo, commit\_sha, results per assignment, judged\_findings, score, status |  |
-| FixProposal | repo, branch\_name, patches, diff, verified |  |
+| FixProposal | repo, branch\_name, base\_sha, head\_sha, local\_repo\_dir, pr\_title, pr\_body, patches, diff, verified, status | pending\_review → approved → published, or rejected; a failed publish goes back to pending\_review |
+| PublishRecord | repo\_run\_id, branch, fork, pr\_url, pr\_number, published\_at, outcome, message | outcome: published / updated / stale / failed; kept in the publish log |
 | ReviewDecision | repo\_run\_id, approved/rejected/edited, reviewer\_notes |  |
 | Run | run\_id, assignment\_id, started\_at, status, repo\_runs | One round |
 
@@ -171,7 +172,7 @@ Every external capability is defined as a narrow interface in `ports/` and imple
 | --- | --- | --- | --- |
 | RosterReader | Read the student list | ExcelRosterReader (openpyxl) | Google Sheets, CSV |
 | GitClient | clone/fetch, commit sha, log, branch, commit, push | LocalGitClient (git CLI via subprocess) |  |
-| CodeHost | Open PRs, check permissions | GitHubCodeHost (PyGithub) | GitLab |
+| CodeHost | Default branch head, the publishing account's fork, open or update a PR | GitHubCodeHost (REST API with urllib) | GitLab |
 | CodeRunner | build, run, health check, HTTP probes, cleanup | DockerCodeRunner | Remote runner |
 | DatabaseProvisioner | Create and drop a database per repo | SqlServerProvisioner |  |
 | LLMClient | Call with structured output, by role name | LangChainLLMClient (init\_chat\_model) | Any provider |
@@ -199,9 +200,11 @@ The round sends each repo to its own subgraph (at most `max_parallel_repos` at a
 1. `start_round` – load the roster (pairs and warnings), select `_general` and assignments 1..N, prepare the runner (sweep leftovers, check the environment), and start the run in storage. Input: `assignment_id`, `roster_path`, and optionally `repo_ids` (check only these), `limit` (the first N repos) and `run_id`.
 2. `check_repo` – the repo subgraph, sent once per repo with Send; `max_concurrency` is `max_parallel_repos` from configuration (default 3).
 3. `finish_round` – mark the run completed (failed only if no repo could be checked at all) and put the round's summary in state: one line per repo in roster order, with its counts, a short list of its findings (requirement, severity, first line of the message) and its report's path.
-4. `write_round_report` – write `round.md` (one row per repo, in roster order) and `counts.csv` to `workspace/runs/<run_id>/reports/`, and add the reports folder to the summary. A failure is a round error; the run is already saved.
+4. `write_round_report` – write `round.md` (one row per repo, in roster order) and `counts.csv` to `workspace/runs/<run_id>/reports/`, and add the reports folder to the summary. After publishing, `round.md` also lists each repo's pull request. A failure is a round error; the run is already saved.
+5. `approval_gate` – the round's one approval gate (ADR 0018, stage 13a). With no proposal pending review in the run, the round ends without interrupting. Otherwise it interrupts with a small JSON payload: for each pending repo the repo id, student, counts, branch, pull request title, report path and diff path (the diff is written to `reports/<repo_id>.diff`), the last publish attempt if it failed, and how to answer. The resume value is `{"approve": [repo ids], "decline": [repo ids], "notes": {repo id: text}}`, validated as `GateDecision` by `interrupt(..., response_schema=...)` (a wrong shape is refused and the interrupt stays open). An unknown repo id, a repo both approved and declined, or a note for an unmentioned repo records nothing; the gate asks again with the reason. Repos not mentioned stay pending. Declined repos are never published.
+6. `publish_approved` – publish each approved repo through `PublishService`, one after another, put the records in `publish_results` and in the summary, then go back to `write_round_report` and `approval_gate`, which loops while repos are pending. A failed publish is recorded, goes back to pending review and is shown at the next gate; it never stops the round.
 
-Planned: `share_partner_hints` (see note), the grade once there is a formula, and the approval gate with publishing (13a, ADR 0018).
+Planned: `share_partner_hints` (see note), the grade once there is a formula, and editing a proposal at the gate.
 
 **Level 2: repo subgraph** (`build_repo_graph`)
 
@@ -217,13 +220,13 @@ Planned: `validate_findings`, `judge_findings`, `score`, `propose_fixes`.
 
 **State**
 
-- Round: the input fields, `run_id`, `repos`, `selected_assignment_ids`, `roster_warnings`, `partners`, `recorded_repos` and `round_errors` (reducer: append), `report_paths` (reducer: merge), `summary`.
+- Round: the input fields, `run_id`, `repos`, `selected_assignment_ids`, `roster_warnings`, `partners`, `recorded_repos` and `round_errors` (reducer: append), `report_paths` (reducer: merge), `summary`, and for the gate `gate_open`, `gate_message`, `approved` and `publish_results` (reducer: append).
 - Repo: `run_id`, `assignment_id`, `repo`, `selected_assignment_ids`, `partner`, `fetched` (working copy and commit sha), `execution`, `assignment_results` and `errors` (reducer: append). Only `recorded_repos`, `round_errors` and `report_paths` flow back to the round.
 - State holds only ids and small models; clones and logs live on disk, results in the database.
 
 **Persistence and errors**
 
-- The command line uses a SQLite checkpointer in its own file (`workspace/checkpoints.sqlite`), one thread per round with thread id = run id. Studio's dev server supplies its own checkpointer.
+- The command line uses a SQLite checkpointer in its own file (`workspace/checkpoints.sqlite`), one thread per round with thread id = run id. Studio's dev server supplies its own checkpointer. The approval gate needs a checkpointer; the wait at the gate can last days. `python -m hw_checker review <run_id>` shows the gate's payload and `approve <run_id> --repo ... [--decline ...] [--note id="..."]` resumes the thread with `Command(resume=...)`; in Studio the developer resumes the interrupt with the same JSON.
 - Every repo-level node is wrapped at its boundary, the only place `except Exception` is allowed: the error is logged with run_id and repo_id, added to the repo's `errors`, and the repo continues to `record_repo` with status failed. A failed repo never stops the round. A problem before any repo is checked (roster, assignments, Docker) stops the round with a message.
 - Planned: RetryPolicy for nodes with network calls (LLM, GitHub), with a timeout. Git fetches already retry transient network errors in the adapter.
 
@@ -381,13 +384,17 @@ The LLM writes only the message text of each finding; structure, headings and sc
 4. One commit per patch, with a message referencing the requirement.
 5. Fixes stay at student level: no refactoring, no renames, no techniques not yet taught.
 
-**Publishing**
+**Publishing (stage 13a, as built)**
 
-- Allowed only for a proposal in status `approved`.
-- Push the branch to the student's repo (or to a fork if there is no permission) and open a PR with the feedback as its description.
-- Idempotent: publishing again updates the same PR rather than opening a new one.
-- Every action is logged with the PR link.
-- Until the service is ready: reports and feedback are produced as files and sent manually.
+`PublishService` follows [fix-pr-workflow.md](fix-pr-workflow.md) §2.6 and runs only from the round's approval gate (§7). It is deterministic, with no LLM.
+
+- Allowed only for a proposal in status `approved`, and only when the commit author (`git.commit_author_name` / `commit_author_email`, the publishing account's no-reply address) is set.
+- Head check: the student's default branch must still point to the checked commit (`base_sha`); otherwise the attempt is `stale`, nothing is pushed and the repo needs a new round.
+- Fork: `POST /repos/{owner}/{repo}/forks` with `name: check_<owner>` and `default_branch_only: true` in the publishing account (`github.account`), reusing the name GitHub returns for an existing fork, then waiting until the fork answers.
+- Push: `git push` of the branch to the fork. The token reaches git only through a credential helper that reads it from that one command's environment: never in a URL, the git config or a log.
+- Pull request: on the student's repo, head `<account>:<branch>`, base the default branch, `maintainer_can_modify: true`. Publishing again finds the open pull request from that branch and updates its title and body instead of opening a new one.
+- Every attempt is saved in the publish log (`publish_log`: branch, fork, PR link and number, time, outcome, message) and logged. The outcome is `published`, `updated`, `stale` or `failed`; a failure moves the proposal back to pending review. The links go into the summary and `round.md`.
+- The GitHub adapter (`adapters/github_api`) uses the standard library (`urllib`) and the system certificate store, and maps every error to `PublishError` with GitHub's message, never the token. `CodeHost.has_push_access` was removed: publishing always goes through the fork.
 
 ## 12. User interface and storage
 
@@ -436,7 +443,7 @@ Every value that may change lives in configuration, every expected error maps to
 **Logging and errors**
 
 - Structured logging (JSON to file, readable on the console), with run\_id and repo\_id on every line.
-- Domain exception hierarchy: `HwCheckerError` ← `RosterError`, `RepoUnavailableError`, `BuildError`, `ExecutionEnvironmentError` (not `EnvironmentError`, which is a Python built-in name), `LLMError`, `PublishError`.
+- Domain exception hierarchy: `HwCheckerError` ← `RosterError`, `RepoUnavailableError`, `BuildError`, `ExecutionEnvironmentError` (not `EnvironmentError`, which is a Python built-in name), `LLMError`, `PublishError`, `ReviewError` (a review decision that cannot be applied).
 - Adapters map external library exceptions to domain exceptions; upper layers never catch a general `Exception`, except at a graph node boundary.
 
 **Security**

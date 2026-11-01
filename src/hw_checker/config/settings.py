@@ -71,6 +71,27 @@ class GitSettings(BaseModel):
     commit_author_email: NonBlankText | None = None
 
 
+class GitHubSettings(BaseModel):
+    """The GitHub API and the publishing account (docs/fix-pr-workflow.md §1).
+
+    The account's token comes only from `.env` (`HW_CHECKER_GITHUB_TOKEN`).
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    api_url: NonBlankText = "https://api.github.com"
+    web_url: NonBlankText = "https://github.com"
+    """Where branches are pushed: `<web_url>/<account>/<fork>.git`."""
+    account: NonBlankText | None = None
+    """The publishing account; publishing refuses to run without it."""
+    fork_prefix: NonBlankText = "check_"
+    """A student's fork is named `<fork_prefix><student's GitHub username>`."""
+    timeout_seconds: float = Field(default=30, gt=0)
+    fork_wait_seconds: float = Field(default=60, gt=0)
+    """How long to wait for a new fork to be ready."""
+    fork_poll_seconds: float = Field(default=2, gt=0)
+
+
 PinnedImage = Annotated[
     str, Field(pattern=r"^[a-z0-9][a-z0-9._/-]*(:[A-Za-z0-9._-]+)?@sha256:[0-9a-f]{64}$")
 ]
@@ -264,7 +285,9 @@ class Settings(BaseSettings):
     runner: RunnerSettings = RunnerSettings()
     storage: StorageSettings = StorageSettings()
     llm: LlmSettings = LlmSettings()
+    github: GitHubSettings = GitHubSettings()
     github_token: SecretStr | None = None
+    """The publishing account's token: a classic PAT with the `public_repo` scope only."""
 
     @classmethod
     def settings_customise_sources(

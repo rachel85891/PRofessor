@@ -21,6 +21,7 @@ class FakeReportWriter:
         self._round_fails = round_fails
         self.repo_reports: list[RepoReport] = []
         self.round_reports: list[RoundReport] = []
+        self.diffs: dict[tuple[str, str], str] = {}
 
     def write_repo_report(self, report: RepoReport) -> Path:
         repo_id = report.repo_run.repo.repo_id
@@ -39,3 +40,7 @@ class FakeReportWriter:
             round_report=reports_dir / "round.md",
             counts_file=reports_dir / "counts.csv",
         )
+
+    def write_diff(self, run_id: str, repo_id: str, diff: str) -> Path:
+        self.diffs[(run_id, repo_id)] = diff
+        return FAKE_REPORTS_DIR / run_id / f"{repo_id}.diff"

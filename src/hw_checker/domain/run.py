@@ -13,6 +13,7 @@ from hw_checker.domain.assignment import SHA256_HEX_PATTERN, Severity
 from hw_checker.domain.base import DomainModel, Identifier, NonBlankStr
 from hw_checker.domain.execution import ExecutionResult
 from hw_checker.domain.findings import Finding, JudgedFinding
+from hw_checker.domain.publishing import PublishRecord
 from hw_checker.domain.roster import RepoTarget
 
 RUN_ID_SUFFIX_LENGTH = 6
@@ -164,6 +165,8 @@ class RepoSummary(DomainModel):
     errors: tuple[NonBlankStr, ...] = ()
     report_path: Path | None = None
     """The repo's reviewer report; None when it was not written."""
+    publication: PublishRecord | None = None
+    """The repo's last publish attempt in this round; None when it was not published."""
 
     @classmethod
     def from_repo_run(cls, repo_run: RepoRunResult, report_path: Path | None = None) -> Self:
@@ -231,4 +234,18 @@ class RunSummary(DomainModel):
                 RepoSummary.from_repo_run(repo_run, paths.get(repo_run.repo.repo_id))
                 for repo_run in repo_runs
             ),
+        )
+
+    def with_publish_records(self, records: Sequence[PublishRecord]) -> Self:
+        """Return this summary with each repo's last publish attempt among `records`."""
+        latest = {record.repo_id: record for record in records}
+        return self.model_copy(
+            update={
+                "repos": tuple(
+                    line.model_copy(update={"publication": latest[line.repo_id]})
+                    if line.repo_id in latest
+                    else line
+                    for line in self.repos
+                )
+            }
         )

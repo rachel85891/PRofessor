@@ -138,6 +138,7 @@ class MarkdownReportWriter:
             ),
             rows=rows,
             roster_warnings=report.roster_warnings,
+            publications=[row for row in rows if row.line and row.line.publication],
         )
         reports_dir = self._reports_dir(summary.run_id)
         round_report = reports_dir / ROUND_REPORT
@@ -147,6 +148,16 @@ class MarkdownReportWriter:
         return RoundReportFiles(
             reports_dir=reports_dir, round_report=round_report, counts_file=counts_file
         )
+
+    def write_diff(self, run_id: str, repo_id: str, diff: str) -> Path:
+        """Write `<repo_id>.diff` (the proposal's changes, as UTF-8) and return its path.
+
+        Raises:
+            StorageError: the file cannot be written.
+        """
+        path = self._reports_dir(run_id) / f"{repo_id}.diff"
+        _write(path, diff.encode("utf-8"))
+        return path
 
     def _reports_dir(self, run_id: str) -> Path:
         return self._runs_dir / run_id / REPORTS_FOLDER

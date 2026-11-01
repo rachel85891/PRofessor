@@ -21,6 +21,28 @@ class PullRequestRef(DomainModel):
 
     number: int = Field(ge=1)
     url: NonBlankStr
+    created: bool
+    """True when the pull request was opened now; False when an open one was updated."""
+
+
+class BranchHead(DomainModel):
+    """A repo's default branch and the commit it points to."""
+
+    name: NonBlankStr
+    sha: Identifier
+
+
+class ForkRef(DomainModel):
+    """The publishing account's fork of a student repo, which review branches are pushed to."""
+
+    owner: NonBlankStr
+    name: NonBlankStr
+    push_url: NonBlankStr
+
+    @property
+    def full_name(self) -> str:
+        """`owner/name`."""
+        return f"{self.owner}/{self.name}"
 
 
 class FetchedRepo(DomainModel):

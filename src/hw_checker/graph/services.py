@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from hw_checker.services.assignments import AssignmentCatalogService
 from hw_checker.services.deterministic_checks import DeterministicCheckService
 from hw_checker.services.execution import ExecutionService
+from hw_checker.services.publishing import PublishService
 from hw_checker.services.repo_fetch import RepoFetchService
 from hw_checker.services.reports import ReportService
 from hw_checker.services.roster import RosterService
@@ -22,3 +23,4 @@ class GraphServices:
     checks: DeterministicCheckService
     run_records: RunRecordService
     reports: ReportService
+    publishing: PublishService
