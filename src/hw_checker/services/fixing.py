@@ -17,6 +17,7 @@ from hw_checker.domain import (
     AssignmentResult,
     EditApplication,
     EditKind,
+    ExecutionResult,
     FetchedRepo,
     FixOutcome,
     FixPlan,
@@ -29,6 +30,7 @@ from hw_checker.domain import (
     RepoTarget,
     SelfReview,
     Severity,
+    StepStatus,
     VerifyResult,
 )
 from hw_checker.domain.errors import FixError
@@ -42,7 +44,9 @@ from hw_checker.ports import (
     TextTemplates,
 )
 from hw_checker.ports.llm import TokenUsage
-from hw_checker.services.fix_edits import EditRules, apply_edits
+from hw_checker.services.deterministic_checks import DETERMINISTIC_KINDS, DeterministicCheckService
+from hw_checker.services.execution import ExecutionService
+from hw_checker.services.fix_edits import EditRules, apply_edits, fallback_edit
 
 logger = logging.getLogger(__name__)
 
@@ -57,6 +61,8 @@ FIXES_FOLDER = "fixes"
 BRANCH_PREFIX = "hw-review/"
 STRONG_SEVERITIES = frozenset({Severity.MAJOR, Severity.CRITICAL})
 NOTHING_TO_CHANGE = "The fixer found nothing to change, so there is no branch and no PR."
+FIX_LABEL = "--fix"
+"""Added to the repo id for the recheck's logs and containers: `<repo_id>--fix<attempt>`."""
 TRUNCATED = "\n... (cut here: the file is longer)"
 CALL_ID_LENGTH = 24
 _FILE_CLOSE = "</student_file>"
@@ -95,6 +101,8 @@ class FixService:
         proposals: ProposalRepository,
         writer: ReportWriter,
         clock: Clock,
+        execution: ExecutionService,
+        checks: DeterministicCheckService,
         runs_dir: Path,
         config: FixerConfig,
     ) -> None:
@@ -105,6 +113,8 @@ class FixService:
         self._proposals = proposals
         self._writer = writer
         self._clock = clock
+        self._execution = execution
+        self._checks = checks
         self._runs_dir = runs_dir
         self._config = config
 
@@ -285,6 +295,102 @@ class FixService:
                 update={"rejected": application.rejected + reapplied.rejected + removed}
             ),
             usage,
+        )
+
+    def verify(
+        self,
+        run_id: str,
+        repo: RepoTarget,
+        workspace: FixWorkspace,
+        assignments: tuple[Assignment, ...],
+        execution: ExecutionResult | None,
+        results: Sequence[AssignmentResult],
+        application: EditApplication,
+        attempt: int,
+    ) -> VerifyResult:
+        """Rebuild, rerun and recheck the fix working copy with the round's `assignments`, and
+        compare with the checked commit's `execution` and `results`.
+
+        It passes when the build is not worse, no requirement that passed now fails, and
+        every requirement a `fix` claims passes. A worse build or a newly failing
+        requirement blames every `fix`; an unmet claim blames its own fix. Nothing is run
+        when nothing was applied.
+
+        Raises:
+            ExecutionEnvironmentError: the engine cannot be reached.
+            InvalidAssignmentError: a requirement names an unknown check.
+        """
+        if not application.applied:
+            return VerifyResult(passed=True)
+        copy = workspace.working_copy
+        label = f"{repo.repo_id}{FIX_LABEL}{attempt}"
+        rechecked = self._execution.execute(run_id, label, copy, assignments)
+        after = tuple(self._checks.evaluate(a, copy, rechecked) for a in assignments)
+        passed_after = _passing(assignments, after)
+        problems: list[str] = []
+        if _built(execution) and not _built(rechecked):
+            problems.append("the project no longer builds")
+        newly_failing = sorted(_passing(assignments, results) - passed_after)
+        if newly_failing:
+            problems.append(f"requirements that passed now fail: {', '.join(newly_failing)}")
+        fixes = [
+            (index, edit)
+            for index, edit in enumerate(application.applied)
+            if edit.kind is EditKind.FIX
+        ]
+        blamed = {index for index, _ in fixes} if problems else set()
+        for index, fix in fixes:
+            unmet = [r for r in fix.finding_ids if r not in passed_after]
+            if unmet:
+                problems.append(
+                    f"the fix in {fix.file} claims {', '.join(unmet)}, which still fails"
+                )
+                blamed.add(index)
+        logger.info("Recheck, attempt %d: %d problems", attempt, len(problems))
+        return VerifyResult(
+            passed=not problems, problems=tuple(problems), failing_fixes=tuple(sorted(blamed))
+        )
+
+    def fall_back(
+        self, workspace: FixWorkspace, application: EditApplication, verification: VerifyResult
+    ) -> EditApplication:
+        """Replace each blamed `fix` with its fallback note (or drop it without one) and apply
+        the edits again from the checked commit.
+
+        Raises:
+            GitOperationError: the working copy cannot be reset.
+            FixError: a file cannot be read or written.
+        """
+        blamed = set(verification.failing_fixes)
+        edits: list[PlannedEdit] = []
+        dropped: list[RejectedEdit] = []
+        for index, edit in enumerate(application.applied):
+            if index not in blamed:
+                edits.append(edit)
+                continue
+            note = fallback_edit(edit)
+            if note is not None:
+                edits.append(note)
+            reason = "the recheck still failed after the last attempt; " + (
+                "kept as its fallback note" if note else "dropped (no fallback note)"
+            )
+            dropped.append(RejectedEdit(edit=edit, reason=reason))
+        reapplied = self.apply(workspace, edits)
+        return reapplied.model_copy(
+            update={"rejected": application.rejected + reapplied.rejected + tuple(dropped)}
+        )
+
+    @staticmethod
+    def give_up(repo: RepoTarget, attempts: int, verification: VerifyResult) -> FixOutcome:
+        """No proposal: the recheck still fails after the fallback notes."""
+        return FixOutcome(
+            repo_id=repo.repo_id,
+            attempts=attempts,
+            reason=(
+                "No PR: the recheck still failed after the fallback notes ("
+                + "; ".join(verification.problems)
+                + ")."
+            ),
         )
 
     def write_text(
@@ -493,3 +599,26 @@ def _added_comments(edit: PlannedEdit) -> list[str]:
         for line in edit.replace.replace("\r\n", "\n").split("\n")
         if line.strip().startswith("//") and line not in before
     ]
+
+
+def _built(execution: ExecutionResult | None) -> bool:
+    return execution is not None and execution.build_status is StepStatus.SUCCEEDED
+
+
+def _passing(assignments: tuple[Assignment, ...], results: Sequence[AssignmentResult]) -> set[str]:
+    """The deterministic requirements of the checked assignments that have no finding and
+    were evaluated."""
+    checked = {result.assignment_id for result in results}
+    failing = {
+        item
+        for result in results
+        for item in [f.requirement_id for f in result.findings]
+        + [n.requirement_id for n in result.not_evaluated]
+    }
+    return {
+        requirement.id
+        for assignment in assignments
+        if assignment.id in checked
+        for requirement in assignment.requirements
+        if requirement.kind in DETERMINISTIC_KINDS and requirement.id not in failing
+    }

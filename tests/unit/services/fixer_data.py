@@ -24,8 +24,12 @@ from hw_checker.domain import (
     Severity,
 )
 from hw_checker.prompts import TEMPLATES_DIR
+from hw_checker.services.deterministic_checks import DeterministicCheckService
+from hw_checker.services.execution import ExecutionService
 from hw_checker.services.fixing import FixerConfig, FixService
+from tests.fakes.checks import FakeRequirementChecker, Outcome
 from tests.fakes.clock import FakeClock
+from tests.fakes.execution import FakeCodeRunner
 from tests.fakes.git import DEFAULT_SHA, FakeGitClient
 from tests.fakes.llm import FakeLLMClient
 from tests.fakes.reporting import FakeReportWriter
@@ -163,6 +167,8 @@ class FixerSetup:
         self,
         tmp_path: Path,
         replies: dict[str, list[BaseModel]] | None = None,
+        runner: FakeCodeRunner | None = None,
+        outcomes: dict[str, Outcome] | None = None,
         **config_overrides: Any,
     ) -> None:
         self.checked = tmp_path / "clones" / REPO.repo_id
@@ -195,6 +201,8 @@ class FixerSetup:
         self.git = FakeGitClient()
         self.writer = FakeReportWriter()
         self.runs = tmp_path / "runs"
+        self.runner = runner or FakeCodeRunner()
+        self.checker = FakeRequirementChecker(outcomes)
         self.service = FixService(
             self.llm,
             self.git,
@@ -203,6 +211,8 @@ class FixerSetup:
             self.storage.proposals,
             self.writer,
             FakeClock(),
+            ExecutionService(self.runner, self.runs, Path("logs")),
+            DeterministicCheckService(self.checker),
             self.runs,
             config(**config_overrides),
         )
