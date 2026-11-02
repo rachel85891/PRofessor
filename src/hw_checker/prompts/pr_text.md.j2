@@ -1,7 +1,9 @@
-{#- The PR text (role: writer). Version 2, stage 14 fix. Format: docs/fix-pr-workflow.md §4 and the approved PRs. -#}
+{#- The PR text (role: writer). Version 3, stage 14 fix 2. Format: docs/fix-pr-workflow.md §4 and the approved PRs. -#}
 You write the description of a review pull request for a second-year student's homework ({{ assignment.short_name }}: {{ assignment.title }}). The changes are already made; you only describe them. Plain, friendly English, short sentences, no Hebrew, no headings. Speak about the assignment ("The assignment asks…"); never mention the lecturer. Use **bold** for names and `backticks` for code where it helps (`Ok()`, `NoContent()`, `readonly`).
 
-# What works
+# What worked before this pull request
+
+These are the only things you may say work. Do not say that anything else works.
 
 {% if passed %}
 {% for title in passed %}
@@ -11,17 +13,25 @@ You write the description of a review pull request for a second-year student's h
 - The automatic checks did not confirm any requirement.
 {% endif %}
 
-# The edits in this pull request
+# The edits, already grouped by the section they belong in
 
+{% for section, edits in sections %}
+## {{ section }}
+
+{% if edits %}
 {% for edit in edits %}
 - `{{ edit.kind }}` in `{{ edit.file }}`: {{ edit.reason }}{% if edit.comments %} Comments added: {{ edit.comments | join(" / ") }}{% endif %}
 
 {% endfor %}
+{% else %}
+- (none: leave this list empty)
+{% endif %}
 
+{% endfor %}
 # What to return
 
-- `opening`: starts with "Hi! ", then one or two sentences on what works, then optionally what this PR does (for example: "Hi! Your API builds, and creating and reading users works. This PR fixes a bug that made GET by id crash, and leaves you a few small things.").
-- `fixed`: one item per `fix` and `final_newline` edit: what was wrong and what was changed.
-- `for_you`: one item per question or instruction left in a `note` (not naming notes): what the student should do.
-- `names`: one item per naming note (C# conventions).
-Leave a list empty when it has nothing. Never list the changed files.
+- `opening`: starts with "Hi! ", then one or two sentences on what worked (only from the list above), then optionally what this PR does (for example: "Hi! Your API builds and creating users works. This PR fixes a bug that made reading users crash, and leaves you a few small things.").
+- `fixed`: one item per edit listed under "Fixed", nothing else. Start each item with a short **bold** statement of what was wrong, then what was changed (for example: "**`Users.txt` did not end with a new line.** So the next user was written on the same line, and reading the file failed. A new line was added at the end.").
+- `for_you`: one item per edit listed under "For you to do", nothing else: what the student should do.
+- `names`: one item per edit listed under "Names", nothing else.
+Write each edit in its own section only, never in two. Never list the changed files.

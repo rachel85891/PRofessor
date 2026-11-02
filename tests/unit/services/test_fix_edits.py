@@ -3,7 +3,7 @@ from typing import Any
 
 import pytest
 
-from hw_checker.domain import EditKind, PlannedEdit
+from hw_checker.domain import EditKind, NoteSection, PlannedEdit
 from hw_checker.services.fix_edits import EditRules, apply_edits, fallback_edit
 
 CONTROLLER = "Controllers/UsersController.cs"
@@ -39,6 +39,7 @@ def edit(**overrides: Any) -> PlannedEdit:
         "finding_ids": ("hw01-update",),
         "reason": "case 1 falls through to case 2",
         "fallback_note": "Does case 1 need a break here?",
+        "note_section": None,
     }
     return PlannedEdit.model_validate(values | overrides)
 
@@ -285,6 +286,7 @@ def test_the_fallback_of_a_fix_is_a_note_above_the_original_text() -> None:
 
     assert note is not None
     assert note.kind is EditKind.NOTE
+    assert note.note_section is NoteSection.FOR_YOU
     assert note.replace == "                //Does case 1 need a break here?\n" + MISSING_BREAK
     result = apply_edits(files(), [note], RULES)
     assert result.application.applied == (note,)

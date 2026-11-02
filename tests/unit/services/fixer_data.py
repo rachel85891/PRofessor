@@ -13,6 +13,7 @@ from hw_checker.domain import (
     EditKind,
     FetchedRepo,
     FixPlan,
+    NoteSection,
     PlannedEdit,
     PullRequestText,
     RepoRunResult,
@@ -109,6 +110,7 @@ BREAK_FIX = PlannedEdit(
     finding_ids=("hw01-update",),
     reason="case 1 falls through to case 2.",
     fallback_note="Does case 1 need a break? Right now it also runs case 2.",
+    note_section=None,
 )
 NAMING_NOTE = PlannedEdit(
     file=CONTROLLER,
@@ -121,6 +123,7 @@ NAMING_NOTE = PlannedEdit(
     finding_ids=(),
     reason="Naming: locals are camelCase.",
     fallback_note=None,
+    note_section=NoteSection.NAMES,
 )
 OUTSIDE = PlannedEdit(
     file=DATA,
@@ -130,6 +133,7 @@ OUTSIDE = PlannedEdit(
     finding_ids=(),
     reason="Not allowed: the data file is not code.",
     fallback_note=None,
+    note_section=None,
 )
 PLAN = FixPlan(edits=(BREAK_FIX, NAMING_NOTE), files_notes=())
 NO_VIOLATIONS = SelfReview(violations=())

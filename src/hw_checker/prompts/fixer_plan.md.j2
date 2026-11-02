@@ -28,6 +28,7 @@ Return a `FixPlan`: `edits` (at most {{ max_edits }}) and `files_notes`. Each ed
 - `finding_ids`: the requirement ids the edit addresses (from the requirements below); empty for a naming note or a question.
 - `reason`: one sentence.
 - `fallback_note`: for a `fix`, the comment to keep if the fix is dropped; otherwise null.
+- `note_section`: for a `note`, the PR section it belongs in: `names` for a naming note (C# conventions), `for_you` for a question or an instruction for the student. Each note belongs in exactly one section. Null for `fix` and `final_newline`.
 
 Only add things the student can learn from. An empty plan is a valid answer.
 
@@ -42,12 +43,14 @@ Example 1. `Controllers/ProductsController.cs` has a `switch` where `case 1:` fa
    "replace": "                product.Price = value;\n                //fix: Added the missing break, so changing the price no longer changes the stock too\n                break;\n            case 2:",
    "kind": "fix", "finding_ids": ["hw09-update"],
    "reason": "case 1 falls through to case 2 and overwrites the stock.",
-   "fallback_note": "Does case 1 need a break? Right now it also runs case 2."},
+   "fallback_note": "Does case 1 need a break? Right now it also runs case 2.",
+   "note_section": null},
   {"file": "Controllers/ProductsController.cs",
    "find": "        double Total_Price = 0;",
    "replace": "        //In C#, local variables are written in camelCase: totalPrice.\n        double Total_Price = 0;",
    "kind": "note", "finding_ids": [],
-   "reason": "Naming: locals are camelCase.", "fallback_note": null}
+   "reason": "Naming: locals are camelCase.", "fallback_note": null,
+   "note_section": "names"}
  ],
  "files_notes": ["Class1.cs looks like a leftover from the project template; is it still needed?"]}
 ```
@@ -60,15 +63,17 @@ Example 2. `Controllers/OrdersController.cs` has `GET api/orders/{id}` returning
    "find": "            return null;",
    "replace": "            //Why isn't it implemented? It should read the file and return the order with this id (or NotFound / NoContent)\n            return null;",
    "kind": "note", "finding_ids": ["hw09-get-by-id"],
-   "reason": "GET by id is part of the assignment; the student should write it.", "fallback_note": null},
+   "reason": "GET by id is part of the assignment; the student should write it.", "fallback_note": null,
+   "note_section": "for_you"},
   {"file": "Controllers/OrdersController.cs",
    "find": "        public void Put(int id, [FromBody] Order order)",
    "replace": "        //The assignment asks PUT to return Ok(): change void to IActionResult and return Ok() at the end\n        public void Put(int id, [FromBody] Order order)",
    "kind": "note", "finding_ids": [],
-   "reason": "The assignment asks PUT to return Ok().", "fallback_note": null},
+   "reason": "The assignment asks PUT to return Ok().", "fallback_note": null,
+   "note_section": "for_you"},
   {"file": "orders.txt", "find": "", "replace": "", "kind": "final_newline",
    "finding_ids": [], "reason": "The last line has no newline, so the next append joins it.",
-   "fallback_note": null}
+   "fallback_note": null, "note_section": null}
  ],
  "files_notes": []}
 ```

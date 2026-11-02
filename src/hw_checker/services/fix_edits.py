@@ -12,7 +12,7 @@ import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 
-from hw_checker.domain import EditApplication, EditKind, PlannedEdit, RejectedEdit
+from hw_checker.domain import EditApplication, EditKind, NoteSection, PlannedEdit, RejectedEdit
 
 CODE_SUFFIX = ".cs"
 FORBIDDEN_TEXT = "File.Exists"
@@ -93,6 +93,7 @@ def fallback_edit(fix: PlannedEdit) -> PlannedEdit | None:
         finding_ids=fix.finding_ids,
         reason=f"Fallback for a dropped fix: {fix.reason}",
         fallback_note=None,
+        note_section=NoteSection.FOR_YOU,
     )
 
 

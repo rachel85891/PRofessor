@@ -24,6 +24,15 @@ class EditKind(StrEnum):
     """Adds the missing final newline to the data file."""
 
 
+class NoteSection(StrEnum):
+    """The PR section a note belongs in (docs/fix-pr-workflow.md §4); each note is in one."""
+
+    NAMES = "names"
+    """"Names (C# conventions)": a naming note."""
+    FOR_YOU = "for_you"
+    """"For you to do": a question or an instruction for the student."""
+
+
 class PlannedEdit(DomainModel):
     """One search-and-replace edit, as the model planned it."""
 
@@ -38,6 +47,8 @@ class PlannedEdit(DomainModel):
     reason: str
     fallback_note: str | None
     """For a `fix`: the comment to keep instead if the fix is dropped."""
+    note_section: NoteSection | None
+    """For a `note`: the PR section it belongs in; None for other kinds."""
 
 
 class FixPlan(DomainModel):

@@ -6,6 +6,7 @@ from hw_checker.domain import (
     EditApplication,
     FixOutcome,
     FixPlan,
+    NoteSection,
     ProposalStatus,
     ReviewViolation,
     SelfReview,
@@ -354,3 +355,44 @@ def test_the_cache_version_follows_the_templates_and_the_settings(tmp_path: Path
 def test_the_short_name_comes_from_the_assignment_id() -> None:
     assert ASSIGNMENT.short_name == "HW1"
     assert ASSIGNMENT.model_copy(update={"id": "_general"}).short_name == "GENERAL"
+
+
+def test_a_naming_only_plan_has_no_for_you_section_whatever_the_writer_returns(
+    tmp_path: Path,
+) -> None:
+    text = PR_TEXT.model_copy(
+        update={"fixed": ("A fix that was not made.",), "for_you": ("Rename allUsers.",)}
+    )
+    setup = FixerSetup(tmp_path, replies={"writer": [text]})
+    application = EditApplication(applied=(NAMING_NOTE,), changed_files=(CONTROLLER,))
+
+    _, body, _ = setup.service.write_text(
+        RUN_ID, ASSIGNMENT, (ASSIGNMENT,), RESULTS, application, [], []
+    )
+
+    assert "**For you to do" not in body
+    assert "**Fixed in this PR" not in body
+    assert "**Names (C# conventions):**\n- In C#, local variables" in body
+
+
+def test_the_writer_gets_each_edit_under_its_one_section(tmp_path: Path) -> None:
+    question = NAMING_NOTE.model_copy(
+        update={"note_section": NoteSection.FOR_YOU, "reason": "Ask why GET by id is missing."}
+    )
+    unsectioned = NAMING_NOTE.model_copy(
+        update={"note_section": None, "reason": "A note without a section."}
+    )
+    setup = FixerSetup(tmp_path)
+    application = EditApplication(applied=(BREAK_FIX, NAMING_NOTE, question, unsectioned))
+
+    setup.service.write_text(RUN_ID, ASSIGNMENT, (ASSIGNMENT,), RESULTS, application, [], [])
+
+    prompt = setup.llm.calls[0].prompt
+    fixed = prompt.index("## Fixed")
+    for_you = prompt.index("## For you to do")
+    names = prompt.index("## Names")
+    assert fixed < prompt.index(BREAK_FIX.reason) < for_you
+    assert for_you < prompt.index(question.reason) < names
+    assert for_you < prompt.index(unsectioned.reason) < names
+    assert names < prompt.index(NAMING_NOTE.reason)
+    assert prompt.count(NAMING_NOTE.reason) == 1

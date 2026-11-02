@@ -24,6 +24,7 @@ from hw_checker.domain import (
     FixProposal,
     FixWorkspace,
     LlmUsage,
+    NoteSection,
     PlannedEdit,
     PullRequestText,
     RejectedEdit,
@@ -433,23 +434,23 @@ class FixService:
             LLMError: the call failed.
             FixError: the body cannot be rendered.
         """
+        groups = _sections(application.applied)
         prompt = self._templates.render(
             WRITER_TEMPLATE,
             {
                 "assignment": assignment,
                 "passed": _passed_titles(assignments, results),
-                "edits": [
-                    {
-                        "kind": edit.kind.value,
-                        "file": edit.file,
-                        "reason": edit.reason,
-                        "comments": _added_comments(edit),
-                    }
-                    for edit in application.applied
+                "sections": [
+                    (heading, [_described(edit) for edit in groups[key]])
+                    for key, heading in SECTION_HEADINGS.items()
                 ],
             },
         )
         text, tokens = self._llm.complete_with_usage(WRITER_ROLE, prompt, PullRequestText)
+        # A section without edits stays empty, whatever the writer returned for it.
+        text = text.model_copy(
+            update={key: getattr(text, key) if groups[key] else () for key in SECTION_HEADINGS}
+        )
         opening = text.opening.strip()
         if not opening.startswith(OPENING.strip()):
             opening = OPENING + opening
@@ -598,6 +599,33 @@ def _findings(results: Sequence[AssignmentResult]) -> list[dict[str, str]]:
                 }
             )
     return found
+
+
+SECTION_HEADINGS = {"fixed": "Fixed", "for_you": "For you to do", "names": "Names"}
+"""The PR text's sections (`PullRequestText` fields) and their headings in the writer's prompt."""
+
+
+def _sections(applied: Sequence[PlannedEdit]) -> dict[str, list[PlannedEdit]]:
+    """The applied edits by the PR section they belong in: code and data changes under
+    "Fixed", and each note in the one section its plan gave it (a question without one)."""
+    groups: dict[str, list[PlannedEdit]] = {key: [] for key in SECTION_HEADINGS}
+    for edit in applied:
+        if edit.kind is not EditKind.NOTE:
+            groups["fixed"].append(edit)
+        elif edit.note_section is NoteSection.NAMES:
+            groups["names"].append(edit)
+        else:
+            groups["for_you"].append(edit)
+    return groups
+
+
+def _described(edit: PlannedEdit) -> dict[str, object]:
+    return {
+        "kind": edit.kind.value,
+        "file": edit.file,
+        "reason": edit.reason,
+        "comments": _added_comments(edit),
+    }
 
 
 def _passed_titles(
