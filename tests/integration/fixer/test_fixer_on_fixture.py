@@ -1,11 +1,11 @@
 """The real fixer, once, on a synthetic fixture: a real LLM, real Docker and real git.
 
 Opt-in: skipped unless Docker answers and, with the OpenRouter provider, unless
-HW_CHECKER_LLM__API_KEY is set (the Copilot provider uses the Copilot CLI's login). The fixture
-(`sample_webapi_no_final_newline`) is written for the tests and holds no student code or
-names. It
-runs the `fix_repo` subgraph on a git copy of it and prints the proposal's diff, the PR
-text and the tokens of each LLM role.
+HW_CHECKER_LLM__API_KEY is set (the Copilot provider uses the Copilot CLI's login).
+
+The fixture (`sample_webapi_no_final_newline`) is written for the tests and holds no
+student code or names. The test runs the `fix_repo` subgraph on a git copy of it and prints
+the proposal's diff, the PR text and the tokens of each LLM role.
 """
 
 import shutil
