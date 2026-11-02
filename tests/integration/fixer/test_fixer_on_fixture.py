@@ -1,6 +1,7 @@
 """The real fixer, once, on a synthetic fixture: a real LLM, real Docker and real git.
 
-Opt-in: skipped unless HW_CHECKER_LLM__API_KEY is set and Docker answers. The fixture
+Opt-in: skipped unless Docker answers and, with the OpenRouter provider, unless
+HW_CHECKER_LLM__API_KEY is set (the Copilot provider uses the Copilot CLI's login). The fixture
 (`sample_webapi_lost_id`) is written for the tests and holds no student code or names. It
 runs the `fix_repo` subgraph on a git copy of it and prints the proposal's diff, the PR
 text and the tokens of each LLM role.
@@ -23,7 +24,7 @@ from hw_checker.adapters.jinja_templates import JinjaTextTemplates
 from hw_checker.adapters.local_files import LocalSourceFiles
 from hw_checker.adapters.storage_sqlite import SqlStorage, migrate
 from hw_checker.adapters.system_clock import SystemClock
-from hw_checker.bootstrap import build_llm_client, fixer_config
+from hw_checker.bootstrap import fixer_config, open_llm_client
 from hw_checker.checks.deterministic.builtin import builtin_checks
 from hw_checker.checks.deterministic.checker import DeterministicRequirementChecker
 from hw_checker.checks.registry import CheckRegistry
@@ -97,7 +98,7 @@ def test_the_fixer_proposes_a_verified_review_branch_for_the_lost_id(
     runner: DockerCodeRunner, tmp_path: Path
 ) -> None:
     settings = load_settings()
-    if settings.llm.api_key is None:
+    if settings.llm.provider == "openrouter" and settings.llm.api_key is None:
         pytest.skip("HW_CHECKER_LLM__API_KEY is not set")
     copy, sha = checked_copy(tmp_path)
     registry = CheckRegistry(builtin_checks())
@@ -128,33 +129,34 @@ def test_the_fixer_proposes_a_verified_review_branch_for_the_lost_id(
             ),
         )
     )
-    fixing = FixService(
-        build_llm_client(settings),
-        LocalGitClient("git", 120, *AUTHOR),
-        LocalSourceFiles(),
-        JinjaTextTemplates(TEMPLATES_DIR),
-        storage.proposals,
-        MarkdownReportWriter(tmp_path / "runs"),
-        SystemClock(),
-        execution_service,
-        checks,
-        tmp_path / "runs",
-        fixer_config(settings),
-    )
-    graph = build_fix_graph(catalog.list_assignments(), fixing)
     failing = sorted({f.requirement_id for r in results for f in r.findings})
 
-    output: dict[str, Any] = graph.invoke(
-        FixInput(
-            run_id=RUN_ID,
-            assignment_id="hw01",
-            repo=REPO,
-            selected_assignment_ids=[assignment.id for assignment in assignments],
-            fetched=FetchedRepo(working_copy=copy, commit_sha=sha),
-            execution=execution,
-            assignment_results=results,
+    with open_llm_client(settings) as llm:
+        fixing = FixService(
+            llm,
+            LocalGitClient("git", 120, *AUTHOR),
+            LocalSourceFiles(),
+            JinjaTextTemplates(TEMPLATES_DIR),
+            storage.proposals,
+            MarkdownReportWriter(tmp_path / "runs"),
+            SystemClock(),
+            execution_service,
+            checks,
+            tmp_path / "runs",
+            fixer_config(settings),
         )
-    )
+        graph = build_fix_graph(catalog.list_assignments(), fixing)
+        output: dict[str, Any] = graph.invoke(
+            FixInput(
+                run_id=RUN_ID,
+                assignment_id="hw01",
+                repo=REPO,
+                selected_assignment_ids=[assignment.id for assignment in assignments],
+                fetched=FetchedRepo(working_copy=copy, commit_sha=sha),
+                execution=execution,
+                assignment_results=results,
+            )
+        )
 
     proposals = storage.proposals.list_for_run(RUN_ID)
     storage.close()

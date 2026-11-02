@@ -1,6 +1,8 @@
 import io
 import re
 import sqlite3
+from collections.abc import Callable
+from contextlib import AbstractContextManager, nullcontext
 from pathlib import Path
 from typing import Any
 
@@ -134,7 +136,7 @@ def install(harness: Harness, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -
     monkeypatch.setattr(cli, "load_settings", lambda: settings)
     monkeypatch.setattr(cli, "configure_logging", lambda settings: None)
 
-    def build(settings: Settings, checkpointer: Any) -> RoundGraph:
+    def build(settings: Settings, checkpointer: Any, fixer_llm: Any = None) -> RoundGraph:
         return build_round_graph(CATALOG, harness.services(), 2, checkpointer)
 
     monkeypatch.setattr(cli, "build_round_graph_from_settings", build)
@@ -344,6 +346,9 @@ class Clock:
         return self.now
 
 
+Opener = Callable[[Settings], AbstractContextManager[FakeLLMClient]]
+
+
 def pong_client(errors: dict[str, LLMError] | None = None) -> FakeLLMClient:
     replies = {str(role): [cli.LlmCheckReply(answer="pong")] for role in LLM_ROLES}
     return FakeLLMClient(replies, errors)
@@ -353,16 +358,25 @@ def test_parser_reads_the_llm_check_command() -> None:
     assert cli.build_parser().parse_args(["llm-check"]).command == "llm-check"
 
 
-def test_llm_check_prints_each_role_and_model_and_succeeds() -> None:
+def opener(client: FakeLLMClient, opened: list[Settings] | None = None) -> Opener:
+    def open_client(settings: Settings) -> AbstractContextManager[FakeLLMClient]:
+        if opened is not None:
+            opened.append(settings)
+        return nullcontext(client)
+
+    return open_client
+
+
+def test_llm_check_prints_the_provider_each_role_and_model_and_succeeds() -> None:
     client = pong_client()
     settings = Settings()
     out = io.StringIO()
 
-    code = cli.llm_check(settings, out, build_client=lambda s: client, clock=Clock())
+    code = cli.llm_check(settings, out, open_client=opener(client), clock=Clock())
 
     assert code == cli.EXIT_OK
     lines = out.getvalue().splitlines()
-    assert lines[0] == f"LLM endpoint: {settings.llm.base_url}"
+    assert lines[0] == f"LLM provider: openrouter ({settings.llm.base_url})"
     width = max(len(model) for model in settings.llm.roles.values())
     assert lines[1:] == [
         f"  {role:<8}  {settings.llm.roles[role]:<{width}}    0.5 s  ok" for role in LLM_ROLES
@@ -371,11 +385,29 @@ def test_llm_check_prints_each_role_and_model_and_succeeds() -> None:
     assert {call.prompt for call in client.calls} == {cli.LLM_CHECK_PROMPT}
 
 
+def test_llm_check_with_copilot_prints_the_provider_and_the_copilot_models() -> None:
+    client = pong_client()
+    opened: list[Settings] = []
+    settings = Settings(llm=LlmSettings(provider="copilot"))
+    out = io.StringIO()
+
+    code = cli.llm_check(settings, out, open_client=opener(client, opened), clock=Clock())
+
+    assert code == cli.EXIT_OK
+    assert opened == [settings]
+    lines = out.getvalue().splitlines()
+    assert lines[0] == "LLM provider: copilot (the GitHub Copilot seat, through the Copilot SDK)"
+    copilot_roles = settings.llm.copilot.roles
+    assert [line.split()[:2] for line in lines[1:]] == [
+        [role, copilot_roles[role]] for role in LLM_ROLES
+    ]
+
+
 def test_llm_check_reports_a_failing_role_and_fails() -> None:
     client = pong_client({"judge": LLMError("The LLM endpoint's rate limit was reached.")})
     out = io.StringIO()
 
-    code = cli.llm_check(Settings(), out, build_client=lambda s: client, clock=Clock())
+    code = cli.llm_check(Settings(), out, open_client=opener(client), clock=Clock())
 
     assert code == cli.EXIT_FAILED
     [judge] = [line for line in out.getvalue().splitlines() if line.startswith("  judge")]
@@ -387,7 +419,7 @@ def test_llm_check_flags_a_wrong_answer() -> None:
     replies = {str(role): [cli.LlmCheckReply(answer="hello")] for role in LLM_ROLES}
     out = io.StringIO()
 
-    code = cli.llm_check(Settings(), out, build_client=lambda s: FakeLLMClient(replies))
+    code = cli.llm_check(Settings(), out, open_client=opener(FakeLLMClient(replies)))
 
     assert code == cli.EXIT_FAILED
     assert "error: the model did not answer as asked" in out.getvalue()

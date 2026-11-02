@@ -127,9 +127,21 @@ storage:
   database_url: sqlite:///workspace/hw_checker.db
 
 llm:
-  # Any OpenAI-compatible endpoint (ADR 0008, ADR 0020). OpenRouter for development; GitHub
-  # Models or OpenAI later by changing base_url, the model ids and the key, never the code.
-  # The key is a secret: HW_CHECKER_LLM__API_KEY in .env (see .env.example).
+  # Where the roles' models run (ADR 0008); switching is this line only:
+  #   openrouter: an OpenAI-compatible endpoint (ADR 0020), paid per token from the key's
+  #               credit. Uses base_url, roles, temperature, max_output_tokens, extra_body
+  #               and HW_CHECKER_LLM__API_KEY.
+  #   copilot:    the developer's GitHub Copilot seat through the Copilot SDK (ADR 0022);
+  #               every prompt counts toward the seat's premium requests. Uses copilot
+  #               (below) and the Copilot CLI login (README, "The LLM provider").
+  # timeout_seconds, max_retries, retry_backoff_seconds and max_prompt_chars apply to both.
+  # copilot is the default here (2026-11-02); openrouter is the fallback, set it here or
+  # with HW_CHECKER_LLM__PROVIDER=openrouter if the seat is unavailable.
+  provider: copilot
+  # --- openrouter only ---
+  # Any OpenAI-compatible endpoint (ADR 0020): OpenAI or another by changing base_url, the
+  # model ids and the key, never the code. The key is a secret: HW_CHECKER_LLM__API_KEY in
+  # .env (see .env.example).
   base_url: https://openrouter.ai/api/v1
   # The model for each role, as the endpoint names it. Proposed 2026-10-31 from OpenRouter's
   # model list (both support structured outputs); the developer decides. Prices per million
@@ -147,14 +159,6 @@ llm:
   # The most tokens one reply may have, always sent. Without it OpenRouter reserves the
   # model's whole output limit against the key's credit (HTTP 402).
   max_output_tokens: 4096
-  # Seconds to wait for one reply.
-  timeout_seconds: 60
-  # Retries after a rate limit, a timeout or a server error, waiting retry_backoff_seconds
-  # before the first and doubling each time. Other errors are never retried.
-  max_retries: 2
-  retry_backoff_seconds: 2
-  # A longer prompt is refused before it is sent (about 15,000 tokens).
-  max_prompt_chars: 60000
   # Extra JSON fields sent with every request. OpenRouter's provider routing: never use a
   # provider that may train on the data (required on OpenRouter, ADR 0020), and only
   # providers that support every parameter sent (structured output). Remove this for an
@@ -163,6 +167,28 @@ llm:
     provider:
       data_collection: deny
       require_parameters: true
+  # --- copilot only ---
+  copilot:
+    # The model for each role, as the seat's model list names it (the developer decides).
+    # Read 2026-11-02 from the seat of the logged-in account: claude-haiku-5.5 and
+    # claude-sonnet-5.5 are both offered and enabled. The SDK's model list gives no
+    # premium-request multiplier; llm-check's log shows each call's premium requests.
+    roles:
+      reviewer: claude-haiku-5.5
+      writer: claude-haiku-5.5
+      judge: claude-sonnet-5.5
+      fixer: claude-sonnet-5.5
+    # Seconds to wait for the Copilot CLI to start and report its login.
+    start_timeout_seconds: 60
+  # --- both providers ---
+  # Seconds to wait for one reply (for copilot, also for opening a session).
+  timeout_seconds: 60
+  # Retries after a rate limit, a timeout or a server error, waiting retry_backoff_seconds
+  # before the first and doubling each time. Other errors are never retried.
+  max_retries: 2
+  retry_backoff_seconds: 2
+  # A longer prompt is refused before it is sent (about 15,000 tokens).
+  max_prompt_chars: 60000
   # Sending students' code to the LLM (the fixer) needs the lecturer's approval. Only the
   # developer sets this to true, once the lecturer has approved it.
   student_code_approved: false

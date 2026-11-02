@@ -3,6 +3,7 @@
 Entry points (the CLI, the LangGraph Studio factory) build the round graph from here.
 """
 
+import atexit
 import functools
 import hashlib
 import importlib
@@ -11,8 +12,9 @@ import os
 import pkgutil
 import sqlite3
 import ssl
+import threading
 from collections.abc import Iterator, Mapping
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 from enum import Enum
 
 import httpx2
@@ -36,6 +38,7 @@ from hw_checker.adapters.docker_runner.runner_config import (
 from hw_checker.adapters.git_local import LocalGitClient
 from hw_checker.adapters.github_api import GitHubCodeHost, GitHubConfig
 from hw_checker.adapters.jinja_templates import JinjaTextTemplates
+from hw_checker.adapters.llm_copilot_sdk import CopilotClientConfig, CopilotSdkLLMClient
 from hw_checker.adapters.llm_openai_compatible import LlmClientConfig, OpenAICompatibleLLMClient
 from hw_checker.adapters.local_files import LocalSourceFiles
 from hw_checker.adapters.roster_excel import ExcelRosterReader, RosterColumns
@@ -58,6 +61,7 @@ from hw_checker.config.settings import (
 from hw_checker.domain.errors import ExecutionEnvironmentError
 from hw_checker.graph import GraphServices, RoundGraph, build_round_graph
 from hw_checker.ports import LLMClient
+from hw_checker.ports.llm import OutputT, TokenUsage
 from hw_checker.prompts import TEMPLATES_DIR
 from hw_checker.reporting.writer import MarkdownReportWriter
 from hw_checker.services.assignments import AssignmentCatalogService
@@ -77,15 +81,20 @@ RUNS_FOLDER = "runs"
 CHECKPOINTS_FILE = "checkpoints.sqlite"
 FIXER_CACHE_FILE = "fixer_cache.sqlite"
 
+_STUDIO_RESOURCES = ExitStack()
+"""What Studio's graph keeps open for the server's life (the fixer's LLM client)."""
+atexit.register(_STUDIO_RESOURCES.close)
+
 TRACING_SWITCHES = ("LANGSMITH_TRACING", "LANGCHAIN_TRACING_V2", "LANGCHAIN_TRACING")
 TRACING_KEYS = ("LANGSMITH_API_KEY", "LANGCHAIN_API_KEY")
 _TRUE_VALUES = frozenset({"1", "true", "yes", "on"})
 
 
-def build_graph_services(settings: Settings) -> GraphServices:
+def build_graph_services(settings: Settings, fixer_llm: LLMClient | None = None) -> GraphServices:
     """Create every adapter from `settings` and the services over them.
 
-    Brings the database to the latest schema first.
+    Brings the database to the latest schema first. The fixer runs only with `fixer_llm`
+    (from `open_fixer_llm`, which is None when `fixer.enabled` is off); its caller closes it.
 
     Raises:
         StorageError: the database cannot be migrated.
@@ -116,7 +125,7 @@ def build_graph_services(settings: Settings) -> GraphServices:
     checks = DeterministicCheckService(DeterministicRequirementChecker(registry))
     fixing = (
         FixService(
-            build_llm_client(settings),
+            fixer_llm,
             git_client,
             LocalSourceFiles(),
             JinjaTextTemplates(TEMPLATES_DIR),
@@ -128,7 +137,7 @@ def build_graph_services(settings: Settings) -> GraphServices:
             workspace / RUNS_FOLDER,
             fixer_config(settings),
         )
-        if settings.fixer.enabled
+        if fixer_llm is not None
         else None
     )
     return GraphServices(
@@ -202,16 +211,18 @@ def fixer_cache(settings: Settings) -> SqliteCache[object] | None:
 
 
 def build_round_graph_from_settings(
-    settings: Settings, checkpointer: Checkpointer = None
+    settings: Settings, checkpointer: Checkpointer = None, fixer_llm: LLMClient | None = None
 ) -> RoundGraph:
     """Build the round graph, with one node per assignment in the catalog as it is now.
+
+    `fixer_llm` (from `open_fixer_llm`) turns the fixer on; its caller closes it.
 
     Raises:
         InvalidAssignmentError: the assignment data cannot be loaded.
         StorageError: the database cannot be migrated.
         ExecutionEnvironmentError: Docker cannot be reached.
     """
-    services = build_graph_services(settings)
+    services = build_graph_services(settings, fixer_llm)
     return build_round_graph(
         services.assignments.list_assignments(),
         services,
@@ -225,7 +236,8 @@ def build_round_graph_from_settings(
 def studio_graph() -> RoundGraph:
     """The `round` graph for LangGraph Studio (`langgraph.json`), built once per server start.
 
-    It has no checkpointer: the dev server supplies its own.
+    It has no checkpointer: the dev server supplies its own. The fixer's LLM client opens
+    on its first call and closes when the server process exits.
 
     Raises:
         ConfigurationError: the settings are invalid, or LangSmith tracing is on.
@@ -233,7 +245,8 @@ def studio_graph() -> RoundGraph:
     require_tracing_off()
     settings = load_settings()
     configure_logging(settings)
-    return build_round_graph_from_settings(settings)
+    fixer_llm = _STUDIO_RESOURCES.enter_context(open_fixer_llm(settings))
+    return build_round_graph_from_settings(settings, fixer_llm=fixer_llm)
 
 
 def require_tracing_off(environ: Mapping[str, str] = os.environ) -> None:
@@ -292,10 +305,87 @@ def domain_state_types() -> tuple[type, ...]:
     return tuple(found)
 
 
-def build_llm_client(settings: Settings) -> LLMClient:
-    """The LLM client for the configured endpoint and roles (ADR 0020).
+@contextmanager
+def open_fixer_llm(settings: Settings) -> Iterator[LLMClient | None]:
+    """The fixer's LLM client for one round or command: None when `fixer.enabled` is off.
 
-    Nothing in a round uses it yet, so a missing key only matters to its callers.
+    The client opens on its first call, so a command that never reaches the fixer (such as
+    `review` or `approve`) starts nothing, and it is always closed when the block ends, on
+    error too, so no Copilot process is left behind.
+
+    Raises:
+        ConfigurationError: the provider is OpenRouter and `HW_CHECKER_LLM__API_KEY` is not
+            set (checked here, before any repo is checked).
+    """
+    if not settings.fixer.enabled:
+        yield None
+        return
+    if settings.llm.provider == "openrouter":
+        build_openrouter_client(settings)  # fails at once without the key
+    client = LazyLLMClient(settings)
+    try:
+        yield client
+    finally:
+        client.close()
+
+
+class LazyLLMClient:
+    """An `LLMClient` that opens the configured client (`open_llm_client`) on its first call.
+
+    Thread-safe: repos are fixed in parallel, and only one client is opened. `close` closes
+    it; a closed client opens a new one if it is called again.
+    """
+
+    def __init__(self, settings: Settings) -> None:
+        self._settings = settings
+        self._lock = threading.Lock()
+        self._resources = ExitStack()
+        self._client: LLMClient | None = None
+
+    def complete(self, role: str, prompt: str, output_type: type[OutputT]) -> OutputT:
+        """See `LLMClient.complete`."""
+        return self._opened().complete(role, prompt, output_type)
+
+    def complete_with_usage(
+        self, role: str, prompt: str, output_type: type[OutputT]
+    ) -> tuple[OutputT, TokenUsage]:
+        """See `LLMClient.complete_with_usage`."""
+        return self._opened().complete_with_usage(role, prompt, output_type)
+
+    def close(self) -> None:
+        """Close the client if it was opened."""
+        with self._lock:
+            self._client = None
+            self._resources.close()
+
+    def _opened(self) -> LLMClient:
+        with self._lock:
+            if self._client is None:
+                self._client = self._resources.enter_context(open_llm_client(self._settings))
+            return self._client
+
+
+@contextmanager
+def open_llm_client(settings: Settings) -> Iterator[LLMClient]:
+    """The LLM client of the configured provider (`llm.provider`), closed when the block
+    ends; for Copilot that stops the Copilot CLI process (ADR 0022).
+
+    Nothing in a round uses it yet, so a missing key or login only matters to its callers.
+
+    Raises:
+        ConfigurationError: the provider is OpenRouter and `HW_CHECKER_LLM__API_KEY` is not
+            set.
+    """
+    llm = settings.llm
+    if llm.provider == "copilot":
+        with CopilotSdkLLMClient(copilot_config(llm), llm.copilot_token) as client:
+            yield client
+        return
+    yield build_openrouter_client(settings)
+
+
+def build_openrouter_client(settings: Settings) -> OpenAICompatibleLLMClient:
+    """The LLM client for the configured OpenAI-compatible endpoint and roles (ADR 0020).
 
     Raises:
         ConfigurationError: `HW_CHECKER_LLM__API_KEY` is not set.
@@ -368,6 +458,18 @@ def llm_config(llm: LlmSettings) -> LlmClientConfig:
         retry_backoff_seconds=llm.retry_backoff_seconds,
         max_prompt_chars=llm.max_prompt_chars,
         extra_body=llm.extra_body,
+    )
+
+
+def copilot_config(llm: LlmSettings) -> CopilotClientConfig:
+    """The Copilot client's configuration from the LLM settings."""
+    return CopilotClientConfig(
+        models={str(role): model for role, model in llm.copilot.roles.items()},
+        timeout_seconds=llm.timeout_seconds,
+        start_timeout_seconds=llm.copilot.start_timeout_seconds,
+        max_retries=llm.max_retries,
+        retry_backoff_seconds=llm.retry_backoff_seconds,
+        max_prompt_chars=llm.max_prompt_chars,
     )
 
 
