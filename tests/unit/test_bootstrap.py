@@ -9,10 +9,12 @@ from pydantic import BaseModel, SecretStr
 from hw_checker import bootstrap
 from hw_checker.adapters.git_local import LocalGitClient
 from hw_checker.adapters.github_api import GitHubCodeHost
+from hw_checker.adapters.llm_copilot_sdk import CopilotSdkLLMClient
 from hw_checker.adapters.llm_openai_compatible import OpenAICompatibleLLMClient
 from hw_checker.config.errors import ConfigurationError
 from hw_checker.config.settings import (
     REPO_ROOT,
+    CopilotSettings,
     GitHubSettings,
     LlmSettings,
     RunnerSettings,
@@ -34,6 +36,7 @@ from hw_checker.domain import (
     Severity,
     StepStatus,
 )
+from hw_checker.domain.errors import LLMError
 from hw_checker.ports import LLMClient
 from tests.fakes.llm import FakeLLMClient
 from tests.unit.domain import builders
@@ -79,13 +82,13 @@ def test_studio_graph_refuses_to_build_with_tracing_on(monkeypatch: pytest.Monke
 
 def test_llm_client_needs_the_api_key() -> None:
     with pytest.raises(ConfigurationError, match="HW_CHECKER_LLM__API_KEY"):
-        bootstrap.build_llm_client(Settings(llm=LlmSettings()))
+        bootstrap.build_openrouter_client(Settings(llm=LlmSettings()))
 
 
 def test_llm_client_is_built_with_the_api_key() -> None:
     settings = Settings(llm=LlmSettings(api_key=SecretStr(FAKE_KEY)))
 
-    client = bootstrap.build_llm_client(settings)
+    client = bootstrap.build_openrouter_client(settings)
 
     assert isinstance(client, OpenAICompatibleLLMClient)
 
@@ -109,7 +112,7 @@ def test_llm_calls_trust_the_system_certificate_store(monkeypatch: pytest.Monkey
     monkeypatch.setattr(httpx2, "Client", RecordingClient)
     settings = Settings(llm=LlmSettings(api_key=SecretStr(FAKE_KEY), timeout_seconds=45))
 
-    bootstrap.build_llm_client(settings)
+    bootstrap.build_openrouter_client(settings)
 
     assert built == [{"verify": system_context, "timeout": 45}]
 
@@ -149,11 +152,87 @@ def test_llm_config_maps_every_role_and_limit() -> None:
     assert (config.temperature, config.max_output_tokens) == (None, 512)
 
 
+def test_openrouter_is_the_default_provider() -> None:
+    settings = Settings(llm=LlmSettings(api_key=SecretStr(FAKE_KEY)))
+
+    with bootstrap.open_llm_client(settings) as client:
+        assert isinstance(client, OpenAICompatibleLLMClient)
+
+
+def test_openrouter_without_a_key_fails_before_the_block_runs() -> None:
+    with (
+        pytest.raises(ConfigurationError, match="HW_CHECKER_LLM__API_KEY"),
+        bootstrap.open_llm_client(Settings(llm=LlmSettings())),
+    ):
+        pytest.fail("the block must not run")
+
+
+def test_the_copilot_provider_opens_the_copilot_client_and_closes_it(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    closed: list[CopilotSdkLLMClient] = []
+    monkeypatch.setattr(CopilotSdkLLMClient, "close", lambda self: closed.append(self))
+    settings = Settings(llm=LlmSettings(provider="copilot"))
+
+    with bootstrap.open_llm_client(settings) as client:
+        assert isinstance(client, CopilotSdkLLMClient)
+        assert closed == []
+
+    assert closed == [client]
+
+
+def test_the_copilot_client_is_closed_when_the_block_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    closed: list[CopilotSdkLLMClient] = []
+    monkeypatch.setattr(CopilotSdkLLMClient, "close", lambda self: closed.append(self))
+    settings = Settings(llm=LlmSettings(provider="copilot"))
+
+    with pytest.raises(LLMError), bootstrap.open_llm_client(settings):
+        raise LLMError("a role failed")
+
+    assert len(closed) == 1
+
+
+def test_the_copilot_provider_needs_no_api_key() -> None:
+    settings = Settings(llm=LlmSettings(provider="copilot"))
+
+    with bootstrap.open_llm_client(settings) as client:
+        assert isinstance(client, CopilotSdkLLMClient)
+
+
+def test_copilot_config_maps_the_copilot_roles_and_the_shared_limits() -> None:
+    llm = LlmSettings(
+        provider="copilot",
+        copilot=CopilotSettings(
+            roles={"reviewer": "a", "judge": "b", "fixer": "b", "writer": "a"},
+            start_timeout_seconds=30,
+        ),
+        timeout_seconds=90,
+        max_retries=1,
+        retry_backoff_seconds=3,
+        max_prompt_chars=99,
+    )
+
+    config = bootstrap.copilot_config(llm)
+
+    assert dict(config.models) == {"reviewer": "a", "judge": "b", "fixer": "b", "writer": "a"}
+    assert (config.timeout_seconds, config.start_timeout_seconds) == (90, 30)
+    assert (config.max_retries, config.retry_backoff_seconds, config.max_prompt_chars) == (
+        1,
+        3,
+        99,
+    )
+
+
 def test_the_real_client_and_the_fake_satisfy_the_port() -> None:
+    copilot = CopilotSdkLLMClient(bootstrap.copilot_config(LlmSettings()))
     clients: list[LLMClient] = [
-        bootstrap.build_llm_client(Settings(llm=LlmSettings(api_key=SecretStr(FAKE_KEY)))),
+        bootstrap.build_openrouter_client(Settings(llm=LlmSettings(api_key=SecretStr(FAKE_KEY)))),
+        copilot,
         FakeLLMClient(),
     ]
+    copilot.close()
     assert all(callable(client.complete) for client in clients)
 
 

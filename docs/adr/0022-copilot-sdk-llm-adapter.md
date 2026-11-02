@@ -25,7 +25,7 @@ The Copilot runtime is an agent. It can run shell commands, read and edit files,
 
 - The LLM stages can run on the Copilot seat without OpenRouter credit, and nothing above the adapter knows the provider.
 - Every call costs premium requests from the seat. On 2026-11-02 the runtime reported 1.0 premium request per call for both `claude-haiku-5.5` and `claude-sonnet-5.5`. The SDK's model list carries no multiplier, so the per-call log is where usage shows.
-- Copilot adds its own agent system prompt: about 3,900 input tokens per call even with tools off.
+- Copilot adds its own agent system prompt: about 3,500 input tokens per call even with tools off (2026-11-02).
 - `temperature` and `max_output_tokens` do not apply to Copilot; the SDK has no such session options.
 - In logged-in mode the runtime uses the developer's own Copilot home (`~/.copilot`), so plugins installed there later for interactive use would load. Their tools stay hidden by the empty allowlist, but plugin hooks are not covered by the session options. Token mode never loads them. The integration test fails if any tool, permission request or MCP server appears in a session.
 - The built-in MCP server is disabled by name, because the runtime's list of built-in servers is not public API. A runtime upgrade that adds another built-in server is caught by the integration test, not by the adapter.

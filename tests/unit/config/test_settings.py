@@ -1,3 +1,4 @@
+import re
 from pathlib import Path
 
 import pytest
@@ -19,6 +20,8 @@ def _isolate_environment(monkeypatch: pytest.MonkeyPatch) -> None:
         "HW_CHECKER_GIT__COMMIT_AUTHOR_EMAIL",
         "HW_CHECKER_LLM__API_KEY",
         "HW_CHECKER_LLM__BASE_URL",
+        "HW_CHECKER_LLM__PROVIDER",
+        "HW_CHECKER_LLM__COPILOT_TOKEN",
     ):
         monkeypatch.delenv(name, raising=False)
 
@@ -468,3 +471,81 @@ def test_llm_api_key_loads_from_env_file_as_a_secret(tmp_path: Path) -> None:
     assert settings.llm.api_key is not None
     assert settings.llm.api_key.get_secret_value() == LLM_FAKE_KEY
     assert LLM_FAKE_KEY not in repr(settings)
+
+
+COPILOT_FAKE_TOKEN = "github_pat_not_a_real_token"  # pragma: allowlist secret
+
+
+def test_openrouter_is_the_default_llm_provider(tmp_path: Path) -> None:
+    llm = _load(tmp_path, "").llm
+
+    assert llm.provider == "openrouter"
+    assert llm.role_models() == llm.roles
+
+
+def test_the_copilot_provider_uses_the_copilot_roles(tmp_path: Path) -> None:
+    yaml_text = (
+        "llm:\n  provider: copilot\n"
+        "  copilot:\n    roles: {reviewer: a, judge: b, fixer: b, writer: a}\n"
+    )
+
+    llm = _load(tmp_path, yaml_text).llm
+
+    assert llm.role_models() == {"reviewer": "a", "judge": "b", "fixer": "b", "writer": "a"}
+
+
+def test_an_unknown_llm_provider_is_rejected(tmp_path: Path) -> None:
+    with pytest.raises(ConfigurationError, match=r"llm\.provider"):
+        _load(tmp_path, "llm:\n  provider: github-models\n")
+
+
+def test_a_copilot_role_without_a_model_is_rejected(tmp_path: Path) -> None:
+    yaml_text = "llm:\n  provider: copilot\n  copilot:\n    roles: {reviewer: a, judge: b}\n"
+
+    with pytest.raises(
+        ConfigurationError,
+        match=re.escape("no model for the roles: fixer, writer (in llm.copilot.roles)"),
+    ):
+        _load(tmp_path, yaml_text)
+
+
+def test_the_openrouter_rules_do_not_apply_to_copilot(tmp_path: Path) -> None:
+    yaml_text = (
+        "llm:\n  provider: copilot\n  roles: {reviewer: a}\n"
+        "  extra_body: {provider: {data_collection: allow}}\n"
+    )
+
+    llm = _load(tmp_path, yaml_text).llm
+
+    assert llm.provider == "copilot"
+
+
+def test_the_provider_can_be_switched_in_the_environment(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("HW_CHECKER_LLM__PROVIDER", "copilot")
+
+    assert _load(tmp_path, "llm:\n  provider: openrouter\n").llm.provider == "copilot"
+
+
+def test_the_copilot_token_loads_from_env_file_as_a_secret(tmp_path: Path) -> None:
+    settings = _load(tmp_path, "", f"HW_CHECKER_LLM__COPILOT_TOKEN={COPILOT_FAKE_TOKEN}\n")
+
+    assert settings.llm.copilot_token is not None
+    assert settings.llm.copilot_token.get_secret_value() == COPILOT_FAKE_TOKEN
+    assert COPILOT_FAKE_TOKEN not in repr(settings)
+
+
+def test_the_copilot_start_timeout_must_be_positive(tmp_path: Path) -> None:
+    with pytest.raises(ConfigurationError, match="start_timeout_seconds"):
+        _load(tmp_path, "llm:\n  copilot:\n    start_timeout_seconds: 0\n")
+
+
+def test_repo_config_maps_every_copilot_role_to_a_model(tmp_path: Path) -> None:
+    llm = load_settings(config_path=DEFAULT_CONFIG_PATH, env_path=tmp_path / ".env").llm
+
+    roles = llm.copilot.roles
+    assert sorted(roles) == ["fixer", "judge", "reviewer", "writer"]
+    assert roles["reviewer"] == roles["writer"]
+    assert roles["judge"] == roles["fixer"]
+    assert llm.copilot_token is None

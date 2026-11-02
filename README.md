@@ -36,19 +36,49 @@ uv run pre-commit run --all-files
 
 If console-script launchers hang on your machine, run the Python tools as modules instead, for example `uv run python -m mypy` or `uv run python -m pytest`. import-linter has no module entry point; use `uv run python -c "from importlinter.cli import lint_imports_command; lint_imports_command()"`.
 
-## The LLM key
+## The LLM provider
 
-The LLM layer (ADR 0020) calls an OpenAI-compatible endpoint, OpenRouter for development. Nothing in a round needs it yet. To set it up:
+Nothing in a round needs the LLM yet. `llm.provider` in `config.yaml` picks where the roles' models run, and switching is that one line (or `HW_CHECKER_LLM__PROVIDER=copilot` in `.env` or the environment):
+
+- `openrouter` (the default, ADR 0020): an OpenAI-compatible endpoint, paid per token from the key's credit. Models are in `llm.roles`.
+- `copilot` (ADR 0022): your GitHub Copilot seat through the GitHub Copilot SDK. Every prompt counts toward the seat's premium requests. Models are in `llm.copilot.roles`.
+
+### OpenRouter
 
 1. Create a key at <https://openrouter.ai/settings/keys>.
 2. Put it in `.env` as `HW_CHECKER_LLM__API_KEY=<your key>` (never in `config.yaml` or the repo).
-3. Check it:
+
+### Copilot
+
+The SDK downloads its own Copilot runtime the first time it runs (about 150 MB, checked by SHA-256, into `%LOCALAPPDATA%\github-copilot-sdk`), so it needs no Node.js. Logging in needs the Copilot CLI once. Log in with the GitHub account that has the Copilot seat:
+
+1. Install the CLI at the SDK's runtime version (needs Node.js):
+
+   ```powershell
+   npm install -g @github/copilot@1.0.105
+   ```
+
+2. Log in, and follow the device code in the browser:
+
+   ```powershell
+   copilot login
+   ```
+
+   If `login` is not recognized, run `copilot`, type `/login`, then `/exit`.
+
+The CLI keeps the login itself (in the system keychain or under `%USERPROFILE%\.copilot`). HW Checker never reads, prints or stores it: the SDK's runtime uses it directly.
+
+Instead of logging in, you can put a fine-grained personal access token with the "Copilot Requests" permission in `.env` as `HW_CHECKER_LLM__COPILOT_TOKEN`. The runtime then runs isolated, with its own temporary Copilot home. The login was checked on 2026-11-02; the token path is covered by unit tests only.
+
+The Copilot runtime is an agent that can run commands, but HW Checker always runs it with every tool, MCP server and permission off, in an empty temporary folder, and deletes each session after its call (ADR 0022).
+
+### Check it
 
 ```powershell
 uv run python -m hw_checker llm-check
 ```
 
-It sends one tiny synthetic prompt (no student data) to the model of each role in `config.yaml` (`llm.roles`) and prints the role, the model, ok or the error, and the time taken. The exit code is 0 only when every role answered.
+It prints the provider, then sends one tiny synthetic prompt (no student data) to the model of each role and prints the role, the model, ok or the error, and the time taken. The exit code is 0 only when every role answered. Each call's tokens and, for Copilot, its premium requests are in the log (`logs/hw_checker.jsonl`).
 
 ## Running a round
 
