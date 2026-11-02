@@ -49,7 +49,8 @@ from hw_checker.adapters.llm_copilot_sdk.runtime import (
     SdkRuntime,
     Session,
 )
-from hw_checker.domain.errors import LLMError
+from hw_checker.domain.errors import LLMError, LLMOutputError
+from hw_checker.ports.llm import TokenUsage
 
 logger = logging.getLogger(__name__)
 
@@ -138,6 +139,18 @@ class CopilotSdkLLMClient:
                 the call failed after any retries, or the reply could not be parsed into
                 `output_type`.
         """
+        return self.complete_with_usage(role, prompt, output_type)[0]
+
+    def complete_with_usage(
+        self, role: str, prompt: str, output_type: type[OutputT]
+    ) -> tuple[OutputT, TokenUsage]:
+        """Like `complete`, and also return the tokens the session reported.
+
+        Raises:
+            LLMOutputError: the model answered, but the reply could not be parsed.
+            LLMError: the role has no model, the prompt is too long, the client is closed,
+                or the call failed after any retries.
+        """
         model = self._config.models.get(role)
         if model is None:
             raise LLMError(f"No model is configured for the LLM role '{role}'.")
@@ -158,11 +171,14 @@ class CopilotSdkLLMClient:
                 except AttemptError as failure:
                     outcome = failure.outcome
                     if not failure.retryable or attempts > self._config.max_retries:
-                        raise LLMError(_with_attempts(str(failure), attempts)) from None
+                        error = LLMOutputError if failure.outcome == "unparseable" else LLMError
+                        raise error(_with_attempts(str(failure), attempts)) from None
                     self._sleep(self._backoff(attempts))
                     continue
                 outcome = "ok"
-                return result
+                return result, TokenUsage(
+                    input_tokens=usage.input_tokens or 0, output_tokens=usage.output_tokens or 0
+                )
         finally:
             self._log_call(role, model, outcome, self._clock() - started, attempts, usage)
 

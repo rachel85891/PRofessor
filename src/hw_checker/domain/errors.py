@@ -33,12 +33,23 @@ class LLMError(HwCheckerError):
     """An LLM call failed, or its output could not be parsed into the expected model."""
 
 
+class LLMOutputError(LLMError):
+    """The model answered, but its reply could not be read as the expected model.
+
+    A new call may succeed, so the graph retries it (ADR 0021).
+    """
+
+
 class PublishError(HwCheckerError):
     """Pushing a branch or opening or updating a pull request failed."""
 
 
 class ReviewError(HwCheckerError):
     """A review decision cannot be applied (an unknown repo, or a proposal in the wrong status)."""
+
+
+class FixError(HwCheckerError):
+    """The fixer could not prepare, read, write or propose a repo's review branch."""
 
 
 class InvalidAssignmentError(HwCheckerError):

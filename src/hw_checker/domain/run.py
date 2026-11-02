@@ -13,6 +13,7 @@ from hw_checker.domain.assignment import SHA256_HEX_PATTERN, Severity
 from hw_checker.domain.base import DomainModel, Identifier, NonBlankStr
 from hw_checker.domain.execution import ExecutionResult
 from hw_checker.domain.findings import Finding, JudgedFinding
+from hw_checker.domain.fixes import FixOutcome, LlmUsage
 from hw_checker.domain.publishing import PublishRecord
 from hw_checker.domain.roster import RepoTarget
 
@@ -206,6 +207,12 @@ class RunSummary(DomainModel):
     """The folder of the round's reports; None until they are written."""
     round_report: Path | None = None
     """The round's index report (`round.md`); None until it is written."""
+    llm_calls: int = Field(default=0, ge=0)
+    """LLM calls this round paid for; replies replayed from the cache are not counted."""
+    llm_input_tokens: int = Field(default=0, ge=0)
+    llm_output_tokens: int = Field(default=0, ge=0)
+    proposals: int = Field(default=0, ge=0)
+    """Repos with a review proposal from the fixer."""
 
     @classmethod
     def from_run(
@@ -234,6 +241,22 @@ class RunSummary(DomainModel):
                 RepoSummary.from_repo_run(repo_run, paths.get(repo_run.repo.repo_id))
                 for repo_run in repo_runs
             ),
+        )
+
+    def with_fixer(self, usages: Sequence[LlmUsage], outcomes: Sequence[FixOutcome]) -> Self:
+        """Return this summary with the round's LLM totals and its number of proposals.
+
+        Only calls paid by this run count, each once (a call replayed from the cache keeps
+        the run that paid for it).
+        """
+        paid = {usage.call_id: usage for usage in usages if usage.run_id == self.run_id}
+        return self.model_copy(
+            update={
+                "llm_calls": len(paid),
+                "llm_input_tokens": sum(usage.input_tokens for usage in paid.values()),
+                "llm_output_tokens": sum(usage.output_tokens for usage in paid.values()),
+                "proposals": sum(1 for outcome in outcomes if outcome.proposal_id),
+            }
         )
 
     def with_publish_records(self, records: Sequence[PublishRecord]) -> Self:

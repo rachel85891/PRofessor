@@ -6,6 +6,7 @@ from pathlib import Path
 
 from hw_checker.domain import (
     Assignment,
+    FixOutcome,
     RepoRunResult,
     RepoTarget,
     RosterWarning,
@@ -30,10 +31,12 @@ class ReportService:
         repo_run: RepoRunResult,
         assignments: tuple[Assignment, ...],
         partner: str | None = None,
+        fix: FixOutcome | None = None,
     ) -> Path:
         """Write the reviewer's report for one repo and return its path.
 
         `assignments` are the round's assignments; they give each requirement its title.
+        `fix` is what the fixer did, when it ran: the proposal, or why there is none.
 
         Raises:
             StorageError: the report cannot be written.
@@ -50,6 +53,7 @@ class ReportService:
                 repo_run=repo_run,
                 partner=partner,
                 requirement_titles=titles,
+                fix=fix,
             )
         )
         logger.info("Repo report written")

@@ -67,7 +67,8 @@ class PublishService:
     ) -> ReviewPrompt | None:
         """What the approval gate shows for the run `run_id`, or None if nothing is pending.
 
-        Each pending repo comes with its counts and report from `summary`, its branch and
+        The pending repos follow the summary's (roster) order. Each comes with its counts
+        and report from `summary`, its branch and
         pull request title, its diff (written next to the reports) and, after a failed
         publish, that attempt. `message` explains why the last answer was not applied.
 
@@ -75,10 +76,18 @@ class PublishService:
             StorageError: the proposals cannot be loaded or a diff cannot be written.
         """
         lines = {line.repo_id: line for line in summary.repos}
+        order = {repo_id: index for index, repo_id in enumerate(lines)}
+        proposals = sorted(
+            (
+                p
+                for p in self._proposals.list_for_run(run_id)
+                if p.status is ProposalStatus.PENDING_REVIEW
+            ),
+            key=lambda proposal: order.get(proposal.repo.repo_id, len(order)),
+        )
         pending = tuple(
             self._pending_review(run_id, proposal, lines.get(proposal.repo.repo_id))
-            for proposal in self._proposals.list_for_run(run_id)
-            if proposal.status is ProposalStatus.PENDING_REVIEW
+            for proposal in proposals
         )
         if not pending:
             return None

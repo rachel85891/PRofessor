@@ -189,3 +189,30 @@ llm:
   retry_backoff_seconds: 2
   # A longer prompt is refused before it is sent (about 15,000 tokens).
   max_prompt_chars: 60000
+  # Sending students' code to the LLM (the fixer) needs the lecturer's approval. Only the
+  # developer sets this to true, once the lecturer has approved it.
+  student_code_approved: false
+
+fixer:
+  # The fixer (stage 14, ADR 0021): one verified review branch and PR text per repo, waiting
+  # at the approval gate. It sends each repo's code to the LLM, so it needs
+  # llm.student_code_approved: true; startup stops otherwise.
+  enabled: false
+  # Let the judge role remove applied edits that break the review rules in spirit.
+  self_review: true
+  # Plans per repo; after the last one, failing fixes become their fallback notes.
+  max_attempts: 2
+  # Calls per LLM step when the model's reply cannot be parsed.
+  reply_attempts: 2
+  # At most this many edits per repo, and code lines per fix.
+  max_edits: 12
+  max_fix_lines: 6
+  # A longer source file is cut to this many characters in the prompt.
+  max_file_chars: 12000
+  # What the model sees: code and project files, configuration (never edited), and the data
+  # file (any file with a data suffix that is not configuration or ignored).
+  source_suffixes: [.cs, .csproj]
+  config_globs: ["appsettings*.json"]
+  data_suffixes: [.txt, .json]
+  ignored_globs: [launchSettings.json, "*.deps.json", "*.runtimeconfig.json", global.json]
+  skip_dirs: [bin, obj, .git, .vs, .vscode, node_modules]

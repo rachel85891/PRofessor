@@ -271,6 +271,8 @@ class LlmSettings(BaseModel):
     copilot_token: SecretStr | None = None
     """A GitHub token for the Copilot seat; without it the Copilot CLI's logged-in user
     is used (ADR 0022)."""
+    student_code_approved: bool = False
+    """Whether the lecturer approved sending students' code to the LLM; the developer sets it."""
 
     def role_models(self) -> dict[LlmRole, str]:
         """The model of each role for the configured provider."""
@@ -296,6 +298,38 @@ class LlmSettings(BaseModel):
                 "on OpenRouter, extra_body.provider.data_collection must be 'deny' (ADR 0020)"
             )
         return self
+
+
+class FixerSettings(BaseModel):
+    """The fixer (stage 14, ADR 0021): proposed review branches, verified before the gate."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    enabled: bool = False
+    """Sends each repo's code to the LLM; needs `llm.student_code_approved`."""
+    self_review: bool = True
+    """Let the `judge` role remove applied edits that break the review rules."""
+    max_attempts: int = Field(default=2, ge=1, le=5)
+    """Plans per repo before failing fixes fall back to their notes."""
+    reply_attempts: int = Field(default=2, ge=1, le=5)
+    """Calls per LLM step when a reply cannot be parsed (RetryPolicy)."""
+    max_edits: int = Field(default=12, ge=1)
+    max_fix_lines: int = Field(default=6, ge=1)
+    """A `fix` changes at most this many code lines."""
+    max_file_chars: int = Field(default=12_000, ge=100)
+    """A longer source file is cut to this many characters in the prompt."""
+    source_suffixes: tuple[NonBlankText, ...] = (".cs", ".csproj")
+    config_globs: tuple[NonBlankText, ...] = ("appsettings*.json",)
+    """Configuration files shown to the model, never edited."""
+    data_suffixes: tuple[NonBlankText, ...] = (".txt", ".json")
+    """A file with one of these suffixes that is not configuration or ignored is a data file."""
+    ignored_globs: tuple[NonBlankText, ...] = (
+        "launchSettings.json",
+        "*.deps.json",
+        "*.runtimeconfig.json",
+        "global.json",
+    )
+    skip_dirs: tuple[NonBlankText, ...] = ("bin", "obj", ".git", ".vs", ".vscode", "node_modules")
 
 
 class Settings(BaseSettings):
@@ -326,7 +360,18 @@ class Settings(BaseSettings):
     llm: LlmSettings = LlmSettings()
     github: GitHubSettings = GitHubSettings()
     github_token: SecretStr | None = None
+    fixer: FixerSettings = FixerSettings()
     """The publishing account's token: a classic PAT with the `public_repo` scope only."""
+
+    @model_validator(mode="after")
+    def _fixer_needs_the_lecturers_approval(self) -> Self:
+        if self.fixer.enabled and not self.llm.student_code_approved:
+            raise ValueError(
+                "fixer.enabled sends students' code to the LLM, which needs the lecturer's "
+                "approval: the developer sets llm.student_code_approved: true once the lecturer "
+                "has approved it"
+            )
+        return self
 
     @classmethod
     def settings_customise_sources(

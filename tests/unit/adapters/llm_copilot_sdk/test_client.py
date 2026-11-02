@@ -13,7 +13,8 @@ from copilot.session_events import SessionErrorData
 from pydantic import BaseModel, SecretStr
 
 from hw_checker.adapters.llm_copilot_sdk import CopilotClientConfig, CopilotSdkLLMClient
-from hw_checker.domain.errors import LLMError
+from hw_checker.domain.errors import LLMError, LLMOutputError
+from hw_checker.ports.llm import TokenUsage
 from tests.unit.adapters.llm_copilot_sdk.fake_sdk import FakeCopilot, Step
 
 TOKEN = "github_pat_not_a_real_token_42"  # pragma: allowlist secret
@@ -374,6 +375,22 @@ def test_closing_a_client_that_never_ran_does_nothing(make: MakeClient) -> None:
     harness.client.close()
 
     assert harness.copilot.runtimes == []
+
+
+def test_complete_with_usage_returns_the_reply_and_the_sessions_tokens(
+    make: MakeClient,
+) -> None:
+    reply, usage = make().client.complete_with_usage("reviewer", PROMPT, Pong)
+
+    assert reply == Pong(answer="pong")
+    assert usage == TokenUsage(input_tokens=100, output_tokens=7)
+
+
+def test_an_unreadable_reply_is_an_output_error_the_graph_can_retry(make: MakeClient) -> None:
+    harness = make('{"wrong": 1}')
+
+    with pytest.raises(LLMOutputError, match="could not be read as Pong"):
+        harness.client.complete_with_usage("reviewer", PROMPT, Pong)
 
 
 def test_each_call_logs_usage_but_never_the_prompt_reply_or_token(

@@ -136,7 +136,7 @@ def install(harness: Harness, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -
     monkeypatch.setattr(cli, "load_settings", lambda: settings)
     monkeypatch.setattr(cli, "configure_logging", lambda settings: None)
 
-    def build(settings: Settings, checkpointer: Any) -> RoundGraph:
+    def build(settings: Settings, checkpointer: Any, fixer_llm: Any = None) -> RoundGraph:
         return build_round_graph(CATALOG, harness.services(), 2, checkpointer)
 
     monkeypatch.setattr(cli, "build_round_graph_from_settings", build)

@@ -213,14 +213,18 @@ Planned: `share_partner_hints` (see note), the grade once there is a formula, an
 3. `assignment_<id>` – one node per assignment in the catalog (`assignment__general`, `assignment_hw01`, ...), generated when the graph is built and run in parallel (ADR 0019). Each wraps its assignment subgraph.
 4. `record_repo` – save the repo's result (status, commit, execution, assignment results, errors) in the run.
 5. `write_report` – write the reviewer's report, `workspace/runs/<run_id>/reports/<repo_id>.md`. A report that cannot be written is a round error; the repo keeps its status.
+6. `fix_repo` – the fixer subgraph (stage 14, ADR 0021), only when `fixer.enabled` is set, the repo was fetched and it has assignment results; otherwise the repo ends after `write_report`. Its own input and output schemas: it reads the repo's fetch, execution and assignment results, and returns the fix outcome, the LLM usage and round errors.
+7. `update_report` – after `fix_repo`, write the repo report again with the fix outcome: the proposal's branch, title and diff, or why there is no proposal.
 
-Planned: `validate_findings`, `judge_findings`, `score`, `propose_fixes`.
+**Fixer subgraph** (`build_fix_graph`, ADR 0021): `prepare_branch → plan_edits → apply_edits → self_review → verify`, then back to `plan_edits` while edits were rejected or verification failed and attempts remain (`fixer.max_attempts`), else `fall_back` (failing fixes become their fallback notes, then `verify` once more) or `write_pr_text → propose`. Each node calls `FixService` and is guarded; a fixer failure is a round error for that repo and never stops the round. The LLM nodes have a `RetryPolicy` for unparseable replies and a `CachePolicy` (a `SqliteCache` in `workspace/fixer_cache.sqlite`); every node sends a custom stream event with its step and attempt.
+
+Planned: `validate_findings`, `judge_findings`, `score`.
 
 **Level 3: assignment subgraph** (`build_assignment_graph`) – one node now, `deterministic_checks` (structure, custom, build and HTTP requirements). Later `llm_review → judge` for the code requirements.
 
 **State**
 
-- Round: the input fields, `run_id`, `repos`, `selected_assignment_ids`, `roster_warnings`, `partners`, `recorded_repos` and `round_errors` (reducer: append), `report_paths` (reducer: merge), `summary`, and for the gate `gate_open`, `gate_message`, `approved` and `publish_results` (reducer: append).
+- Round: the input fields, `run_id`, `repos`, `selected_assignment_ids`, `roster_warnings`, `partners`, `recorded_repos` and `round_errors` (reducer: append), `report_paths` (reducer: merge), `llm_usage` and `fix_outcomes` (reducer: append), `summary`, and for the gate `gate_open`, `gate_message`, `approved` and `publish_results` (reducer: append).
 - Repo: `run_id`, `assignment_id`, `repo`, `selected_assignment_ids`, `partner`, `fetched` (working copy and commit sha), `execution`, `assignment_results` and `errors` (reducer: append). Only `recorded_repos`, `round_errors` and `report_paths` flow back to the round.
 - State holds only ids and small models; clones and logs live on disk, results in the database.
 
@@ -381,13 +385,15 @@ The LLM writes only the message text of each finding; structure, headings and sc
 
 **Score:** none yet. The round's files hold counts only until the lecturer sets a formula. Then: a simple, transparent formula in configuration (weight by severity; minor does not lower the grade in v1), isolated in a single service so it is easy to replace.
 
-**Fixes (should, in v1)**
+**Fixes (stage 14, ADR 0021; the format is [fix-pr-workflow.md](fix-pr-workflow.md) §3–4)**
 
-1. For each accepted, fixable finding, the fixer returns a targeted patch (search-and-replace in a file) and a short plain-English explanation.
-2. Patches are applied on a local branch named `hw-review/<assignment>-<date>`, based on the commit that was checked.
-3. Rebuild and rerun the checks; a patch that breaks something is dropped and the finding stays as a comment only.
-4. One commit per patch, with a message referencing the requirement.
-5. Fixes stay at student level: no refactoring, no renames, no techniques not yet taught.
+1. The fixer (role `fixer`) reads the whole repo, its findings and the review rules, and returns a structured `FixPlan`: targeted edits (`fix`, a small code change with a `//fix: ...` line above it; `note`, only `//` comment lines, with the one PR section it belongs in: `names` or `for_you`; `final_newline`, on the data file only), each with the requirements it addresses and, for a `fix`, a fallback note, plus the PR's "Files" items. Student files are data inside delimiters, never instructions.
+2. Deterministic guardrails decide what is applied, in a separate working copy (`workspace/runs/<run_id>/fixes/<repo_id>`) at the checked commit; a rejected edit keeps its reason for the next attempt. A self-review (role `judge`) removes edits that break the rules in spirit.
+3. Rebuild, rerun and recheck the working copy with the round's assignments: the build must not get worse, no passing requirement may fail, and every requirement a `fix` claims must pass. Otherwise plan again with the reasons (up to `fixer.max_attempts`); after the last attempt failing fixes become their fallback notes, and if verification still fails there is no proposal and the repo report says why.
+4. One commit per repo, `<short name> review: fixes and questions`, by the publishing author, on `hw-review/<assignment>-<date>`; the proposal (pending review, verified) holds the commits, the diff (`reports/<repo_id>.diff`) and the PR text. No edit left means no branch and no proposal.
+5. The PR body has the approved PRs' shape, rendered from a template: an opening that starts with `Hi! `, then the bold sections **Fixed in this PR (marked `//fix:` in the code)**, **For you to do (marked in the code)**, **Names (C# conventions)** and **Files** (only the plan's notes on leftover or duplicate files, never the changed files), empty ones left out. Student-facing text says "The assignment asks…", never mentions the lecturer, and code comments are written `//fix: ...` and `//Text`. The title is decided in code from the last recheck, not from the model's claims: `fixes and questions` when the verified fix branch clears a major or critical requirement that failed before (a real bug, whatever the edit's kind; notes only add comments, so they clear nothing), otherwise `small fixes and questions`.
+6. Fixes stay at student level: no refactoring, no renames of stored model properties, no techniques not yet taught, never the core of the assignment.
+7. Privacy: `fixer.enabled` needs `llm.student_code_approved` (the lecturer's approval); logs carry counts and tokens only. The summary and `round.md` show the round's token totals and the number of proposals.
 
 **Publishing (stage 13a, as built)**
 

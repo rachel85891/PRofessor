@@ -412,6 +412,25 @@ def test_repo_config_names_the_publishing_account(tmp_path: Path) -> None:
     assert settings.github_token is None
 
 
+def test_the_fixer_is_off_and_student_code_is_not_approved_by_default(tmp_path: Path) -> None:
+    settings = load_settings(config_path=DEFAULT_CONFIG_PATH, env_path=tmp_path / ".env")
+
+    assert settings.fixer.enabled is False
+    assert settings.llm.student_code_approved is False
+    assert (settings.fixer.max_attempts, settings.fixer.max_fix_lines) == (2, 6)
+
+
+def test_enabling_the_fixer_without_the_lecturers_approval_stops_startup(tmp_path: Path) -> None:
+    with pytest.raises(ConfigurationError, match="needs the lecturer's approval"):
+        _load(tmp_path, "fixer:\n  enabled: true\n")
+
+
+def test_the_fixer_runs_once_student_code_is_approved(tmp_path: Path) -> None:
+    settings = _load(tmp_path, "fixer:\n  enabled: true\nllm:\n  student_code_approved: true\n")
+
+    assert settings.fixer.enabled and settings.llm.student_code_approved
+
+
 def test_repo_config_maps_every_llm_role_to_a_model(tmp_path: Path) -> None:
     from hw_checker.config.settings import LLM_ROLES
 

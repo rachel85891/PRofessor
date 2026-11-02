@@ -5,6 +5,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, cast
 
+from hw_checker.adapters.jinja_templates import JinjaTextTemplates
+from hw_checker.adapters.local_files import LocalSourceFiles
 from hw_checker.domain import (
     Assignment,
     AssignmentResult,
@@ -28,9 +30,11 @@ from hw_checker.graph import (
     RoundInput,
     build_round_graph,
 )
+from hw_checker.prompts import TEMPLATES_DIR
 from hw_checker.services.assignments import AssignmentCatalogService
 from hw_checker.services.deterministic_checks import DeterministicCheckService
 from hw_checker.services.execution import ExecutionService
+from hw_checker.services.fixing import FixService
 from hw_checker.services.publishing import PublishService
 from hw_checker.services.repo_fetch import RepoFetchService
 from hw_checker.services.reports import ReportService
@@ -42,6 +46,7 @@ from tests.fakes.clock import FakeClock
 from tests.fakes.code_host import FakeCodeHost
 from tests.fakes.execution import FakeCodeRunner
 from tests.fakes.git import DEFAULT_SHA, FakeGitClient
+from tests.fakes.llm import FakeLLMClient
 from tests.fakes.reporting import FakeReportWriter
 from tests.fakes.roster import FakeRosterReader
 from tests.fakes.storage import InMemoryStorage
@@ -171,11 +176,16 @@ class Harness:
     code_host: FakeCodeHost = field(default_factory=FakeCodeHost)
     propose: tuple[str, ...] = ()
     """Repo ids that get a pending fix proposal when their result is recorded."""
+    fixer: FakeLLMClient | None = None
+    """Turns the fixer on, with this LLM; every student's repo is the synthetic fixer repo."""
+    fixer_overrides: Mapping[str, Any] = field(default_factory=dict)
+    """Changes to the fixer's configuration (see `tests.unit.services.fixer_data.config`)."""
 
     def __post_init__(self) -> None:
         self.runner = self.runner or FakeCodeRunner(results=self.results)
         self.source = self.source or FakeAssignmentSource(self.catalog)
-        self.git = FakeGitClient(errors=self.git_errors)
+        sources = {url(name): self._fixer_repo() for name in self.names} if self.fixer else {}
+        self.git = FakeGitClient(sources=sources, errors=self.git_errors)
         self.checker = FakeRequirementChecker(
             {"hw01-build": NotEvaluatedReason.BUILD_FAILED} | dict(self.outcomes)
         )
@@ -193,12 +203,14 @@ class Harness:
             )
             for index, name in enumerate(self.names)
         ]
+        execution = ExecutionService(self.runner, self.tmp_path / "runs", Path("logs"))
+        checks = DeterministicCheckService(self.checker)
         values: dict[str, Any] = {
             "roster": RosterService(FakeRosterReader(rows)),
             "assignments": AssignmentCatalogService(self.source, FakeCheckCatalog()),
             "fetch": RepoFetchService(self.git, self.tmp_path / "clones"),
-            "execution": ExecutionService(self.runner, self.tmp_path / "runs", Path("logs")),
-            "checks": DeterministicCheckService(self.checker),
+            "execution": execution,
+            "checks": checks,
             "run_records": (
                 ProposingRecords(self.storage, self.propose, self.tmp_path / "clones")
                 if self.propose
@@ -213,8 +225,39 @@ class Harness:
                 FakeClock(),
                 commit_author_configured=True,
             ),
+            "fixing": self._fixing(execution, checks),
         }
         return GraphServices(**(values | overrides))
+
+    def _fixing(
+        self, execution: ExecutionService, checks: DeterministicCheckService
+    ) -> FixService | None:
+        if self.fixer is None:
+            return None
+        from tests.unit.services.fixer_data import config
+
+        return FixService(
+            self.fixer,
+            self.git,
+            LocalSourceFiles(),
+            JinjaTextTemplates(TEMPLATES_DIR),
+            self.storage.proposals,
+            self.report_writer,
+            FakeClock(),
+            execution,
+            checks,
+            self.tmp_path / "runs",
+            config(**self.fixer_overrides),
+        )
+
+    def _fixer_repo(self) -> Path:
+        from tests.unit.services.fixer_data import FILES
+
+        root = self.tmp_path / "fixer-repo"
+        for path, text in FILES.items():
+            (root / path).parent.mkdir(parents=True, exist_ok=True)
+            (root / path).write_bytes(text.encode("utf-8"))
+        return root
 
     def graph(self, **overrides: Any) -> RoundGraph:
         return build_round_graph(self.catalog, self.services(**overrides), max_parallel_repos=2)

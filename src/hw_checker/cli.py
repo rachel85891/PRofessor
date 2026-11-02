@@ -19,6 +19,7 @@ from pydantic import BaseModel
 from hw_checker.bootstrap import (
     build_round_graph_from_settings,
     open_checkpointer,
+    open_fixer_llm,
     open_llm_client,
     require_tracing_off,
 )
@@ -146,8 +147,8 @@ def run_round(settings: Settings, args: argparse.Namespace, out: TextIO) -> int:
         round_input["repo_ids"] = args.repo_ids
     if args.limit is not None:
         round_input["limit"] = args.limit
-    with open_checkpointer(settings) as checkpointer:
-        graph = build_round_graph_from_settings(settings, checkpointer)
+    with open_checkpointer(settings) as checkpointer, open_fixer_llm(settings) as fixer_llm:
+        graph = build_round_graph_from_settings(settings, checkpointer, fixer_llm)
         output: dict[str, Any] = graph.invoke(round_input, {"configurable": {"thread_id": run_id}})
     summary: RunSummary = output["summary"]
     print_summary(summary, output["roster_warnings"], output.get("round_errors", []), out)
@@ -161,8 +162,8 @@ def review_round(settings: Settings, run_id: str, out: TextIO) -> int:
     Raises:
         HwCheckerError: the graph cannot be built.
     """
-    with open_checkpointer(settings) as checkpointer:
-        graph = build_round_graph_from_settings(settings, checkpointer)
+    with open_checkpointer(settings) as checkpointer, open_fixer_llm(settings) as fixer_llm:
+        graph = build_round_graph_from_settings(settings, checkpointer, fixer_llm)
         interrupts = graph.get_state(_thread(run_id)).interrupts
     if not interrupts:
         print(f"Round {run_id} is not waiting for approval.", file=out)
@@ -185,8 +186,8 @@ def approve_round(settings: Settings, args: argparse.Namespace, out: TextIO) -> 
         approve=tuple(args.approve), decline=tuple(args.decline), notes=dict(args.note)
     )
     config = _thread(args.run_id)
-    with open_checkpointer(settings) as checkpointer:
-        graph = build_round_graph_from_settings(settings, checkpointer)
+    with open_checkpointer(settings) as checkpointer, open_fixer_llm(settings) as fixer_llm:
+        graph = build_round_graph_from_settings(settings, checkpointer, fixer_llm)
         if not graph.get_state(config).interrupts:
             print(f"Round {args.run_id} is not waiting for approval.", file=out)
             return EXIT_FAILED

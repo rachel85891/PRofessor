@@ -1,4 +1,6 @@
 import ssl
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
@@ -15,6 +17,7 @@ from hw_checker.config.errors import ConfigurationError
 from hw_checker.config.settings import (
     REPO_ROOT,
     CopilotSettings,
+    FixerSettings,
     GitHubSettings,
     LlmSettings,
     RunnerSettings,
@@ -38,6 +41,7 @@ from hw_checker.domain import (
 )
 from hw_checker.domain.errors import LLMError
 from hw_checker.ports import LLMClient
+from hw_checker.ports.llm import TokenUsage
 from tests.fakes.llm import FakeLLMClient
 from tests.unit.domain import builders
 
@@ -135,6 +139,129 @@ def test_publishing_clients_are_built_without_a_token_too() -> None:
 
     assert isinstance(bootstrap.build_code_host(settings), GitHubCodeHost)
     assert isinstance(bootstrap.build_publishing_git(settings), LocalGitClient)
+
+
+def test_fixer_config_maps_the_limits_and_salts_the_cache_with_the_models() -> None:
+    settings = Settings(fixer=FixerSettings(max_attempts=3, max_fix_lines=4))
+
+    config = bootstrap.fixer_config(settings)
+
+    assert (config.max_attempts, config.max_fix_lines) == (3, 4)
+    assert config.max_prompt_chars == settings.llm.max_prompt_chars
+    other_models = settings.model_copy(
+        update={
+            "llm": settings.llm.model_copy(update={"roles": {**settings.llm.roles, "fixer": "x/y"}})
+        }
+    )
+    assert bootstrap.fixer_config(other_models).cache_salt != config.cache_salt
+    assert bootstrap.fixer_config(settings).cache_salt == config.cache_salt
+
+
+def test_the_fixer_cache_lives_in_the_workspace_only_when_the_fixer_is_on(tmp_path: Path) -> None:
+    off = Settings(workspace_dir=tmp_path)
+    on = Settings(
+        workspace_dir=tmp_path,
+        fixer=FixerSettings(enabled=True),
+        llm=LlmSettings(student_code_approved=True),
+    )
+
+    assert bootstrap.fixer_cache(off) is None
+    assert bootstrap.fixer_cache(on) is not None
+    assert (tmp_path / "fixer_cache.sqlite").is_file()
+
+
+class CountingClient:
+    """An LLM client that counts how often it is opened and closed."""
+
+    opened = 0
+    closed = 0
+
+    def __enter__(self) -> "CountingClient":
+        CountingClient.opened += 1
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        CountingClient.closed += 1
+
+    def complete(self, role: str, prompt: str, output_type: type[Any]) -> Any:
+        return output_type(answer="pong")
+
+    def complete_with_usage(self, role: str, prompt: str, output_type: type[Any]) -> Any:
+        return output_type(answer="pong"), TokenUsage()
+
+
+@pytest.fixture
+def counting(monkeypatch: pytest.MonkeyPatch) -> type[CountingClient]:
+    CountingClient.opened = CountingClient.closed = 0
+
+    @contextmanager
+    def open_client(settings: Settings) -> Iterator[CountingClient]:
+        with CountingClient() as client:
+            yield client
+
+    monkeypatch.setattr(bootstrap, "open_llm_client", open_client)
+    return CountingClient
+
+
+class Pong(BaseModel):
+    answer: str
+
+
+FIXER_ON = Settings(
+    fixer=FixerSettings(enabled=True),
+    llm=LlmSettings(provider="copilot", student_code_approved=True),
+)
+
+
+def test_no_fixer_client_when_the_fixer_is_off(counting: type[CountingClient]) -> None:
+    with bootstrap.open_fixer_llm(Settings()) as client:
+        assert client is None
+
+    assert counting.opened == 0
+
+
+def test_the_fixer_client_opens_on_its_first_call_once_and_always_closes(
+    counting: type[CountingClient],
+) -> None:
+    with bootstrap.open_fixer_llm(FIXER_ON) as client:
+        assert client is not None
+        assert counting.opened == 0
+        client.complete("fixer", "p", Pong)
+        client.complete_with_usage("judge", "p", Pong)
+
+    assert (counting.opened, counting.closed) == (1, 1)
+
+
+def test_the_fixer_client_closes_when_the_round_fails(counting: type[CountingClient]) -> None:
+    with pytest.raises(RuntimeError), bootstrap.open_fixer_llm(FIXER_ON) as client:
+        assert client is not None
+        client.complete("fixer", "p", Pong)
+        raise RuntimeError("the round failed")
+
+    assert (counting.opened, counting.closed) == (1, 1)
+
+
+def test_a_fixer_client_that_was_never_called_starts_nothing(
+    counting: type[CountingClient],
+) -> None:
+    with bootstrap.open_fixer_llm(FIXER_ON):
+        pass
+
+    assert (counting.opened, counting.closed) == (0, 0)
+
+
+def test_the_openrouter_fixer_without_a_key_fails_before_the_round(
+    counting: type[CountingClient],
+) -> None:
+    settings = FIXER_ON.model_copy(
+        update={"llm": FIXER_ON.llm.model_copy(update={"provider": "openrouter"})}
+    )
+
+    with (
+        pytest.raises(ConfigurationError, match="HW_CHECKER_LLM__API_KEY"),
+        bootstrap.open_fixer_llm(settings),
+    ):
+        pass
 
 
 def test_llm_config_maps_every_role_and_limit() -> None:

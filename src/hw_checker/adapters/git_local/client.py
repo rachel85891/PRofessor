@@ -218,6 +218,64 @@ class LocalGitClient:
         )
         return self._git.run(["rev-parse", "HEAD"], repo_dir, GitOperationError).strip()
 
+    def clone_local(self, source: Path, destination: Path) -> None:
+        """Clone the working copy `source` into `destination`, at its checked-out commit.
+
+        A `destination` left by an earlier attempt is deleted first; `source` is only read.
+        Files are copied, never hard-linked, so editing the clone cannot touch `source`.
+
+        Raises:
+            GitOperationError: the clone failed or `destination` cannot be replaced.
+            ExecutionEnvironmentError: the git executable is not available.
+        """
+        self._require_own_working_copy(source)
+        try:
+            _remove_tree(destination)
+            destination.parent.mkdir(parents=True, exist_ok=True)
+        except OSError as error:
+            raise GitOperationError(f"cannot replace {destination}: {error}") from error
+        self._git.run(
+            [
+                "clone",
+                "--quiet",
+                "--no-hardlinks",
+                "--no-recurse-submodules",
+                "--config",
+                "core.autocrlf=false",
+                "--config",
+                "core.longpaths=true",
+                "--",
+                str(source),
+                str(destination),
+            ],
+            destination.parent,
+            GitOperationError,
+        )
+
+    def discard_changes(self, repo_dir: Path) -> None:
+        """Reset the working copy to its checked-out commit and delete untracked files.
+
+        Raises:
+            GitOperationError: the working copy cannot be reset.
+            ExecutionEnvironmentError: the git executable is not available.
+        """
+        self._git.run(["reset", "--quiet", "--hard", "HEAD"], repo_dir, GitOperationError)
+        self._git.run(["clean", "-ffdxq"], repo_dir, GitOperationError)
+
+    def diff(self, repo_dir: Path, base: str) -> str:
+        """Return the unified diff from the commit `base` to the working tree.
+
+        Raises:
+            GitOperationError: `base` is not a commit, or the diff failed.
+            ExecutionEnvironmentError: the git executable is not available.
+        """
+        _reject_option_like(base, "base commit", GitOperationError)
+        return self._git.run(
+            ["-c", "core.quotepath=false", "diff", "--no-color", "--no-ext-diff", base, "--"],
+            repo_dir,
+            GitOperationError,
+        )
+
     def push(self, repo_dir: Path, branch_name: str, remote_url: str) -> None:
         """Push `branch_name` to the same name at `remote_url`. Never force-pushes.
 

@@ -54,6 +54,35 @@ class GitClient(Protocol):
         """
         ...
 
+    def clone_local(self, source: Path, destination: Path) -> None:
+        """Clone the local working copy `source` into `destination`, at its checked-out commit.
+
+        A `destination` left by an earlier attempt is replaced; `source` is never changed.
+
+        Raises:
+            GitOperationError: the clone failed or `destination` cannot be replaced.
+            ExecutionEnvironmentError: the git executable is not available.
+        """
+        ...
+
+    def discard_changes(self, repo_dir: Path) -> None:
+        """Drop every uncommitted change and untracked file, back to the checked-out commit.
+
+        Raises:
+            GitOperationError: the working copy cannot be reset.
+            ExecutionEnvironmentError: the git executable is not available.
+        """
+        ...
+
+    def diff(self, repo_dir: Path, base: str) -> str:
+        """Return the unified diff from the commit `base` to the working tree.
+
+        Raises:
+            GitOperationError: the diff cannot be made.
+            ExecutionEnvironmentError: the git executable is not available.
+        """
+        ...
+
     def push(self, repo_dir: Path, branch_name: str, remote_url: str) -> None:
         """Push `branch_name` to `remote_url`, creating or updating the remote branch.
 

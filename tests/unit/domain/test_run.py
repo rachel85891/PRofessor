@@ -10,6 +10,8 @@ from hw_checker.domain import (
     AssignmentResult,
     AssignmentVersion,
     FindingBrief,
+    FixOutcome,
+    LlmUsage,
     NotEvaluated,
     NotEvaluatedReason,
     PublishOutcome,
@@ -365,6 +367,25 @@ def test_publish_records_go_to_their_repos_and_the_last_one_wins() -> None:
     updated = summary.with_publish_records([first, last])
 
     assert [line.publication for line in updated.repos] == [None, last]
+
+
+def test_llm_totals_count_only_this_runs_calls_once_each() -> None:
+    summary = RunSummary.from_run(summary_run("avigail-api"))
+    usages = [
+        LlmUsage(run_id="run-1", call_id="a", role="fixer", input_tokens=100, output_tokens=10),
+        LlmUsage(run_id="run-1", call_id="a", role="fixer", input_tokens=100, output_tokens=10),
+        LlmUsage(run_id="run-1", call_id="b", role="judge", input_tokens=50, output_tokens=5),
+        LlmUsage(run_id="run-0", call_id="c", role="writer", input_tokens=70, output_tokens=7),
+    ]
+    outcomes = [
+        FixOutcome(repo_id="avigail-api", proposal_id="run-1/avigail-api/fix"),
+        FixOutcome(repo_id="batya-api", reason="No PR."),
+    ]
+
+    totals = summary.with_fixer(usages, outcomes)
+
+    assert (totals.llm_calls, totals.llm_input_tokens, totals.llm_output_tokens) == (2, 150, 15)
+    assert totals.proposals == 1
 
 
 def test_finding_brief_is_the_first_line_of_the_english_message() -> None:

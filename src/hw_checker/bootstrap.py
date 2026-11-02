@@ -3,17 +3,22 @@
 Entry points (the CLI, the LangGraph Studio factory) build the round graph from here.
 """
 
+import atexit
 import functools
+import hashlib
 import importlib
+import json
 import os
 import pkgutil
 import sqlite3
 import ssl
+import threading
 from collections.abc import Iterator, Mapping
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 from enum import Enum
 
 import httpx2
+from langgraph.cache.sqlite import SqliteCache
 from langgraph.checkpoint.serde.jsonplus import JsonPlusSerializer
 from langgraph.checkpoint.sqlite import SqliteSaver
 from langgraph.types import Checkpointer
@@ -32,8 +37,10 @@ from hw_checker.adapters.docker_runner.runner_config import (
 )
 from hw_checker.adapters.git_local import LocalGitClient
 from hw_checker.adapters.github_api import GitHubCodeHost, GitHubConfig
+from hw_checker.adapters.jinja_templates import JinjaTextTemplates
 from hw_checker.adapters.llm_copilot_sdk import CopilotClientConfig, CopilotSdkLLMClient
 from hw_checker.adapters.llm_openai_compatible import LlmClientConfig, OpenAICompatibleLLMClient
+from hw_checker.adapters.local_files import LocalSourceFiles
 from hw_checker.adapters.roster_excel import ExcelRosterReader, RosterColumns
 from hw_checker.adapters.storage_sqlite import SqlStorage, migrate
 from hw_checker.adapters.system_clock import SystemClock
@@ -43,6 +50,7 @@ from hw_checker.checks.registry import CheckRegistry
 from hw_checker.config.errors import ConfigurationError
 from hw_checker.config.logging_setup import configure_logging
 from hw_checker.config.settings import (
+    FixerSettings,
     GitHubSettings,
     LlmSettings,
     RunnerSettings,
@@ -53,10 +61,13 @@ from hw_checker.config.settings import (
 from hw_checker.domain.errors import ExecutionEnvironmentError
 from hw_checker.graph import GraphServices, RoundGraph, build_round_graph
 from hw_checker.ports import LLMClient
+from hw_checker.ports.llm import OutputT, TokenUsage
+from hw_checker.prompts import TEMPLATES_DIR
 from hw_checker.reporting.writer import MarkdownReportWriter
 from hw_checker.services.assignments import AssignmentCatalogService
 from hw_checker.services.deterministic_checks import DeterministicCheckService
 from hw_checker.services.execution import ExecutionService
+from hw_checker.services.fixing import FixerConfig, FixService
 from hw_checker.services.publishing import PublishService
 from hw_checker.services.repo_fetch import RepoFetchService
 from hw_checker.services.reports import ReportService
@@ -68,16 +79,22 @@ BYTES_PER_MB = 1024 * 1024
 CLONES_FOLDER = "clones"
 RUNS_FOLDER = "runs"
 CHECKPOINTS_FILE = "checkpoints.sqlite"
+FIXER_CACHE_FILE = "fixer_cache.sqlite"
+
+_STUDIO_RESOURCES = ExitStack()
+"""What Studio's graph keeps open for the server's life (the fixer's LLM client)."""
+atexit.register(_STUDIO_RESOURCES.close)
 
 TRACING_SWITCHES = ("LANGSMITH_TRACING", "LANGCHAIN_TRACING_V2", "LANGCHAIN_TRACING")
 TRACING_KEYS = ("LANGSMITH_API_KEY", "LANGCHAIN_API_KEY")
 _TRUE_VALUES = frozenset({"1", "true", "yes", "on"})
 
 
-def build_graph_services(settings: Settings) -> GraphServices:
+def build_graph_services(settings: Settings, fixer_llm: LLMClient | None = None) -> GraphServices:
     """Create every adapter from `settings` and the services over them.
 
-    Brings the database to the latest schema first.
+    Brings the database to the latest schema first. The fixer runs only with `fixer_llm`
+    (from `open_fixer_llm`, which is None when `fixer.enabled` is off); its caller closes it.
 
     Raises:
         StorageError: the database cannot be migrated.
@@ -91,6 +108,38 @@ def build_graph_services(settings: Settings) -> GraphServices:
     git = settings.git
     report_writer = MarkdownReportWriter(workspace / RUNS_FOLDER)
     clock = SystemClock()
+    git_client = LocalGitClient(
+        git.executable,
+        git.timeout_seconds,
+        git.commit_author_name,
+        git.commit_author_email,
+        ssl_backend=git.ssl_backend,
+        network_retries=git.network_retries,
+        retry_backoff_seconds=git.retry_backoff_seconds,
+    )
+    execution = ExecutionService(
+        DockerCodeRunner(runner_config(settings.runner), _connect_docker(settings.runner)),
+        workspace / RUNS_FOLDER,
+        settings.runner.logs_root,
+    )
+    checks = DeterministicCheckService(DeterministicRequirementChecker(registry))
+    fixing = (
+        FixService(
+            fixer_llm,
+            git_client,
+            LocalSourceFiles(),
+            JinjaTextTemplates(TEMPLATES_DIR),
+            storage.proposals,
+            report_writer,
+            clock,
+            execution,
+            checks,
+            workspace / RUNS_FOLDER,
+            fixer_config(settings),
+        )
+        if fixer_llm is not None
+        else None
+    )
     return GraphServices(
         roster=RosterService(
             ExcelRosterReader(
@@ -106,24 +155,9 @@ def build_graph_services(settings: Settings) -> GraphServices:
         assignments=AssignmentCatalogService(
             YamlAssignmentSource(settings.assignments_dir), registry
         ),
-        fetch=RepoFetchService(
-            LocalGitClient(
-                git.executable,
-                git.timeout_seconds,
-                git.commit_author_name,
-                git.commit_author_email,
-                ssl_backend=git.ssl_backend,
-                network_retries=git.network_retries,
-                retry_backoff_seconds=git.retry_backoff_seconds,
-            ),
-            workspace / CLONES_FOLDER,
-        ),
-        execution=ExecutionService(
-            DockerCodeRunner(runner_config(settings.runner), _connect_docker(settings.runner)),
-            workspace / RUNS_FOLDER,
-            settings.runner.logs_root,
-        ),
-        checks=DeterministicCheckService(DeterministicRequirementChecker(registry)),
+        fetch=RepoFetchService(git_client, workspace / CLONES_FOLDER),
+        execution=execution,
+        checks=checks,
         run_records=RunRecordService(storage.runs, clock),
         reports=ReportService(report_writer),
         publishing=PublishService(
@@ -134,25 +168,67 @@ def build_graph_services(settings: Settings) -> GraphServices:
             clock,
             commit_author_configured=bool(git.commit_author_name and git.commit_author_email),
         ),
+        fixing=fixing,
     )
 
 
+def fixer_config(settings: Settings) -> FixerConfig:
+    """The fix service's configuration. Its cache salt changes with every setting that
+    shapes an LLM reply (the fixer's limits and files, the endpoint, the role models)."""
+    fixer: FixerSettings = settings.fixer
+    llm = settings.llm
+    shaping = {
+        "fixer": fixer.model_dump(mode="json"),
+        "llm": llm.model_dump(
+            mode="json", include={"base_url", "roles", "temperature", "max_output_tokens"}
+        ),
+    }
+    salt = hashlib.sha256(json.dumps(shaping, sort_keys=True).encode()).hexdigest()
+    return FixerConfig(
+        max_attempts=fixer.max_attempts,
+        max_edits=fixer.max_edits,
+        max_fix_lines=fixer.max_fix_lines,
+        max_file_chars=fixer.max_file_chars,
+        max_prompt_chars=llm.max_prompt_chars,
+        self_review=fixer.self_review,
+        source_suffixes=fixer.source_suffixes,
+        config_globs=fixer.config_globs,
+        data_suffixes=fixer.data_suffixes,
+        ignored_globs=fixer.ignored_globs,
+        skip_dirs=fixer.skip_dirs,
+        reply_attempts=fixer.reply_attempts,
+        cache_salt=salt,
+    )
+
+
+def fixer_cache(settings: Settings) -> SqliteCache[object] | None:
+    """The fixer's LLM reply cache, `<workspace>/fixer_cache.sqlite`; None when it is off."""
+    if not settings.fixer.enabled:
+        return None
+    path = settings.workspace_dir / FIXER_CACHE_FILE
+    path.parent.mkdir(parents=True, exist_ok=True)
+    return SqliteCache(path=str(path), serde=checkpoint_serializer())
+
+
 def build_round_graph_from_settings(
-    settings: Settings, checkpointer: Checkpointer = None
+    settings: Settings, checkpointer: Checkpointer = None, fixer_llm: LLMClient | None = None
 ) -> RoundGraph:
     """Build the round graph, with one node per assignment in the catalog as it is now.
+
+    `fixer_llm` (from `open_fixer_llm`) turns the fixer on; its caller closes it.
 
     Raises:
         InvalidAssignmentError: the assignment data cannot be loaded.
         StorageError: the database cannot be migrated.
         ExecutionEnvironmentError: Docker cannot be reached.
     """
-    services = build_graph_services(settings)
+    services = build_graph_services(settings, fixer_llm)
     return build_round_graph(
         services.assignments.list_assignments(),
         services,
         settings.max_parallel_repos,
         checkpointer,
+        fixer_cache(settings),
     )
 
 
@@ -160,7 +236,8 @@ def build_round_graph_from_settings(
 def studio_graph() -> RoundGraph:
     """The `round` graph for LangGraph Studio (`langgraph.json`), built once per server start.
 
-    It has no checkpointer: the dev server supplies its own.
+    It has no checkpointer: the dev server supplies its own. The fixer's LLM client opens
+    on its first call and closes when the server process exits.
 
     Raises:
         ConfigurationError: the settings are invalid, or LangSmith tracing is on.
@@ -168,7 +245,8 @@ def studio_graph() -> RoundGraph:
     require_tracing_off()
     settings = load_settings()
     configure_logging(settings)
-    return build_round_graph_from_settings(settings)
+    fixer_llm = _STUDIO_RESOURCES.enter_context(open_fixer_llm(settings))
+    return build_round_graph_from_settings(settings, fixer_llm=fixer_llm)
 
 
 def require_tracing_off(environ: Mapping[str, str] = os.environ) -> None:
@@ -225,6 +303,66 @@ def domain_state_types() -> tuple[type, ...]:
             and issubclass(value, (BaseModel, Enum))
         )
     return tuple(found)
+
+
+@contextmanager
+def open_fixer_llm(settings: Settings) -> Iterator[LLMClient | None]:
+    """The fixer's LLM client for one round or command: None when `fixer.enabled` is off.
+
+    The client opens on its first call, so a command that never reaches the fixer (such as
+    `review` or `approve`) starts nothing, and it is always closed when the block ends, on
+    error too, so no Copilot process is left behind.
+
+    Raises:
+        ConfigurationError: the provider is OpenRouter and `HW_CHECKER_LLM__API_KEY` is not
+            set (checked here, before any repo is checked).
+    """
+    if not settings.fixer.enabled:
+        yield None
+        return
+    if settings.llm.provider == "openrouter":
+        build_openrouter_client(settings)  # fails at once without the key
+    client = LazyLLMClient(settings)
+    try:
+        yield client
+    finally:
+        client.close()
+
+
+class LazyLLMClient:
+    """An `LLMClient` that opens the configured client (`open_llm_client`) on its first call.
+
+    Thread-safe: repos are fixed in parallel, and only one client is opened. `close` closes
+    it; a closed client opens a new one if it is called again.
+    """
+
+    def __init__(self, settings: Settings) -> None:
+        self._settings = settings
+        self._lock = threading.Lock()
+        self._resources = ExitStack()
+        self._client: LLMClient | None = None
+
+    def complete(self, role: str, prompt: str, output_type: type[OutputT]) -> OutputT:
+        """See `LLMClient.complete`."""
+        return self._opened().complete(role, prompt, output_type)
+
+    def complete_with_usage(
+        self, role: str, prompt: str, output_type: type[OutputT]
+    ) -> tuple[OutputT, TokenUsage]:
+        """See `LLMClient.complete_with_usage`."""
+        return self._opened().complete_with_usage(role, prompt, output_type)
+
+    def close(self) -> None:
+        """Close the client if it was opened."""
+        with self._lock:
+            self._client = None
+            self._resources.close()
+
+    def _opened(self) -> LLMClient:
+        with self._lock:
+            if self._client is None:
+                self._client = self._resources.enter_context(open_llm_client(self._settings))
+            return self._client
 
 
 @contextmanager

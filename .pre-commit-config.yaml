@@ -7,6 +7,8 @@ repos:
     hooks:
       - id: trailing-whitespace
       - id: end-of-file-fixer
+        # This fixture's bug is its data file's missing final newline (stage 14).
+        exclude: ^tests/fixtures/sample_webapi_no_final_newline/.*users\.txt$
       - id: check-yaml
       - id: check-added-large-files
       - id: mixed-line-ending

@@ -220,6 +220,9 @@ class Requirement(DomainModel):
         return self
 
 
+_NUMBERED_ID = re.compile(r"^([A-Za-z]+)0*(\d+)$")
+
+
 class Assignment(DomainModel):
     """An assignment and its requirements. `_general` is the assignment with order 0."""
 
@@ -231,6 +234,14 @@ class Assignment(DomainModel):
     lenient_notes: tuple[NonBlankStr, ...] = ()
     source_hash: str | None = Field(default=None, pattern=SHA256_HEX_PATTERN)
     """SHA-256 of the requirements file, so results show which version they were checked against."""
+
+    @property
+    def short_name(self) -> str:
+        """The name students know the assignment by: `hw01` → `HW1`, `_general` → `GENERAL`."""
+        match = _NUMBERED_ID.match(self.id)
+        if match is None:
+            return self.id.strip("_").upper()
+        return f"{match.group(1).upper()}{int(match.group(2))}"
 
     @model_validator(mode="after")
     def _requirement_ids_are_unique(self) -> Self:
