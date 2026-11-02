@@ -8,6 +8,7 @@ import argparse
 import sys
 import time
 from collections.abc import Callable, Sequence
+from contextlib import AbstractContextManager
 from datetime import UTC, datetime
 from typing import Any, TextIO
 
@@ -16,13 +17,13 @@ from langgraph.types import Command
 from pydantic import BaseModel
 
 from hw_checker.bootstrap import (
-    build_llm_client,
     build_round_graph_from_settings,
     open_checkpointer,
+    open_llm_client,
     require_tracing_off,
 )
 from hw_checker.config.logging_setup import configure_logging
-from hw_checker.config.settings import LLM_ROLES, Settings, load_settings
+from hw_checker.config.settings import LlmSettings, Settings, load_settings
 from hw_checker.domain import (
     GateDecision,
     PublishOutcome,
@@ -208,33 +209,42 @@ def approve_round(settings: Settings, args: argparse.Namespace, out: TextIO) -> 
 def llm_check(
     settings: Settings,
     out: TextIO,
-    build_client: Callable[[Settings], LLMClient] = build_llm_client,
+    open_client: Callable[[Settings], AbstractContextManager[LLMClient]] = open_llm_client,
     clock: Callable[[], float] = time.monotonic,
 ) -> int:
-    """Send the synthetic prompt to each role's model and print one line per role.
+    """Send the synthetic prompt to each role's model and print the provider, then one line
+    per role.
 
     Returns 0 only when every role answered as asked.
 
     Raises:
-        ConfigurationError: the LLM API key is not set (the message says how to set it).
+        ConfigurationError: the provider is OpenRouter and its API key is not set (the
+            message says how to set it).
     """
-    client = build_client(settings)
-    print(f"LLM endpoint: {settings.llm.base_url}", file=out)
-    models = {role: settings.llm.roles[role] for role in LLM_ROLES}
+    models = settings.llm.role_models()
     width = max(len(model) for model in models.values())
     all_ok = True
-    for role, model in models.items():
-        started = clock()
-        try:
-            reply = client.complete(role, LLM_CHECK_PROMPT, LlmCheckReply)
-        except LLMError as error:
-            status, ok = f"error: {error}", False
-        else:
-            ok = reply.answer.strip().lower() == LLM_CHECK_ANSWER
-            status = "ok" if ok else "error: the model did not answer as asked"
-        all_ok = all_ok and ok
-        print(f"  {role:<8}  {model:<{width}}  {clock() - started:5.1f} s  {status}", file=out)
+    with open_client(settings) as client:
+        print(f"LLM provider: {describe_provider(settings.llm)}", file=out)
+        for role, model in models.items():
+            started = clock()
+            try:
+                reply = client.complete(role, LLM_CHECK_PROMPT, LlmCheckReply)
+            except LLMError as error:
+                status, ok = f"error: {error}", False
+            else:
+                ok = reply.answer.strip().lower() == LLM_CHECK_ANSWER
+                status = "ok" if ok else "error: the model did not answer as asked"
+            all_ok = all_ok and ok
+            print(f"  {role:<8}  {model:<{width}}  {clock() - started:5.1f} s  {status}", file=out)
     return EXIT_OK if all_ok else EXIT_FAILED
+
+
+def describe_provider(llm: LlmSettings) -> str:
+    """The provider's name and where it runs, for `llm-check`."""
+    if llm.provider == "copilot":
+        return "copilot (the GitHub Copilot seat, through the Copilot SDK)"
+    return f"openrouter ({llm.base_url})"
 
 
 def print_summary(

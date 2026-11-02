@@ -329,7 +329,12 @@ The LLM is used only where a deterministic check is not enough, and every findin
 | fixer | Write a targeted fix and its explanation | Strong |
 | writer | Phrase plain-English feedback | Cheap |
 
-The role → model mapping lives in configuration (`llm.roles`). The LLM is reached through one OpenAI-compatible adapter (ADR 0020): OpenRouter for development, with provider routing `data_collection: deny` so no provider that may train on the data is used; GitHub Models (blocked on the developer's network) or OpenAI later by configuration only. `python -m hw_checker llm-check` checks the key, the models and the network with synthetic text. No student code or names are sent to an LLM until the lecturer approves it.
+The provider and the role → model mapping live in configuration (`llm.provider`, with the models in `llm.roles` or `llm.copilot.roles`); switching providers is configuration only. There are two adapters:
+
+- **`openrouter`** (ADR 0020): any OpenAI-compatible endpoint. OpenRouter for development, with provider routing `data_collection: deny`, so no provider that may train on the data is used.
+- **`copilot`** (ADR 0022): the developer's GitHub Copilot seat through the GitHub Copilot SDK. GitHub Models was retired on 2026-07-30. The Copilot runtime is an agent, so every session has no tools, no MCP servers and no permissions, and runs in an empty temporary directory. Each call's session is deleted afterwards, and every prompt counts toward the seat's premium requests.
+
+`python -m hw_checker llm-check` prints the provider and checks the login or key, the models and the network with synthetic text. No student code or names are sent to an LLM until the lecturer approves it.
 
 **Prompt rules**
 
@@ -517,7 +522,7 @@ The highest risk is running the projects in Docker on Windows against SQL Server
 
 **Open questions**
 
-- [ ] Does the Copilot account allow API access from Python code, and to which models?
+- [x] Does the Copilot account allow API access from Python code, and to which models? Yes, through the GitHub Copilot SDK (ADR 0022). On 2026-11-02 the seat offered Claude Haiku 5.5 and Claude Sonnet 5.5, among others.
 - [ ] Grading rubric (with the lecturer).
 - [ ] Point in time to check: repo state at run time, or the last commit before the deadline (with the lecturer).
 - [ ] Collaborator access to student repos.

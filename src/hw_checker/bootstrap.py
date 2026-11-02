@@ -32,6 +32,7 @@ from hw_checker.adapters.docker_runner.runner_config import (
 )
 from hw_checker.adapters.git_local import LocalGitClient
 from hw_checker.adapters.github_api import GitHubCodeHost, GitHubConfig
+from hw_checker.adapters.llm_copilot_sdk import CopilotClientConfig, CopilotSdkLLMClient
 from hw_checker.adapters.llm_openai_compatible import LlmClientConfig, OpenAICompatibleLLMClient
 from hw_checker.adapters.roster_excel import ExcelRosterReader, RosterColumns
 from hw_checker.adapters.storage_sqlite import SqlStorage, migrate
@@ -226,10 +227,27 @@ def domain_state_types() -> tuple[type, ...]:
     return tuple(found)
 
 
-def build_llm_client(settings: Settings) -> LLMClient:
-    """The LLM client for the configured endpoint and roles (ADR 0020).
+@contextmanager
+def open_llm_client(settings: Settings) -> Iterator[LLMClient]:
+    """The LLM client of the configured provider (`llm.provider`), closed when the block
+    ends; for Copilot that stops the Copilot CLI process (ADR 0022).
 
-    Nothing in a round uses it yet, so a missing key only matters to its callers.
+    Nothing in a round uses it yet, so a missing key or login only matters to its callers.
+
+    Raises:
+        ConfigurationError: the provider is OpenRouter and `HW_CHECKER_LLM__API_KEY` is not
+            set.
+    """
+    llm = settings.llm
+    if llm.provider == "copilot":
+        with CopilotSdkLLMClient(copilot_config(llm), llm.copilot_token) as client:
+            yield client
+        return
+    yield build_openrouter_client(settings)
+
+
+def build_openrouter_client(settings: Settings) -> OpenAICompatibleLLMClient:
+    """The LLM client for the configured OpenAI-compatible endpoint and roles (ADR 0020).
 
     Raises:
         ConfigurationError: `HW_CHECKER_LLM__API_KEY` is not set.
@@ -302,6 +320,18 @@ def llm_config(llm: LlmSettings) -> LlmClientConfig:
         retry_backoff_seconds=llm.retry_backoff_seconds,
         max_prompt_chars=llm.max_prompt_chars,
         extra_body=llm.extra_body,
+    )
+
+
+def copilot_config(llm: LlmSettings) -> CopilotClientConfig:
+    """The Copilot client's configuration from the LLM settings."""
+    return CopilotClientConfig(
+        models={str(role): model for role, model in llm.copilot.roles.items()},
+        timeout_seconds=llm.timeout_seconds,
+        start_timeout_seconds=llm.copilot.start_timeout_seconds,
+        max_retries=llm.max_retries,
+        retry_backoff_seconds=llm.retry_backoff_seconds,
+        max_prompt_chars=llm.max_prompt_chars,
     )
 
 

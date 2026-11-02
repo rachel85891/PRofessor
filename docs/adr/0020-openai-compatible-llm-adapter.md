@@ -21,7 +21,7 @@ OpenRouter is reachable and speaks the same OpenAI-compatible chat completions A
 - Always cap the output tokens (`llm.max_output_tokens`, sent as `max_completion_tokens`).
   Without a cap OpenRouter reserves the model's whole output limit against the credit
   (HTTP 402).
-- Switching to GitHub Models or OpenAI is configuration only: change `base_url`, the model ids and the key, and drop the OpenRouter-only `extra_body`.
+- Switching to GitHub Models or OpenAI is configuration only: change `base_url`, the model ids and the key, and drop the OpenRouter-only `extra_body`. (2026-11-02: GitHub Models was retired on 2026-07-30; the Copilot seat is reached through the Copilot SDK instead, see ADR 0022.)
 - Retries (rate limits, timeouts, server errors), the prompt size limit, error mapping to `LLMError` and per-call logging (role, model, duration, tokens, outcome; never the prompt, the reply or the key) live in the adapter.
 - `python -m hw_checker llm-check` sends one tiny synthetic prompt per role, to check the key, the models and the network.
 

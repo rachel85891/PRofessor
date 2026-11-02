@@ -200,17 +200,46 @@ class StorageSettings(BaseModel):
 LlmRole = Literal["reviewer", "judge", "fixer", "writer"]
 """The roles the LLM is called for (ADR 0008); code names a role, never a model."""
 LLM_ROLES: tuple[LlmRole, ...] = get_args(LlmRole)
+LlmProvider = Literal["openrouter", "copilot"]
+"""Where the roles' models run: an OpenAI-compatible endpoint such as OpenRouter
+(ADR 0020), or the developer's GitHub Copilot seat through the Copilot SDK (ADR 0022)."""
 OPENROUTER_HOST = "openrouter.ai"
 
 
-class LlmSettings(BaseModel):
-    """The OpenAI-compatible LLM endpoint and the model for each role (ADR 0008, ADR 0020).
+def _missing_roles(roles: dict[LlmRole, str]) -> list[LlmRole]:
+    return [role for role in LLM_ROLES if role not in roles]
 
-    The API key comes only from `.env` (`HW_CHECKER_LLM__API_KEY`), never from `config.yaml`.
+
+class CopilotSettings(BaseModel):
+    """The Copilot seat's model for each role (ADR 0022)."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    roles: dict[LlmRole, NonBlankText] = {
+        "reviewer": "claude-haiku-5.5",
+        "judge": "claude-sonnet-5.5",
+        "fixer": "claude-sonnet-5.5",
+        "writer": "claude-haiku-5.5",
+    }
+    """The Copilot model id for each role, as the seat's model list names it."""
+    start_timeout_seconds: float = Field(default=60, gt=0)
+    """The longest wait for the Copilot CLI to start and report its login."""
+
+
+class LlmSettings(BaseModel):
+    """The LLM provider and the model for each role (ADR 0008, ADR 0020, ADR 0022).
+
+    `provider` picks the client: `openrouter` uses `base_url`, `roles`, `temperature`,
+    `max_output_tokens`, `extra_body` and the API key; `copilot` uses `copilot`. The call
+    limits (`timeout_seconds`, `max_retries`, `retry_backoff_seconds`, `max_prompt_chars`)
+    apply to both. Secrets come only from `.env`, never from `config.yaml`: the API key
+    `HW_CHECKER_LLM__API_KEY`, and the optional Copilot token
+    `HW_CHECKER_LLM__COPILOT_TOKEN`.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
+    provider: LlmProvider = "openrouter"
     base_url: NonBlankText = "https://openrouter.ai/api/v1"
     roles: dict[LlmRole, NonBlankText] = {
         "reviewer": "anthropic/claude-haiku-5.5",
@@ -238,18 +267,28 @@ class LlmSettings(BaseModel):
     """Extra JSON fields sent with every request. On OpenRouter, `provider.data_collection`
     must be `deny`, so providers that train on the data are never used (ADR 0020)."""
     api_key: SecretStr | None = None
+    copilot: CopilotSettings = CopilotSettings()
+    copilot_token: SecretStr | None = None
+    """A GitHub token for the Copilot seat; without it the Copilot CLI's logged-in user
+    is used (ADR 0022)."""
 
-    @field_validator("roles")
-    @classmethod
-    def _every_role_has_a_model(cls, value: dict[str, str]) -> dict[str, str]:
-        missing = [role for role in LLM_ROLES if role not in value]
+    def role_models(self) -> dict[LlmRole, str]:
+        """The model of each role for the configured provider."""
+        roles = self.copilot.roles if self.provider == "copilot" else self.roles
+        return {role: roles[role] for role in LLM_ROLES}
+
+    @model_validator(mode="after")
+    def _every_role_has_a_model(self) -> Self:
+        roles = self.copilot.roles if self.provider == "copilot" else self.roles
+        missing = _missing_roles(roles)
         if missing:
-            raise ValueError(f"no model for the roles: {', '.join(missing)}")
-        return value
+            section = "llm.copilot.roles" if self.provider == "copilot" else "llm.roles"
+            raise ValueError(f"no model for the roles: {', '.join(missing)} (in {section})")
+        return self
 
     @model_validator(mode="after")
     def _openrouter_denies_data_collection(self) -> Self:
-        if urlsplit(self.base_url).hostname != OPENROUTER_HOST:
+        if self.provider != "openrouter" or urlsplit(self.base_url).hostname != OPENROUTER_HOST:
             return self
         provider = self.extra_body.get("provider")
         if not isinstance(provider, dict) or provider.get("data_collection") != "deny":
