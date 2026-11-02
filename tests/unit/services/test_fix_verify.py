@@ -3,10 +3,12 @@
 from pathlib import Path
 
 from hw_checker.domain import (
+    AssignmentResult,
     EditApplication,
     EditKind,
     ExecutionResult,
     FailureKind,
+    Severity,
     StepStatus,
     VerifyResult,
 )
@@ -17,6 +19,7 @@ from tests.unit.services.fixer_data import (
     ASSIGNMENT,
     BREAK_FIX,
     CONTROLLER,
+    DATA,
     FINDING,
     NAMING_NOTE,
     REPO,
@@ -50,11 +53,21 @@ def test_a_fix_that_clears_its_requirement_and_breaks_nothing_passes(tmp_path: P
 
     result, _, _ = verified(setup, BREAK_FIX, NAMING_NOTE)
 
-    assert result == VerifyResult(passed=True)
+    assert result == VerifyResult(passed=True, cleared=("hw01-update",))
     [request] = setup.runner.requests
     assert request.repo_id == LABEL
     assert request.working_copy == setup.fix_copy()
     assert request.logs_dir == setup.runs / RUN_ID / "logs" / LABEL
+
+
+def test_cleared_lists_what_failed_before_and_passes_now_whatever_the_edits_claim(
+    tmp_path: Path,
+) -> None:
+    setup = FixerSetup(tmp_path)
+
+    result, _, _ = verified(setup, NAMING_NOTE.model_copy(update={"finding_ids": ()}))
+
+    assert result.cleared == ("hw01-update",)
 
 
 def test_a_claimed_requirement_that_still_fails_blames_that_fix(tmp_path: Path) -> None:
@@ -134,3 +147,64 @@ def test_giving_up_says_why_there_is_no_pr() -> None:
 
     assert outcome.proposal_id is None
     assert outcome.reason == "No PR: the recheck still failed after the fallback notes (a; b)."
+
+
+CRITICAL_ASSIGNMENT = ASSIGNMENT.model_copy(
+    update={
+        "requirements": (
+            *ASSIGNMENT.requirements,
+            ASSIGNMENT.requirements[0].model_copy(
+                update={"id": "hw01-read-back", "severity": Severity.CRITICAL}
+            ),
+        )
+    }
+)
+
+
+def title_after_verify(
+    setup: FixerSetup, results: tuple[AssignmentResult, ...], *edits: object
+) -> str:
+    workspace = setup.service.prepare(RUN_ID, "hw01", REPO, setup.fetched)
+    application = setup.service.apply(workspace, list(edits))  # type: ignore[arg-type]
+    verification = setup.service.verify(
+        RUN_ID, REPO, workspace, (CRITICAL_ASSIGNMENT,), SUCCEEDED, results, application, 1
+    )
+    title, _, _ = setup.service.write_text(
+        RUN_ID,
+        CRITICAL_ASSIGNMENT,
+        (CRITICAL_ASSIGNMENT,),
+        results,
+        application,
+        [],
+        verification.cleared,
+    )
+    return title
+
+
+def test_a_final_newline_that_clears_a_critical_requirement_is_a_real_fix(tmp_path: Path) -> None:
+    read_back = builders.finding(requirement_id="hw01-read-back", assignment_id="hw01")
+    results = (AssignmentResult(assignment_id="hw01", findings=(read_back,)),)
+    newline = BREAK_FIX.model_copy(
+        update={"file": DATA, "kind": EditKind.FINAL_NEWLINE, "find": "", "replace": ""}
+    )
+
+    title = title_after_verify(FixerSetup(tmp_path), results, newline)
+
+    assert title == "HW1 review: fixes and questions"
+
+
+def test_a_fix_whose_claimed_major_requirement_was_not_failing_is_small(tmp_path: Path) -> None:
+    results = (AssignmentResult(assignment_id="hw01"),)
+
+    assert title_after_verify(FixerSetup(tmp_path), results, BREAK_FIX) == (
+        "HW1 review: small fixes and questions"
+    )
+
+
+def test_a_fix_that_clears_only_a_minor_requirement_is_small(tmp_path: Path) -> None:
+    results = (AssignmentResult(assignment_id="hw01", findings=(NAMING_FINDING,)),)
+    minor_fix = BREAK_FIX.model_copy(update={"finding_ids": ("hw01-naming",)})
+
+    assert title_after_verify(FixerSetup(tmp_path), results, minor_fix) == (
+        "HW1 review: small fixes and questions"
+    )

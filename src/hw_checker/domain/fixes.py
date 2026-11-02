@@ -102,6 +102,8 @@ class VerifyResult(DomainModel):
     problems: tuple[str, ...] = ()
     failing_fixes: tuple[int, ...] = ()
     """Positions of the applied `fix` edits that verification blames, from 0."""
+    cleared: tuple[str, ...] = ()
+    """Requirements that failed before (had a finding) and pass on the fix working copy."""
 
 
 class LlmUsage(DomainModel):

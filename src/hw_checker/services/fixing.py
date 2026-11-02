@@ -338,6 +338,7 @@ class FixService:
         """
         if not application.applied:
             return VerifyResult(passed=True)
+        failed_before = {f.requirement_id for result in results for f in result.findings}
         copy = workspace.working_copy
         label = f"{repo.repo_id}{FIX_LABEL}{attempt}"
         rechecked = self._execution.execute(run_id, label, copy, assignments)
@@ -364,7 +365,10 @@ class FixService:
                 blamed.add(index)
         logger.info("Recheck, attempt %d: %d problems", attempt, len(problems))
         return VerifyResult(
-            passed=not problems, problems=tuple(problems), failing_fixes=tuple(sorted(blamed))
+            passed=not problems,
+            problems=tuple(problems),
+            failing_fixes=tuple(sorted(blamed)),
+            cleared=tuple(sorted(failed_before & passed_after)),
         )
 
     def fall_back(
@@ -417,10 +421,12 @@ class FixService:
         results: Sequence[AssignmentResult],
         application: EditApplication,
         files_notes: Sequence[str],
+        cleared: Sequence[str],
     ) -> tuple[str, str, LlmUsage]:
         """Ask the `writer` role for the PR text, and return the title, the rendered body and
-        the call's usage. The title is decided here, not by the model; the body's opening
-        starts with "Hi! ", and its "Files" section is `files_notes` only.
+        the call's usage. The title is decided here, not by the model, from the requirements
+        the last recheck `cleared`; the body's opening starts with "Hi! ", and its "Files"
+        section is `files_notes` only.
 
         Raises:
             LLMOutputError: the reply could not be read.
@@ -450,8 +456,7 @@ class FixService:
         body = self._templates.render(
             BODY_TEMPLATE, {"opening": opening, "text": text, "files_notes": list(files_notes)}
         )
-        failed_before = frozenset(f.requirement_id for r in results for f in r.findings)
-        title = pr_title(assignment, application.applied, assignments, failed_before)
+        title = pr_title(assignment, cleared, assignments)
         return title, body.strip() + "\n", self._usage(run_id, WRITER_ROLE, prompt, tokens)
 
     def propose(
@@ -560,21 +565,17 @@ class FixService:
 
 
 def pr_title(
-    assignment: Assignment,
-    applied: Sequence[PlannedEdit],
-    assignments: tuple[Assignment, ...],
-    failed_before: frozenset[str],
+    assignment: Assignment, cleared: Sequence[str], assignments: tuple[Assignment, ...]
 ) -> str:
-    """`<short name> review: fixes and questions` when a `fix` addresses a major or critical
-    requirement that failed before (a real bug), otherwise `<short name> review: small fixes
-    and questions` (§4)."""
+    """`<short name> review: fixes and questions` when the verified fix branch clears a major
+    or critical requirement that failed before (a real bug), otherwise `<short name> review:
+    small fixes and questions` (§4).
+
+    `cleared` comes from the last recheck, not from the model's claims; notes only add
+    comments, so they never clear anything.
+    """
     severity = {r.id: r.severity for a in assignments for r in a.requirements}
-    strong = any(
-        severity.get(requirement_id) in STRONG_SEVERITIES and requirement_id in failed_before
-        for edit in applied
-        if edit.kind is EditKind.FIX
-        for requirement_id in edit.finding_ids
-    )
+    strong = any(severity.get(requirement_id) in STRONG_SEVERITIES for requirement_id in cleared)
     kind = "fixes and questions" if strong else "small fixes and questions"
     return f"{assignment.short_name} review: {kind}"
 

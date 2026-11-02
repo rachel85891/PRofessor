@@ -173,7 +173,9 @@ def test_the_fixer_proposes_a_verified_review_branch_that_fixes_the_data_file(
     assert output["round_errors"] == []
     assert outcome.proposal_id is not None, outcome.reason
     [proposal] = proposals
-    assert proposal.verified and proposal.pr_title.startswith("HW1 review:")
+    assert proposal.verified
+    # The final newline clears a critical requirement, so it is a real fix (§4).
+    assert proposal.pr_title == "HW1 review: fixes and questions"
     assert proposal.pr_body.startswith("Hi! ")
     fixed = proposal.local_repo_dir
     recheck = execution_service.execute(RUN_ID, f"{REPO.repo_id}--after", fixed, assignments)

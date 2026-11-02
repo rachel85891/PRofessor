@@ -244,6 +244,7 @@ def build_fix_graph(
                 state["assignment_results"],
                 state["application"],
                 state["plan"].files_notes,
+                state["verification"].cleared,
             )
             return {"pr_title": title, "pr_body": body, "llm_usage": [usage]}
 
@@ -315,6 +316,7 @@ def build_fix_graph(
             state["application"].model_dump(mode="json")["applied"],
             list(state["plan"].files_notes),
             [result.model_dump(mode="json") for result in results],
+            list(state["verification"].cleared),
         )
 
     builder = StateGraph(FixState, input_schema=FixInput, output_schema=FixOutput)

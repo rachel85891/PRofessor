@@ -6,10 +6,10 @@ from hw_checker.domain import (
     EditApplication,
     FixOutcome,
     FixPlan,
-    PlannedEdit,
     ProposalStatus,
     ReviewViolation,
     SelfReview,
+    Severity,
     VerifyResult,
 )
 from hw_checker.domain.errors import FixError
@@ -225,6 +225,7 @@ def test_the_pr_body_matches_the_golden_file(tmp_path: Path) -> None:
         RESULTS,
         application,
         ["Class1.cs looks like a leftover from the project template; is it still needed?"],
+        ["hw01-update"],
     )
 
     assert title == "HW1 review: fixes and questions"
@@ -242,7 +243,7 @@ def test_empty_sections_are_left_out_of_the_body(tmp_path: Path) -> None:
     setup = FixerSetup(tmp_path, replies={"writer": [text]})
 
     _, body, _ = setup.service.write_text(
-        RUN_ID, ASSIGNMENT, (ASSIGNMENT,), RESULTS, EditApplication(), []
+        RUN_ID, ASSIGNMENT, (ASSIGNMENT,), RESULTS, EditApplication(), [], []
     )
 
     assert body == f"{PR_TEXT.opening}\n"
@@ -253,45 +254,39 @@ def test_the_opening_always_starts_with_hi(tmp_path: Path) -> None:
     setup = FixerSetup(tmp_path, replies={"writer": [text]})
 
     _, body, _ = setup.service.write_text(
-        RUN_ID, ASSIGNMENT, (ASSIGNMENT,), RESULTS, EditApplication(), []
+        RUN_ID, ASSIGNMENT, (ASSIGNMENT,), RESULTS, EditApplication(), [], []
     )
 
     assert body.startswith("Hi! Your API builds.")
 
 
-FAILED_BEFORE = frozenset({"hw01-update"})
-NOT_FAILING_MAJOR = BREAK_FIX.model_copy(update={"finding_ids": ("hw01-other",)})
-MAJOR_ASSIGNMENT = ASSIGNMENT.model_copy(
+CRITICAL = "hw01-critical"
+TITLE_ASSIGNMENT = ASSIGNMENT.model_copy(
     update={
         "requirements": (
             *ASSIGNMENT.requirements,
-            ASSIGNMENT.requirements[0].model_copy(update={"id": "hw01-other"}),
+            ASSIGNMENT.requirements[0].model_copy(
+                update={"id": CRITICAL, "severity": Severity.CRITICAL}
+            ),
         )
     }
 )
 
 
 @pytest.mark.parametrize(
-    ("edits", "title"),
+    ("cleared", "title"),
     [
-        ((BREAK_FIX,), "HW1 review: fixes and questions"),
-        ((NAMING_NOTE,), "HW1 review: small fixes and questions"),
-        (
-            (BREAK_FIX.model_copy(update={"finding_ids": ("hw01-naming",)}),),
-            "HW1 review: small fixes and questions",
-        ),
-        (
-            (NAMING_NOTE.model_copy(update={"finding_ids": ("hw01-update",)}),),
-            "HW1 review: small fixes and questions",
-        ),
-        ((NOT_FAILING_MAJOR,), "HW1 review: small fixes and questions"),
+        (("hw01-update",), "HW1 review: fixes and questions"),
+        ((CRITICAL,), "HW1 review: fixes and questions"),
+        (("hw01-naming",), "HW1 review: small fixes and questions"),
+        ((), "HW1 review: small fixes and questions"),
     ],
-    ids=["failing-major-fix", "note-only", "minor-fix", "note-on-major", "major-not-failing"],
+    ids=["cleared-major", "cleared-critical", "cleared-only-minor", "nothing-cleared"],
 )
-def test_the_title_counts_only_fixes_of_major_requirements_that_failed_before(
-    edits: tuple[PlannedEdit, ...], title: str
+def test_the_title_comes_from_the_requirements_the_recheck_cleared(
+    cleared: tuple[str, ...], title: str
 ) -> None:
-    assert pr_title(MAJOR_ASSIGNMENT, edits, (MAJOR_ASSIGNMENT,), FAILED_BEFORE) == title
+    assert pr_title(TITLE_ASSIGNMENT, cleared, (TITLE_ASSIGNMENT,)) == title
 
 
 def test_no_applied_edit_means_no_branch_and_no_proposal(tmp_path: Path) -> None:
