@@ -3,6 +3,7 @@
 import logging
 from pathlib import Path
 
+from langgraph.cache.base import BaseCache
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.state import CompiledStateGraph
 from langgraph.types import Checkpointer, Send, interrupt
@@ -25,6 +26,7 @@ def build_round_graph(
     services: GraphServices,
     max_parallel_repos: int,
     checkpointer: Checkpointer = None,
+    cache: BaseCache[object] | None = None,
 ) -> RoundGraph:
     """Build `start_round → check_repo (Send per repo) → finish_round → write_round_report
     → approval_gate`, with `approval_gate → publish_approved → write_round_report` looping
@@ -33,7 +35,9 @@ def build_round_graph(
     `assignments` is the catalog when the graph is built; it fixes the repo graph's
     assignment nodes. At most `max_parallel_repos` repos are checked at a time. Without a
     checkpointer the graph uses its caller's (the LangGraph dev server supplies one); the
-    approval gate needs one as soon as a proposal is pending.
+    approval gate needs one as soon as a proposal is pending. `cache` keeps the fixer's LLM
+    replies (it is passed down to the fixer subgraph), so a round on the same commits does
+    not pay again.
     """
     built_versions = {assignment.id: assignment.source_hash for assignment in assignments}
 
@@ -79,7 +83,10 @@ def build_round_graph(
             repo_id: Path(path) for repo_id, path in state.get("report_paths", {}).items()
         }
         order = [repo.repo_id for repo in state.get("repos", [])]
-        return {"summary": RunSummary.from_run(run, order, report_paths)}
+        summary = RunSummary.from_run(run, order, report_paths).with_fixer(
+            state.get("llm_usage", []), state.get("fix_outcomes", [])
+        )
+        return {"summary": summary}
 
     def write_round_report(state: RoundState) -> Update:
         with log_context(run_id=state["run_id"]):
@@ -136,7 +143,7 @@ def build_round_graph(
 
     builder = StateGraph(RoundState, input_schema=RoundInput, output_schema=RoundOutput)
     builder.add_node("start_round", start_round)
-    builder.add_node("check_repo", build_repo_graph(assignments, services))
+    builder.add_node("check_repo", build_repo_graph(assignments, services, cache))
     builder.add_node("finish_round", finish_round)
     builder.add_node("write_round_report", write_round_report)
     builder.add_node("approval_gate", approval_gate)

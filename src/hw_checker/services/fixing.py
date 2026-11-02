@@ -84,6 +84,8 @@ class FixerConfig:
     data_suffixes: tuple[str, ...]
     ignored_globs: tuple[str, ...]
     skip_dirs: tuple[str, ...]
+    reply_attempts: int = 1
+    """Runs of an LLM step whose reply cannot be parsed (the graph's RetryPolicy)."""
     cache_salt: str = ""
     """Changes whenever a setting that shapes a reply changes (models, limits)."""
 
@@ -122,6 +124,11 @@ class FixService:
     def max_attempts(self) -> int:
         """How many plans a repo gets before failing fixes fall back to their notes."""
         return self._config.max_attempts
+
+    @property
+    def reply_attempts(self) -> int:
+        """How many times an LLM step runs when its reply cannot be parsed."""
+        return self._config.reply_attempts
 
     def cache_version(self) -> str:
         """Part of every cached LLM step's key: the templates and the reply-shaping settings."""
@@ -244,38 +251,48 @@ class FixService:
         )
         return application
 
-    def review(
+    def self_review(
         self,
         run_id: str,
         workspace: FixWorkspace,
         assignment: Assignment,
         application: EditApplication,
-    ) -> tuple[EditApplication, LlmUsage | None]:
-        """Let the `judge` role check the applied edits against the rules, and remove the
-        ones it finds breaking a rule (they are kept as rejected, with the reason).
+    ) -> tuple[SelfReview, LlmUsage] | None:
+        """Ask the `judge` role which applied edits break the rules. It changes no file, so
+        its reply can be cached; `remove_violations` acts on it.
 
-        Skipped (no call) when the self-review is off or nothing was applied.
+        None (no call) when the self-review is off or nothing was applied.
 
         Raises:
             LLMOutputError: the reply could not be read.
             LLMError: the call failed.
-            GitOperationError: the diff cannot be made or the copy cannot be reset.
-            FixError: a file cannot be read or written.
+            GitOperationError: the diff cannot be made.
         """
-        applied = application.applied
-        if not self._config.self_review or not applied:
-            return application, None
+        if not self._config.self_review or not application.applied:
+            return None
         diff = self._git.diff(workspace.working_copy, workspace.base_sha)
         prompt = self._templates.render(
             REVIEW_TEMPLATE,
             {
                 "assignment": assignment,
-                "edits": applied,
+                "edits": application.applied,
                 "diff": diff.replace(_DIFF_CLOSE, "<\\/student_diff>"),
             },
         )
         review, tokens = self._llm.complete_with_usage(JUDGE_ROLE, prompt, SelfReview)
-        usage = self._usage(run_id, JUDGE_ROLE, prompt, tokens)
+        return review, self._usage(run_id, JUDGE_ROLE, prompt, tokens)
+
+    def remove_violations(
+        self, workspace: FixWorkspace, application: EditApplication, review: SelfReview
+    ) -> EditApplication:
+        """Remove the edits the self-review found breaking a rule (kept as rejected, with the
+        reason), applying the others again from the checked commit.
+
+        Raises:
+            GitOperationError: the copy cannot be reset.
+            FixError: a file cannot be read or written.
+        """
+        applied = application.applied
         broken: dict[int, str] = {}
         for violation in review.violations:
             if 0 <= violation.edit_index < len(applied):
@@ -284,17 +301,14 @@ class FixService:
                 )
         logger.info("Self-review: %d of %d edits removed", len(broken), len(applied))
         if not broken:
-            return application, usage
+            return application
         kept = [edit for index, edit in enumerate(applied) if index not in broken]
         reapplied = self.apply(workspace, kept)
         removed = tuple(
             RejectedEdit(edit=applied[index], reason=reason) for index, reason in broken.items()
         )
-        return (
-            reapplied.model_copy(
-                update={"rejected": application.rejected + reapplied.rejected + removed}
-            ),
-            usage,
+        return reapplied.model_copy(
+            update={"rejected": application.rejected + reapplied.rejected + removed}
         )
 
     def verify(

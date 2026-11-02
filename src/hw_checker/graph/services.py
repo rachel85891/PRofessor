@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from hw_checker.services.assignments import AssignmentCatalogService
 from hw_checker.services.deterministic_checks import DeterministicCheckService
 from hw_checker.services.execution import ExecutionService
+from hw_checker.services.fixing import FixService
 from hw_checker.services.publishing import PublishService
 from hw_checker.services.repo_fetch import RepoFetchService
 from hw_checker.services.reports import ReportService
@@ -24,3 +25,5 @@ class GraphServices:
     run_records: RunRecordService
     reports: ReportService
     publishing: PublishService
+    fixing: FixService | None = None
+    """The fixer; None when `fixer.enabled` is off, and then no repo is fixed."""

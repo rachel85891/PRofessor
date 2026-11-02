@@ -155,6 +155,7 @@ def config(**overrides: Any) -> FixerConfig:
         "data_suffixes": (".txt", ".json"),
         "ignored_globs": ("launchSettings.json",),
         "skip_dirs": ("bin", "obj"),
+        "reply_attempts": 2,
         "cache_salt": "test",
     }
     return FixerConfig(**(values | overrides))

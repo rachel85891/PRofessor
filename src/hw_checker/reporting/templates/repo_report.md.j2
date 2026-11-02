@@ -67,3 +67,16 @@ Nothing to report: every checked requirement passed.
 
 {% endif %}
 {% endif %}
+{% if report.fix %}
+
+## Review branch
+
+{% if report.fix.proposal_id %}
+- Branch: `{{ report.fix.branch_name }}` ({{ report.fix.edits }} edits, {{ report.fix.attempts }} attempts), waiting at the round's approval gate
+- Pull request: {{ report.fix.pr_title }}
+- Diff: {% if report.fix.diff_path %}[{{ report.fix.diff_path.name }}]({{ report.fix.diff_path.name }}){% else %}not written{% endif %}
+
+{% else %}
+{{ report.fix.reason }}
+{% endif %}
+{% endif %}

@@ -5,7 +5,13 @@ from pathlib import Path
 
 import pytest
 
-from hw_checker.domain import FailureKind, NotEvaluatedReason, PublishOutcome, PublishRecord
+from hw_checker.domain import (
+    FailureKind,
+    FixOutcome,
+    NotEvaluatedReason,
+    PublishOutcome,
+    PublishRecord,
+)
 from hw_checker.domain.errors import StorageError
 from hw_checker.reporting.wording import FAILURE_KINDS, NOT_EVALUATED_REASONS
 from hw_checker.reporting.writer import (
@@ -113,6 +119,58 @@ def test_a_diff_is_written_next_to_the_reports(tmp_path: Path) -> None:
 
     assert path == reports_dir(tmp_path) / "noa__webapi.diff"
     assert path.read_bytes() == diff.encode("utf-8")
+
+
+def test_the_repo_report_links_the_fixers_proposal(tmp_path: Path) -> None:
+    fix = FixOutcome(
+        repo_id="noa__webapi",
+        proposal_id="run-1/noa__webapi/fix",
+        branch_name="hw-review/hw01-2026-11-02",
+        pr_title="HW1 review: fixes and questions",
+        diff_path=reports_dir(tmp_path) / "noa__webapi.diff",
+        attempts=2,
+        edits=3,
+    )
+
+    path = MarkdownReportWriter(tmp_path).write_repo_report(
+        data.full_report().model_copy(update={"fix": fix})
+    )
+
+    text = path.read_text(encoding="utf-8")
+    assert text.endswith(
+        "## Review branch\n\n"
+        "- Branch: `hw-review/hw01-2026-11-02` (3 edits, 2 attempts), waiting at the round's"
+        " approval gate\n"
+        "- Pull request: HW1 review: fixes and questions\n"
+        "- Diff: [noa__webapi.diff](noa__webapi.diff)\n"
+    )
+
+
+def test_the_repo_report_says_why_there_is_no_proposal(tmp_path: Path) -> None:
+    fix = FixOutcome(repo_id="noa__webapi", attempts=2, reason="No PR: the recheck failed.")
+
+    path = MarkdownReportWriter(tmp_path).write_repo_report(
+        data.clean_report().model_copy(update={"fix": fix})
+    )
+
+    assert path.read_text(encoding="utf-8").endswith(
+        "## Review branch\n\nNo PR: the recheck failed.\n"
+    )
+
+
+def test_the_round_report_shows_the_proposals_and_llm_totals(tmp_path: Path) -> None:
+    report = data.round_report(reports_dir(tmp_path))
+    summary = report.summary.model_copy(
+        update={"proposals": 2, "llm_calls": 6, "llm_input_tokens": 900, "llm_output_tokens": 120}
+    )
+
+    files = MarkdownReportWriter(tmp_path).write_round_report(
+        report.model_copy(update={"summary": summary})
+    )
+
+    text = files.round_report.read_text(encoding="utf-8")
+    assert "- Proposals waiting for review: 2\n" in text
+    assert "- LLM: 6 calls, 900 input and 120 output tokens\n" in text
 
 
 def test_counts_file_has_a_bom_and_the_columns_in_roster_order(tmp_path: Path) -> None:

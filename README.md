@@ -78,9 +78,24 @@ Then open <https://smith.langchain.com/studio/?baseUrl=http://127.0.0.1:2024>, c
 - `--no-reload`: otherwise the server restarts whenever any file changes, including files in `.venv`. The graph is built from the assignment files when the server starts, so restart it after adding or editing an assignment.
 - Privacy: the round's state holds students' names and findings. LangSmith tracing stays off: `langgraph.json` sets `LANGSMITH_TRACING=false`, and the program refuses to run if a tracing switch is on or `LANGSMITH_API_KEY` / `LANGCHAIN_API_KEY` is set. The Studio page is served by smith.langchain.com, but it reads the state from your local server in the browser; the dev server keeps it on this machine in `.langgraph_api/` (git-ignored). Do not put `LANGSMITH_*` variables in `.env`.
 
+## The fixer: review branches
+
+The fixer (ADR 0021, [docs/fix-pr-workflow.md](docs/fix-pr-workflow.md)) turns a checked repo into one review branch with a PR text, in the approved format: small safe fixes marked `//fix: ...`, English `//` questions and naming notes, never the core of the assignment. It runs after each repo's report, in a separate working copy (`workspace/runs/<run_id>/fixes/<repo_id>`), and only proposes what passes the guardrails, a self-review and a rebuild and recheck (no requirement that passed may fail, every claimed fix must pass). The proposal then waits at the approval gate below, and the repo report links its diff or says why there is none.
+
+It sends each repo's code to the LLM, so it is off by default and needs two settings in `config.yaml`:
+
+```yaml
+fixer:
+  enabled: true
+llm:
+  student_code_approved: true   # only once the lecturer has approved sending students' code
+```
+
+With `fixer.enabled` but without the approval, the program refuses to start. The LLM key must be set (see "The LLM key"). Replies are cached in `workspace/fixer_cache.sqlite`, so a round on the same commits does not pay again; `round.md` shows the round's LLM calls and tokens and the number of proposals. Logs carry counts and tokens only, never code, prompts or replies.
+
 ## Approving and publishing pull requests
 
-After every repo is checked, the round stops at one approval gate (ADR 0018) if any repo has a fix proposal waiting for review. Proposals come from the fixer (stage 14); until then no round has any, and every round ends without stopping. A repo without a proposal is never published. Publishing follows [docs/fix-pr-workflow.md](docs/fix-pr-workflow.md): the branch is pushed to the publishing account's fork of the student repo (`check_<username>`, created once and reused) and opened as a pull request on the student's repo; publishing again updates the same pull request. Before each publish the student's default branch is checked again: if it moved since the check, nothing is pushed (`stale`), and the repo needs a new round.
+After every repo is checked, the round stops at one approval gate (ADR 0018) if any repo has a fix proposal waiting for review. Proposals come from the fixer (above); with the fixer off, no round has any, and every round ends without stopping. A repo without a proposal is never published. Publishing follows [docs/fix-pr-workflow.md](docs/fix-pr-workflow.md): the branch is pushed to the publishing account's fork of the student repo (`check_<username>`, created once and reused) and opened as a pull request on the student's repo; publishing again updates the same pull request. Before each publish the student's default branch is checked again: if it moved since the check, nothing is pushed (`stale`), and the repo needs a new round.
 
 Publishing needs, in `.env` (see `.env.example`):
 

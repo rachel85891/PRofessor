@@ -11,6 +11,8 @@ from hw_checker.domain import (
     AssignmentResult,
     ExecutionResult,
     FetchedRepo,
+    FixOutcome,
+    LlmUsage,
     PublishRecord,
     RepoTarget,
     RosterWarning,
@@ -65,6 +67,10 @@ class RepoOutput(TypedDict):
     """Problems that kept a repo's result or report from being saved."""
     report_paths: Annotated[dict[str, str], merge]
     """The path of each repo's report, by repo id, for the reports that were written."""
+    llm_usage: Annotated[list[LlmUsage], operator.add]
+    """Every LLM call's tokens, with the run that paid for it."""
+    fix_outcomes: Annotated[list[FixOutcome], operator.add]
+    """What the fixer did, one per repo it ran on."""
 
 
 class RepoState(RepoInput, RepoOutput):
@@ -112,6 +118,8 @@ class RoundState(RoundInput):
     recorded_repos: Annotated[list[str], operator.add]
     round_errors: Annotated[list[str], operator.add]
     report_paths: Annotated[dict[str, str], merge]
+    llm_usage: Annotated[list[LlmUsage], operator.add]
+    fix_outcomes: Annotated[list[FixOutcome], operator.add]
     summary: NotRequired[RunSummary]
     gate_open: NotRequired[bool]
     """Whether proposals were pending at the approval gate's last visit."""

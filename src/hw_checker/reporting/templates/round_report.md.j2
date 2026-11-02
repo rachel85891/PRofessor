@@ -5,6 +5,8 @@
 - Run: {{ summary.run_id }}
 - Started: {{ started }}
 - Status: {{ summary.status.value }}
+- Proposals waiting for review: {{ summary.proposals }}
+- LLM: {{ summary.llm_calls }} calls, {{ summary.llm_input_tokens }} input and {{ summary.llm_output_tokens }} output tokens
 
 {% if rows %}
 | Student | Repo | Status | Critical | Major | Minor | Not evaluated | Report |

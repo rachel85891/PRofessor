@@ -13,6 +13,7 @@ from hw_checker.adapters.llm_openai_compatible import OpenAICompatibleLLMClient
 from hw_checker.config.errors import ConfigurationError
 from hw_checker.config.settings import (
     REPO_ROOT,
+    FixerSettings,
     GitHubSettings,
     LlmSettings,
     RunnerSettings,
@@ -132,6 +133,35 @@ def test_publishing_clients_are_built_without_a_token_too() -> None:
 
     assert isinstance(bootstrap.build_code_host(settings), GitHubCodeHost)
     assert isinstance(bootstrap.build_publishing_git(settings), LocalGitClient)
+
+
+def test_fixer_config_maps_the_limits_and_salts_the_cache_with_the_models() -> None:
+    settings = Settings(fixer=FixerSettings(max_attempts=3, max_fix_lines=4))
+
+    config = bootstrap.fixer_config(settings)
+
+    assert (config.max_attempts, config.max_fix_lines) == (3, 4)
+    assert config.max_prompt_chars == settings.llm.max_prompt_chars
+    other_models = settings.model_copy(
+        update={
+            "llm": settings.llm.model_copy(update={"roles": {**settings.llm.roles, "fixer": "x/y"}})
+        }
+    )
+    assert bootstrap.fixer_config(other_models).cache_salt != config.cache_salt
+    assert bootstrap.fixer_config(settings).cache_salt == config.cache_salt
+
+
+def test_the_fixer_cache_lives_in_the_workspace_only_when_the_fixer_is_on(tmp_path: Path) -> None:
+    off = Settings(workspace_dir=tmp_path)
+    on = Settings(
+        workspace_dir=tmp_path,
+        fixer=FixerSettings(enabled=True),
+        llm=LlmSettings(student_code_approved=True),
+    )
+
+    assert bootstrap.fixer_cache(off) is None
+    assert bootstrap.fixer_cache(on) is not None
+    assert (tmp_path / "fixer_cache.sqlite").is_file()
 
 
 def test_llm_config_maps_every_role_and_limit() -> None:

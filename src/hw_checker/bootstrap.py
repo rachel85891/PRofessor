@@ -4,7 +4,9 @@ Entry points (the CLI, the LangGraph Studio factory) build the round graph from 
 """
 
 import functools
+import hashlib
 import importlib
+import json
 import os
 import pkgutil
 import sqlite3
@@ -14,6 +16,7 @@ from contextlib import contextmanager
 from enum import Enum
 
 import httpx2
+from langgraph.cache.sqlite import SqliteCache
 from langgraph.checkpoint.serde.jsonplus import JsonPlusSerializer
 from langgraph.checkpoint.sqlite import SqliteSaver
 from langgraph.types import Checkpointer
@@ -32,7 +35,9 @@ from hw_checker.adapters.docker_runner.runner_config import (
 )
 from hw_checker.adapters.git_local import LocalGitClient
 from hw_checker.adapters.github_api import GitHubCodeHost, GitHubConfig
+from hw_checker.adapters.jinja_templates import JinjaTextTemplates
 from hw_checker.adapters.llm_openai_compatible import LlmClientConfig, OpenAICompatibleLLMClient
+from hw_checker.adapters.local_files import LocalSourceFiles
 from hw_checker.adapters.roster_excel import ExcelRosterReader, RosterColumns
 from hw_checker.adapters.storage_sqlite import SqlStorage, migrate
 from hw_checker.adapters.system_clock import SystemClock
@@ -42,6 +47,7 @@ from hw_checker.checks.registry import CheckRegistry
 from hw_checker.config.errors import ConfigurationError
 from hw_checker.config.logging_setup import configure_logging
 from hw_checker.config.settings import (
+    FixerSettings,
     GitHubSettings,
     LlmSettings,
     RunnerSettings,
@@ -52,10 +58,12 @@ from hw_checker.config.settings import (
 from hw_checker.domain.errors import ExecutionEnvironmentError
 from hw_checker.graph import GraphServices, RoundGraph, build_round_graph
 from hw_checker.ports import LLMClient
+from hw_checker.prompts import TEMPLATES_DIR
 from hw_checker.reporting.writer import MarkdownReportWriter
 from hw_checker.services.assignments import AssignmentCatalogService
 from hw_checker.services.deterministic_checks import DeterministicCheckService
 from hw_checker.services.execution import ExecutionService
+from hw_checker.services.fixing import FixerConfig, FixService
 from hw_checker.services.publishing import PublishService
 from hw_checker.services.repo_fetch import RepoFetchService
 from hw_checker.services.reports import ReportService
@@ -67,6 +75,7 @@ BYTES_PER_MB = 1024 * 1024
 CLONES_FOLDER = "clones"
 RUNS_FOLDER = "runs"
 CHECKPOINTS_FILE = "checkpoints.sqlite"
+FIXER_CACHE_FILE = "fixer_cache.sqlite"
 
 TRACING_SWITCHES = ("LANGSMITH_TRACING", "LANGCHAIN_TRACING_V2", "LANGCHAIN_TRACING")
 TRACING_KEYS = ("LANGSMITH_API_KEY", "LANGCHAIN_API_KEY")
@@ -90,6 +99,38 @@ def build_graph_services(settings: Settings) -> GraphServices:
     git = settings.git
     report_writer = MarkdownReportWriter(workspace / RUNS_FOLDER)
     clock = SystemClock()
+    git_client = LocalGitClient(
+        git.executable,
+        git.timeout_seconds,
+        git.commit_author_name,
+        git.commit_author_email,
+        ssl_backend=git.ssl_backend,
+        network_retries=git.network_retries,
+        retry_backoff_seconds=git.retry_backoff_seconds,
+    )
+    execution = ExecutionService(
+        DockerCodeRunner(runner_config(settings.runner), _connect_docker(settings.runner)),
+        workspace / RUNS_FOLDER,
+        settings.runner.logs_root,
+    )
+    checks = DeterministicCheckService(DeterministicRequirementChecker(registry))
+    fixing = (
+        FixService(
+            build_llm_client(settings),
+            git_client,
+            LocalSourceFiles(),
+            JinjaTextTemplates(TEMPLATES_DIR),
+            storage.proposals,
+            report_writer,
+            clock,
+            execution,
+            checks,
+            workspace / RUNS_FOLDER,
+            fixer_config(settings),
+        )
+        if settings.fixer.enabled
+        else None
+    )
     return GraphServices(
         roster=RosterService(
             ExcelRosterReader(
@@ -105,24 +146,9 @@ def build_graph_services(settings: Settings) -> GraphServices:
         assignments=AssignmentCatalogService(
             YamlAssignmentSource(settings.assignments_dir), registry
         ),
-        fetch=RepoFetchService(
-            LocalGitClient(
-                git.executable,
-                git.timeout_seconds,
-                git.commit_author_name,
-                git.commit_author_email,
-                ssl_backend=git.ssl_backend,
-                network_retries=git.network_retries,
-                retry_backoff_seconds=git.retry_backoff_seconds,
-            ),
-            workspace / CLONES_FOLDER,
-        ),
-        execution=ExecutionService(
-            DockerCodeRunner(runner_config(settings.runner), _connect_docker(settings.runner)),
-            workspace / RUNS_FOLDER,
-            settings.runner.logs_root,
-        ),
-        checks=DeterministicCheckService(DeterministicRequirementChecker(registry)),
+        fetch=RepoFetchService(git_client, workspace / CLONES_FOLDER),
+        execution=execution,
+        checks=checks,
         run_records=RunRecordService(storage.runs, clock),
         reports=ReportService(report_writer),
         publishing=PublishService(
@@ -133,7 +159,46 @@ def build_graph_services(settings: Settings) -> GraphServices:
             clock,
             commit_author_configured=bool(git.commit_author_name and git.commit_author_email),
         ),
+        fixing=fixing,
     )
+
+
+def fixer_config(settings: Settings) -> FixerConfig:
+    """The fix service's configuration. Its cache salt changes with every setting that
+    shapes an LLM reply (the fixer's limits and files, the endpoint, the role models)."""
+    fixer: FixerSettings = settings.fixer
+    llm = settings.llm
+    shaping = {
+        "fixer": fixer.model_dump(mode="json"),
+        "llm": llm.model_dump(
+            mode="json", include={"base_url", "roles", "temperature", "max_output_tokens"}
+        ),
+    }
+    salt = hashlib.sha256(json.dumps(shaping, sort_keys=True).encode()).hexdigest()
+    return FixerConfig(
+        max_attempts=fixer.max_attempts,
+        max_edits=fixer.max_edits,
+        max_fix_lines=fixer.max_fix_lines,
+        max_file_chars=fixer.max_file_chars,
+        max_prompt_chars=llm.max_prompt_chars,
+        self_review=fixer.self_review,
+        source_suffixes=fixer.source_suffixes,
+        config_globs=fixer.config_globs,
+        data_suffixes=fixer.data_suffixes,
+        ignored_globs=fixer.ignored_globs,
+        skip_dirs=fixer.skip_dirs,
+        reply_attempts=fixer.reply_attempts,
+        cache_salt=salt,
+    )
+
+
+def fixer_cache(settings: Settings) -> SqliteCache[object] | None:
+    """The fixer's LLM reply cache, `<workspace>/fixer_cache.sqlite`; None when it is off."""
+    if not settings.fixer.enabled:
+        return None
+    path = settings.workspace_dir / FIXER_CACHE_FILE
+    path.parent.mkdir(parents=True, exist_ok=True)
+    return SqliteCache(path=str(path), serde=checkpoint_serializer())
 
 
 def build_round_graph_from_settings(
@@ -152,6 +217,7 @@ def build_round_graph_from_settings(
         services,
         settings.max_parallel_repos,
         checkpointer,
+        fixer_cache(settings),
     )
 
 

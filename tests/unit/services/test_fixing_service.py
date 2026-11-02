@@ -22,6 +22,7 @@ from tests.unit.services.fixer_data import (
     CONTROLLER_TEXT,
     DATA,
     NAMING_NOTE,
+    NO_VIOLATIONS,
     OUTSIDE,
     PLAN,
     PR_TEXT,
@@ -158,31 +159,46 @@ def test_apply_starts_again_from_the_checked_commit(tmp_path: Path) -> None:
     assert "camelCase" in setup.text(CONTROLLER)
 
 
-def test_the_self_review_removes_a_violating_edit(tmp_path: Path) -> None:
+def test_the_self_review_asks_the_judge_and_changes_no_file(tmp_path: Path) -> None:
     violation = ReviewViolation(edit_index=0, rule="wrong", explanation="No bug there.")
     setup = FixerSetup(tmp_path, replies={"judge": [SelfReview(violations=(violation,))]})
     workspace = setup.service.prepare(RUN_ID, "hw01", REPO, setup.fetched)
     application = setup.service.apply(workspace, [BREAK_FIX, NAMING_NOTE])
+    before = setup.text(CONTROLLER)
 
-    reviewed, usage = setup.service.review(RUN_ID, workspace, ASSIGNMENT, application)
+    reviewed = setup.service.self_review(RUN_ID, workspace, ASSIGNMENT, application)
+
+    assert reviewed is not None
+    review, usage = reviewed
+    assert review.violations == (violation,)
+    assert usage.role == "judge"
+    assert setup.text(CONTROLLER) == before
+    [call] = setup.llm.calls
+    assert "<student_diff>" in call.prompt and "+                break;" in call.prompt
+
+
+def test_a_violating_edit_is_removed_and_kept_as_rejected(tmp_path: Path) -> None:
+    violation = ReviewViolation(edit_index=0, rule="wrong", explanation="No bug there.")
+    setup = FixerSetup(tmp_path)
+    workspace = setup.service.prepare(RUN_ID, "hw01", REPO, setup.fetched)
+    application = setup.service.apply(workspace, [BREAK_FIX, NAMING_NOTE])
+
+    reviewed = setup.service.remove_violations(
+        workspace, application, SelfReview(violations=(violation,))
+    )
 
     assert reviewed.applied == (NAMING_NOTE,)
     [removed] = reviewed.rejected
     assert removed.reason == "self-review: wrong: No bug there."
     assert "//fix:" not in setup.text(CONTROLLER)
-    assert usage is not None and usage.role == "judge"
-    [call] = setup.llm.calls
-    assert "<student_diff>" in call.prompt and "+                break;" in call.prompt
 
 
-def test_the_self_review_keeps_edits_without_violations(tmp_path: Path) -> None:
+def test_edits_without_violations_are_kept(tmp_path: Path) -> None:
     setup = FixerSetup(tmp_path)
     workspace = setup.service.prepare(RUN_ID, "hw01", REPO, setup.fetched)
     application = setup.service.apply(workspace, [BREAK_FIX])
 
-    reviewed, _ = setup.service.review(RUN_ID, workspace, ASSIGNMENT, application)
-
-    assert reviewed == application
+    assert setup.service.remove_violations(workspace, application, NO_VIOLATIONS) == application
 
 
 @pytest.mark.parametrize("self_review", [False, True])
@@ -193,9 +209,7 @@ def test_no_self_review_call_when_it_is_off_or_nothing_was_applied(
     workspace = setup.service.prepare(RUN_ID, "hw01", REPO, setup.fetched)
     application = setup.service.apply(workspace, [BREAK_FIX] if not self_review else [])
 
-    reviewed, usage = setup.service.review(RUN_ID, workspace, ASSIGNMENT, application)
-
-    assert (reviewed, usage) == (application, None)
+    assert setup.service.self_review(RUN_ID, workspace, ASSIGNMENT, application) is None
     assert setup.llm.calls == []
 
 

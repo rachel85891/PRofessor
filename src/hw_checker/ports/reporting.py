@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import Protocol
 
 from hw_checker.domain import (
+    FixOutcome,
     RepoRunResult,
     RepoTarget,
     RosterWarning,
@@ -23,6 +24,8 @@ class RepoReport(DomainModel):
     """The partner's name when the repo belongs to a pair."""
     requirement_titles: dict[str, str]
     """The title of every requirement of the round, by requirement id."""
+    fix: FixOutcome | None = None
+    """What the fixer did for the repo; None when it did not run."""
 
 
 class RoundReport(DomainModel):

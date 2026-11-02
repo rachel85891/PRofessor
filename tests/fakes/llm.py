@@ -25,13 +25,13 @@ class FakeLLMClient:
     """Returns scripted replies per role, in order, and records every call.
 
     `replies` maps a role to the objects its calls return, one per call (the last one is
-    repeated). `errors` maps a role to the `LLMError` its calls raise. Every call reports
-    `FAKE_USAGE`.
+    repeated); an `LLMError` among them is raised by its call. `errors` maps a role to the
+    `LLMError` its calls raise. Every call reports `FAKE_USAGE`.
     """
 
     def __init__(
         self,
-        replies: Mapping[str, Sequence[BaseModel]] | None = None,
+        replies: Mapping[str, Sequence[BaseModel | LLMError]] | None = None,
         errors: Mapping[str, LLMError] | None = None,
     ) -> None:
         self._replies = {role: list(objects) for role, objects in (replies or {}).items()}
@@ -46,6 +46,8 @@ class FakeLLMClient:
         if not scripted:
             raise LLMError(f"No reply scripted for the role '{role}'.")
         reply = scripted.pop(0) if len(scripted) > 1 else scripted[0]
+        if isinstance(reply, LLMError):
+            raise reply
         if not isinstance(reply, output_type):
             raise LLMError(f"The reply scripted for '{role}' is not a {output_type.__name__}.")
         return reply
