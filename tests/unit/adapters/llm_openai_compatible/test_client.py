@@ -11,7 +11,8 @@ import pytest
 from pydantic import BaseModel, SecretStr
 
 from hw_checker.adapters.llm_openai_compatible import LlmClientConfig, OpenAICompatibleLLMClient
-from hw_checker.domain.errors import LLMError
+from hw_checker.domain.errors import LLMError, LLMOutputError
+from hw_checker.ports.llm import TokenUsage
 
 FAKE_KEY = "sk-or-not-a-real-key-123"  # pragma: allowlist secret
 PROMPT = "Synthetic prompt: say pong."
@@ -154,6 +155,35 @@ def test_an_unparseable_reply_is_an_llm_error(content: str) -> None:
         llm.complete("reviewer", PROMPT, Pong)
     assert content not in str(raised.value)
     assert (len(transport.requests), sleeps) == (1, [])
+
+
+def test_complete_with_usage_returns_the_reply_and_its_tokens() -> None:
+    transport = Transport(
+        lambda request: httpx2.Response(200, json=completion('{"answer": "pong"}', 40, 7))
+    )
+    llm, _ = client(transport)
+
+    reply, usage = llm.complete_with_usage("reviewer", PROMPT, Pong)
+
+    assert reply == Pong(answer="pong")
+    assert usage == TokenUsage(input_tokens=40, output_tokens=7)
+
+
+def test_an_unparseable_reply_is_an_output_error_the_graph_can_retry() -> None:
+    transport = Transport(lambda request: httpx2.Response(200, json=completion("not json")))
+    llm, _ = client(transport)
+
+    with pytest.raises(LLMOutputError):
+        llm.complete_with_usage("reviewer", PROMPT, Pong)
+
+
+def test_a_failed_call_is_not_an_output_error() -> None:
+    llm, _ = client(Transport(status(401, "No auth")), max_retries=0)
+
+    with pytest.raises(LLMError) as raised:
+        llm.complete_with_usage("reviewer", PROMPT, Pong)
+
+    assert not isinstance(raised.value, LLMOutputError)
 
 
 def test_a_reply_that_is_not_an_api_reply_is_an_llm_error() -> None:

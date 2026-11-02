@@ -242,6 +242,50 @@ def test_a_failed_push_never_shows_the_token(
     assert all(PUSH_TOKEN not in record.getMessage() for record in caplog.records)
 
 
+def test_clone_local_copies_files_without_hard_links(tmp_path: Path) -> None:
+    source, destination = tmp_path / "checked", tmp_path / "fixes" / "repo"
+    source.mkdir()
+    (tmp_path / "fixes").mkdir()
+    destination.mkdir()
+    (destination / "old.cs").write_text("left by an earlier attempt")
+
+    def respond(args: list[str]) -> subprocess.CompletedProcess[str]:
+        return ok(f"{source}\n") if args[:2] == ["rev-parse", "--show-toplevel"] else ok()
+
+    runner = FakeCommandRunner(respond)
+
+    client(runner).clone_local(source, destination)
+
+    clone = runner.commands[-1]
+    assert clone[0] == "clone" and "--no-hardlinks" in clone
+    assert clone[-3:] == ["--", str(source), str(destination)]
+    assert not destination.exists()
+
+
+def test_discard_changes_resets_and_cleans(tmp_path: Path) -> None:
+    runner = FakeCommandRunner(lambda args: ok())
+
+    client(runner).discard_changes(tmp_path)
+
+    assert runner.commands == [["reset", "--quiet", "--hard", "HEAD"], ["clean", "-ffdxq"]]
+
+
+def test_diff_compares_the_base_commit_with_the_working_tree(tmp_path: Path) -> None:
+    runner = FakeCommandRunner(lambda args: ok("diff --git a/x b/x\n"))
+
+    diff = client(runner).diff(tmp_path, "a" * 40)
+
+    assert diff == "diff --git a/x b/x\n"
+    assert runner.commands == [
+        ["-c", "core.quotepath=false", "diff", "--no-color", "--no-ext-diff", "a" * 40, "--"]
+    ]
+
+
+def test_diff_refuses_an_option_as_the_base(tmp_path: Path) -> None:
+    with pytest.raises(GitOperationError, match="invalid base commit"):
+        client(FakeCommandRunner(lambda args: ok())).diff(tmp_path, "--output=x")
+
+
 def test_branch_shorthand_is_not_accepted_as_a_name(tmp_path: Path) -> None:
     runner = FakeCommandRunner(lambda args: ok("main\n"))
 

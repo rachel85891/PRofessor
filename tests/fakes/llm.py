@@ -7,6 +7,9 @@ from typing import TypeVar
 from pydantic import BaseModel
 
 from hw_checker.domain.errors import LLMError
+from hw_checker.ports.llm import TokenUsage
+
+FAKE_USAGE = TokenUsage(input_tokens=100, output_tokens=20)
 
 OutputT = TypeVar("OutputT", bound=BaseModel)
 
@@ -22,7 +25,8 @@ class FakeLLMClient:
     """Returns scripted replies per role, in order, and records every call.
 
     `replies` maps a role to the objects its calls return, one per call (the last one is
-    repeated). `errors` maps a role to the `LLMError` its calls raise.
+    repeated). `errors` maps a role to the `LLMError` its calls raise. Every call reports
+    `FAKE_USAGE`.
     """
 
     def __init__(
@@ -45,3 +49,8 @@ class FakeLLMClient:
         if not isinstance(reply, output_type):
             raise LLMError(f"The reply scripted for '{role}' is not a {output_type.__name__}.")
         return reply
+
+    def complete_with_usage(
+        self, role: str, prompt: str, output_type: type[OutputT]
+    ) -> tuple[OutputT, TokenUsage]:
+        return self.complete(role, prompt, output_type), FAKE_USAGE

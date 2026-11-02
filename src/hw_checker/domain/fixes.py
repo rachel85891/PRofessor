@@ -113,6 +113,15 @@ class LlmUsage(DomainModel):
     output_tokens: int = Field(default=0, ge=0)
 
 
+class FixWorkspace(DomainModel):
+    """The fix working copy of one repo, at the checked commit."""
+
+    working_copy: Path
+    base_sha: Identifier
+    branch_name: NonBlankStr
+    """The review branch, created when there is something to commit."""
+
+
 class FixOutcome(DomainModel):
     """What the fixer did for one repo, for the repo report and the round summary."""
 

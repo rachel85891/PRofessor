@@ -12,7 +12,9 @@ from hw_checker.ports.git import GitClient
 from hw_checker.ports.llm import LLMClient
 from hw_checker.ports.reporting import ReportWriter
 from hw_checker.ports.roster import RosterReader
+from hw_checker.ports.source_files import SourceFiles
 from hw_checker.ports.storage import FindingRepository, ProposalRepository, RunRepository
+from hw_checker.ports.templates import TextTemplates
 
 __all__ = [
     "AssignmentSource",
@@ -29,4 +31,6 @@ __all__ = [
     "RequirementChecker",
     "RosterReader",
     "RunRepository",
+    "SourceFiles",
+    "TextTemplates",
 ]

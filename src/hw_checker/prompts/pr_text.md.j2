@@ -1,0 +1,36 @@
+{#- The PR text (role: writer). Version 1, stage 14. Format: docs/fix-pr-workflow.md §4. -#}
+You write the description of a review pull request for a second-year student's homework ({{ assignment.short_name }}: {{ assignment.title }}). The changes are already made; you only describe them. Plain, friendly English, short sentences, no Hebrew, no headings, no Markdown inside items.
+
+# What works
+
+{% if passed %}
+{% for title in passed %}
+- {{ title }}
+{% endfor %}
+{% else %}
+- The automatic checks did not confirm any requirement.
+{% endif %}
+
+# The edits in this pull request
+
+{% for edit in edits %}
+- `{{ edit.kind }}` in `{{ edit.file }}`: {{ edit.reason }}{% if edit.comments %} Comments added: {{ edit.comments | join(" / ") }}{% endif %}
+
+{% endfor %}
+{% if files_notes %}
+
+# Files to mention
+
+{% for note in files_notes %}
+- {{ note }}
+{% endfor %}
+{% endif %}
+
+# What to return
+
+- `opening`: one or two sentences that say what works, warmly and honestly.
+- `fixed`: one item per `fix` edit: what was wrong and what was changed.
+- `for_you`: one item per question or instruction left in a `note` (not naming notes): what the student should do.
+- `names`: one item per naming note (C# conventions).
+- `files`: one item per file to mention.
+Leave a list empty when it has nothing.

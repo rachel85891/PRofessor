@@ -16,7 +16,9 @@ EXPECTED_PORTS = {
     "hw_checker.ports.llm": ["LLMClient"],
     "hw_checker.ports.reporting": ["ReportWriter"],
     "hw_checker.ports.roster": ["RosterReader"],
+    "hw_checker.ports.source_files": ["SourceFiles"],
     "hw_checker.ports.storage": ["FindingRepository", "ProposalRepository", "RunRepository"],
+    "hw_checker.ports.templates": ["TextTemplates"],
 }
 ALL_PORT_NAMES = sorted(name for names in EXPECTED_PORTS.values() for name in names)
 

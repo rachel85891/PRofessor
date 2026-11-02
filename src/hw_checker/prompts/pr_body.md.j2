@@ -1,0 +1,34 @@
+{#- The review PR's body, from the writer's structured reply. Sections: docs/fix-pr-workflow.md §4; empty ones are left out. -#}
+{{ text.opening }}
+{% if text.fixed %}
+
+## Fixed in this PR
+
+{% for item in text.fixed %}
+- {{ item }}
+{% endfor %}
+{% endif %}
+{% if text.for_you %}
+
+## For you to do
+
+{% for item in text.for_you %}
+- {{ item }}
+{% endfor %}
+{% endif %}
+{% if text.names %}
+
+## Names (C# conventions)
+
+{% for item in text.names %}
+- {{ item }}
+{% endfor %}
+{% endif %}
+{% if text.files %}
+
+## Files
+
+{% for item in text.files %}
+- {{ item }}
+{% endfor %}
+{% endif %}
