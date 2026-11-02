@@ -76,6 +76,7 @@ namespace WebApi.Controllers
             int index = users.FindIndex(u => u.Id == id);
             if (index == -1)
                 return NotFound();
+            user.Id = id;
             users[index] = user;
             WriteUsers(users);
             return NoContent();

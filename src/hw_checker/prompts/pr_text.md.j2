@@ -1,5 +1,5 @@
-{#- The PR text (role: writer). Version 1, stage 14. Format: docs/fix-pr-workflow.md §4. -#}
-You write the description of a review pull request for a second-year student's homework ({{ assignment.short_name }}: {{ assignment.title }}). The changes are already made; you only describe them. Plain, friendly English, short sentences, no Hebrew, no headings, no Markdown inside items.
+{#- The PR text (role: writer). Version 2, stage 14 fix. Format: docs/fix-pr-workflow.md §4 and the approved PRs. -#}
+You write the description of a review pull request for a second-year student's homework ({{ assignment.short_name }}: {{ assignment.title }}). The changes are already made; you only describe them. Plain, friendly English, short sentences, no Hebrew, no headings. Speak about the assignment ("The assignment asks…"); never mention the lecturer. Use **bold** for names and `backticks` for code where it helps (`Ok()`, `NoContent()`, `readonly`).
 
 # What works
 
@@ -17,20 +17,11 @@ You write the description of a review pull request for a second-year student's h
 - `{{ edit.kind }}` in `{{ edit.file }}`: {{ edit.reason }}{% if edit.comments %} Comments added: {{ edit.comments | join(" / ") }}{% endif %}
 
 {% endfor %}
-{% if files_notes %}
-
-# Files to mention
-
-{% for note in files_notes %}
-- {{ note }}
-{% endfor %}
-{% endif %}
 
 # What to return
 
-- `opening`: one or two sentences that say what works, warmly and honestly.
-- `fixed`: one item per `fix` edit: what was wrong and what was changed.
+- `opening`: starts with "Hi! ", then one or two sentences on what works, then optionally what this PR does (for example: "Hi! Your API builds, and creating and reading users works. This PR fixes a bug that made GET by id crash, and leaves you a few small things.").
+- `fixed`: one item per `fix` and `final_newline` edit: what was wrong and what was changed.
 - `for_you`: one item per question or instruction left in a `note` (not naming notes): what the student should do.
 - `names`: one item per naming note (C# conventions).
-- `files`: one item per file to mention.
-Leave a list empty when it has nothing.
+Leave a list empty when it has nothing. Never list the changed files.

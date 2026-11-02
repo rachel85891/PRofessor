@@ -6,6 +6,7 @@ from hw_checker.domain import (
     EditApplication,
     FixOutcome,
     FixPlan,
+    PlannedEdit,
     ProposalStatus,
     ReviewViolation,
     SelfReview,
@@ -218,7 +219,12 @@ def test_the_pr_body_matches_the_golden_file(tmp_path: Path) -> None:
     application = EditApplication(applied=(BREAK_FIX, NAMING_NOTE), changed_files=(CONTROLLER,))
 
     title, body, usage = setup.service.write_text(
-        RUN_ID, ASSIGNMENT, (ASSIGNMENT,), RESULTS, application, ["Class1.cs is a leftover."]
+        RUN_ID,
+        ASSIGNMENT,
+        (ASSIGNMENT,),
+        RESULTS,
+        application,
+        ["Class1.cs looks like a leftover from the project template; is it still needed?"],
     )
 
     assert title == "HW1 review: fixes and questions"
@@ -226,7 +232,8 @@ def test_the_pr_body_matches_the_golden_file(tmp_path: Path) -> None:
     assert usage.role == "writer"
     [call] = setup.llm.calls
     assert "Comments added: added the missing break" in call.prompt.replace("fix: ", "")
-    assert "- Class1.cs is a leftover." in call.prompt
+    assert "Class1.cs" not in call.prompt
+    assert "lecturer" not in body.lower()
     assert "- Names follow C# conventions" in call.prompt
 
 
@@ -239,6 +246,29 @@ def test_empty_sections_are_left_out_of_the_body(tmp_path: Path) -> None:
     )
 
     assert body == f"{PR_TEXT.opening}\n"
+
+
+def test_the_opening_always_starts_with_hi(tmp_path: Path) -> None:
+    text = PR_TEXT.model_copy(update={"opening": "Your API builds."})
+    setup = FixerSetup(tmp_path, replies={"writer": [text]})
+
+    _, body, _ = setup.service.write_text(
+        RUN_ID, ASSIGNMENT, (ASSIGNMENT,), RESULTS, EditApplication(), []
+    )
+
+    assert body.startswith("Hi! Your API builds.")
+
+
+FAILED_BEFORE = frozenset({"hw01-update"})
+NOT_FAILING_MAJOR = BREAK_FIX.model_copy(update={"finding_ids": ("hw01-other",)})
+MAJOR_ASSIGNMENT = ASSIGNMENT.model_copy(
+    update={
+        "requirements": (
+            *ASSIGNMENT.requirements,
+            ASSIGNMENT.requirements[0].model_copy(update={"id": "hw01-other"}),
+        )
+    }
+)
 
 
 @pytest.mark.parametrize(
@@ -254,13 +284,14 @@ def test_empty_sections_are_left_out_of_the_body(tmp_path: Path) -> None:
             (NAMING_NOTE.model_copy(update={"finding_ids": ("hw01-update",)}),),
             "HW1 review: small fixes and questions",
         ),
+        ((NOT_FAILING_MAJOR,), "HW1 review: small fixes and questions"),
     ],
-    ids=["major-fix", "note-only", "minor-fix", "note-on-major"],
+    ids=["failing-major-fix", "note-only", "minor-fix", "note-on-major", "major-not-failing"],
 )
-def test_the_title_says_fixes_only_when_a_fix_addresses_a_major_requirement(
-    edits: tuple[object, ...], title: str
+def test_the_title_counts_only_fixes_of_major_requirements_that_failed_before(
+    edits: tuple[PlannedEdit, ...], title: str
 ) -> None:
-    assert pr_title(ASSIGNMENT, edits, (ASSIGNMENT,)) == title  # type: ignore[arg-type]
+    assert pr_title(MAJOR_ASSIGNMENT, edits, (MAJOR_ASSIGNMENT,), FAILED_BEFORE) == title
 
 
 def test_no_applied_edit_means_no_branch_and_no_proposal(tmp_path: Path) -> None:

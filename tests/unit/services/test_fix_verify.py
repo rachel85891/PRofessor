@@ -112,7 +112,7 @@ def test_a_blamed_fix_falls_back_to_its_note(tmp_path: Path) -> None:
     assert [edit.kind for edit in fallen.applied] == [EditKind.NOTE, EditKind.NOTE]
     text = setup.text(CONTROLLER)
     assert "//fix:" not in text
-    assert "// Does case 1 need a break? Right now it also runs case 2." in text
+    assert "//Does case 1 need a break? Right now it also runs case 2." in text
     [dropped] = fallen.rejected
     assert dropped.edit == BREAK_FIX
     assert dropped.reason.endswith("kept as its fallback note")

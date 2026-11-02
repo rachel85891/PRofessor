@@ -60,6 +60,8 @@ BODY_TEMPLATE = "pr_body.md.j2"
 FIXES_FOLDER = "fixes"
 BRANCH_PREFIX = "hw-review/"
 STRONG_SEVERITIES = frozenset({Severity.MAJOR, Severity.CRITICAL})
+OPENING = "Hi! "
+"""How every PR body starts (the approved PRs)."""
 NOTHING_TO_CHANGE = "The fixer found nothing to change, so there is no branch and no PR."
 FIX_LABEL = "--fix"
 """Added to the repo id for the recheck's logs and containers: `<repo_id>--fix<attempt>`."""
@@ -417,7 +419,8 @@ class FixService:
         files_notes: Sequence[str],
     ) -> tuple[str, str, LlmUsage]:
         """Ask the `writer` role for the PR text, and return the title, the rendered body and
-        the call's usage. The title is decided here, not by the model.
+        the call's usage. The title is decided here, not by the model; the body's opening
+        starts with "Hi! ", and its "Files" section is `files_notes` only.
 
         Raises:
             LLMOutputError: the reply could not be read.
@@ -438,13 +441,18 @@ class FixService:
                     }
                     for edit in application.applied
                 ],
-                "files_notes": list(files_notes),
             },
         )
         text, tokens = self._llm.complete_with_usage(WRITER_ROLE, prompt, PullRequestText)
-        body = self._templates.render(BODY_TEMPLATE, {"text": text}).strip() + "\n"
-        title = pr_title(assignment, application.applied, assignments)
-        return title, body, self._usage(run_id, WRITER_ROLE, prompt, tokens)
+        opening = text.opening.strip()
+        if not opening.startswith(OPENING.strip()):
+            opening = OPENING + opening
+        body = self._templates.render(
+            BODY_TEMPLATE, {"opening": opening, "text": text, "files_notes": list(files_notes)}
+        )
+        failed_before = frozenset(f.requirement_id for r in results for f in r.findings)
+        title = pr_title(assignment, application.applied, assignments, failed_before)
+        return title, body.strip() + "\n", self._usage(run_id, WRITER_ROLE, prompt, tokens)
 
     def propose(
         self,
@@ -552,13 +560,17 @@ class FixService:
 
 
 def pr_title(
-    assignment: Assignment, applied: Sequence[PlannedEdit], assignments: tuple[Assignment, ...]
+    assignment: Assignment,
+    applied: Sequence[PlannedEdit],
+    assignments: tuple[Assignment, ...],
+    failed_before: frozenset[str],
 ) -> str:
     """`<short name> review: fixes and questions` when a `fix` addresses a major or critical
-    requirement, otherwise `<short name> review: small fixes and questions` (§4)."""
+    requirement that failed before (a real bug), otherwise `<short name> review: small fixes
+    and questions` (§4)."""
     severity = {r.id: r.severity for a in assignments for r in a.requirements}
     strong = any(
-        severity.get(requirement_id) in STRONG_SEVERITIES
+        severity.get(requirement_id) in STRONG_SEVERITIES and requirement_id in failed_before
         for edit in applied
         if edit.kind is EditKind.FIX
         for requirement_id in edit.finding_ids

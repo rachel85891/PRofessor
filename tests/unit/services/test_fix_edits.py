@@ -132,6 +132,11 @@ def test_an_edit_that_does_not_fit_the_files_is_rejected(
             "                break;\n            case 2:\n",
             "must be English, never Hebrew",
         ),
+        (
+            "                count++;\n                //fix: The lecturer asks for a break\n"
+            "                break;\n            case 2:\n",
+            "never mentions the lecturer",
+        ),
     ],
     ids=[
         "no-marker",
@@ -141,6 +146,7 @@ def test_an_edit_that_does_not_fit_the_files_is_rejected(
         "file-exists",
         "bad-request",
         "hebrew",
+        "lecturer",
     ],
 )
 def test_a_fix_that_breaks_a_rule_is_rejected(replace: str, reason: str) -> None:
@@ -279,7 +285,7 @@ def test_the_fallback_of_a_fix_is_a_note_above_the_original_text() -> None:
 
     assert note is not None
     assert note.kind is EditKind.NOTE
-    assert note.replace == "                // Does case 1 need a break here?\n" + MISSING_BREAK
+    assert note.replace == "                //Does case 1 need a break here?\n" + MISSING_BREAK
     result = apply_edits(files(), [note], RULES)
     assert result.application.applied == (note,)
 

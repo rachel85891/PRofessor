@@ -2,7 +2,8 @@
 
 Opt-in: skipped unless Docker answers and, with the OpenRouter provider, unless
 HW_CHECKER_LLM__API_KEY is set (the Copilot provider uses the Copilot CLI's login). The fixture
-(`sample_webapi_lost_id`) is written for the tests and holds no student code or names. It
+(`sample_webapi_no_final_newline`) is written for the tests and holds no student code or
+names. It
 runs the `fix_repo` subgraph on a git copy of it and prints the proposal's diff, the PR
 text and the tokens of each LLM role.
 """
@@ -49,7 +50,8 @@ from tests.integration.docker_runner.conftest import FIXTURES, runner_config
 
 pytestmark = pytest.mark.integration
 
-FIXTURE = FIXTURES / "sample_webapi_lost_id"
+FIXTURE = FIXTURES / "sample_webapi_no_final_newline"
+BROKEN_BY_THE_DATA_FILE = "hw01-read-back"
 URL = "https://github.com/test-student/webapi"
 REPO = RepoTarget(
     repo_id="test-student__webapi",
@@ -94,7 +96,7 @@ def checked_copy(tmp_path: Path) -> tuple[Path, str]:
     return copy, sha
 
 
-def test_the_fixer_proposes_a_verified_review_branch_for_the_lost_id(
+def test_the_fixer_proposes_a_verified_review_branch_that_fixes_the_data_file(
     runner: DockerCodeRunner, tmp_path: Path
 ) -> None:
     settings = load_settings()
@@ -167,9 +169,16 @@ def test_the_fixer_proposes_a_verified_review_branch_for_the_lost_id(
         print(f"LLM {usage.role}: {usage.input_tokens} input, {usage.output_tokens} output")
     for proposal in proposals:
         print(f"Title: {proposal.pr_title}\n\nBody:\n{proposal.pr_body}\nDiff:\n{proposal.diff}")
-    assert "hw01-update-read-back" in failing
+    assert BROKEN_BY_THE_DATA_FILE in failing
     assert output["round_errors"] == []
     assert outcome.proposal_id is not None, outcome.reason
     [proposal] = proposals
     assert proposal.verified and proposal.pr_title.startswith("HW1 review:")
-    assert "//" in proposal.diff
+    assert proposal.pr_body.startswith("Hi! ")
+    fixed = proposal.local_repo_dir
+    recheck = execution_service.execute(RUN_ID, f"{REPO.repo_id}--after", fixed, assignments)
+    after = {
+        f.requirement_id for a in assignments for f in checks.evaluate(a, fixed, recheck).findings
+    }
+    print(f"Failing after: {', '.join(sorted(after))}")
+    assert BROKEN_BY_THE_DATA_FILE not in after

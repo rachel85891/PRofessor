@@ -79,17 +79,19 @@ class SelfReview(DomainModel):
 
 
 class PullRequestText(DomainModel):
-    """The writer's reply: the PR body's opening and the items of each section."""
+    """The writer's reply: the PR body's opening and the items of its sections.
+
+    The "Files" section is not the writer's: it is the plan's `files_notes`, verbatim.
+    """
 
     opening: str
+    """Starts with "Hi! "; one or two sentences on what works."""
     fixed: tuple[str, ...]
-    """"Fixed in this PR"."""
+    """"Fixed in this PR (marked `//fix:` in the code)"."""
     for_you: tuple[str, ...]
-    """"For you to do"."""
+    """"For you to do (marked in the code)"."""
     names: tuple[str, ...]
     """"Names (C# conventions)"."""
-    files: tuple[str, ...]
-    """"Files"."""
 
 
 class VerifyResult(DomainModel):

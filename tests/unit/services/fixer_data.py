@@ -114,7 +114,7 @@ NAMING_NOTE = PlannedEdit(
     file=CONTROLLER,
     find="        int New_Count = count;\n",
     replace=(
-        "        // Local variables are camelCase in C#: newCount.\n"
+        "        //In C#, local variables are written in camelCase: newCount.\n"
         "        int New_Count = count;\n"
     ),
     kind=EditKind.NOTE,
@@ -134,11 +134,12 @@ OUTSIDE = PlannedEdit(
 PLAN = FixPlan(edits=(BREAK_FIX, NAMING_NOTE), files_notes=())
 NO_VIOLATIONS = SelfReview(violations=())
 PR_TEXT = PullRequestText(
-    opening="Your API builds, and creating and reading users works.",
-    fixed=("Updating with kind 1 also ran kind 2; a break was missing, and now it is there.",),
+    opening="Hi! Your API builds, and creating and reading users works.",
+    fixed=("Updating with kind 1 also ran kind 2; a `break` was missing, and now it is there.",),
     for_you=(),
-    names=("Local variables are camelCase in C#: newCount instead of New_Count.",),
-    files=(),
+    names=(
+        "In C#, local variables are written in camelCase: **newCount** instead of `New_Count`.",
+    ),
 )
 
 

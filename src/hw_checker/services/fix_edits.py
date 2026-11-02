@@ -17,7 +17,8 @@ from hw_checker.domain import EditApplication, EditKind, PlannedEdit, RejectedEd
 CODE_SUFFIX = ".cs"
 FORBIDDEN_TEXT = "File.Exists"
 BAD_REQUEST = "BadRequest("
-_HEBREW = re.compile(r"[֐-׿]")
+_HEBREW = re.compile(r"[\u0590-\u05FF]")
+_LECTURER = re.compile(r"\blecturer", re.IGNORECASE)
 _FIX_MARKER = re.compile(r"^//\s*fix:", re.IGNORECASE)
 _PROPERTY_DECLARATION = re.compile(r"\{\s*get;\s*(?:set|init);\s*\}")
 _DRIVE_LETTER = re.compile(r"^[A-Za-z]:")
@@ -73,7 +74,8 @@ def apply_edits(
 
 
 def fallback_edit(fix: PlannedEdit) -> PlannedEdit | None:
-    """The note that replaces a dropped `fix`: its fallback comment above the original text.
+    """The note that replaces a dropped `fix`: its fallback comment above the original text,
+    written `//Text` like the approved PRs.
 
     None when the fix has no fallback note.
     """
@@ -82,7 +84,7 @@ def fallback_edit(fix: PlannedEdit) -> PlannedEdit | None:
         return None
     first_line = fix.find.replace("\r\n", "\n").split("\n")[0]
     indent = first_line[: len(first_line) - len(first_line.lstrip())]
-    comment = note if note.startswith("//") else f"// {note}"
+    comment = note if note.startswith("//") else f"//{note}"
     return PlannedEdit(
         file=fix.file,
         find=fix.find,
@@ -167,6 +169,8 @@ def _content_problem(find: str, replace: str, kind: EditKind, rules: EditRules) 
         return "added text must never return a new BadRequest("
     if any(_HEBREW.search(line) for line in added):
         return "added text must be English, never Hebrew"
+    if any(_LECTURER.search(line) for line in added):
+        return 'added text says "The assignment asks...", never mentions the lecturer'
     if kind is EditKind.NOTE:
         return _note_problem(opcodes, added)
     return _fix_problem(opcodes, new, added, removed, rules)
