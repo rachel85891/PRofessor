@@ -135,7 +135,9 @@ llm:
   #               every prompt counts toward the seat's premium requests. Uses copilot
   #               (below) and the Copilot CLI login (README, "The LLM provider").
   # timeout_seconds, max_retries, retry_backoff_seconds and max_prompt_chars apply to both.
-  provider: openrouter
+  # copilot is the default here (2026-11-02); openrouter is the fallback, set it here or
+  # with HW_CHECKER_LLM__PROVIDER=openrouter if the seat is unavailable.
+  provider: copilot
   # --- openrouter only ---
   # Any OpenAI-compatible endpoint (ADR 0020): OpenAI or another by changing base_url, the
   # model ids and the key, never the code. The key is a secret: HW_CHECKER_LLM__API_KEY in
