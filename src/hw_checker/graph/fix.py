@@ -41,6 +41,19 @@ from hw_checker.graph.guard import Update, guarded
 from hw_checker.services.fixing import FixService
 
 FixGraph = CompiledStateGraph["FixState", None, "FixInput", "FixOutput"]
+DRAWING = "drawing"
+"""Stands for the missing inputs in the cache key of a partial state (graph drawing only)."""
+PLAN_KEY_INPUTS = ("repo", "workspace", "selected_assignment_ids", "assignment_results", "attempt")
+REVIEW_KEY_INPUTS = ("repo", "workspace", "application")
+TEXT_KEY_INPUTS = (
+    "repo",
+    "workspace",
+    "assignment_id",
+    "application",
+    "plan",
+    "assignment_results",
+    "verification",
+)
 
 
 class FixInput(TypedDict):
@@ -283,7 +296,11 @@ def build_fix_graph(
             return "fall_back"
         return _finish(application)
 
+    # To draw the graph (Studio), LangGraph runs these on a state that may be partial or
+    # empty; then they return a fixed key per node. A full state's key is unchanged.
     def plan_key(state: FixState) -> str:
+        if _partial(state, PLAN_KEY_INPUTS):
+            return _key(cache_version, "plan_edits", DRAWING)
         results = sorted(state["assignment_results"], key=lambda r: r.assignment_id)
         return _key(
             cache_version,
@@ -297,6 +314,8 @@ def build_fix_graph(
         )
 
     def review_key(state: FixState) -> str:
+        if _partial(state, REVIEW_KEY_INPUTS):
+            return _key(cache_version, "self_review", DRAWING)
         return _key(
             cache_version,
             "self_review",
@@ -306,6 +325,8 @@ def build_fix_graph(
         )
 
     def text_key(state: FixState) -> str:
+        if _partial(state, TEXT_KEY_INPUTS):
+            return _key(cache_version, "write_pr_text", DRAWING)
         results = sorted(state["assignment_results"], key=lambda r: r.assignment_id)
         return _key(
             cache_version,
@@ -375,6 +396,11 @@ def _unless_failed(target: str) -> Callable[[FixState], str]:
         return END if state.get("failed") else target
 
     return route
+
+
+def _partial(state: FixState, inputs: tuple[str, ...]) -> bool:
+    """Whether `state` lacks one of the keys a cache key is computed from."""
+    return any(name not in state for name in inputs)
 
 
 def _key(*parts: object) -> str:
