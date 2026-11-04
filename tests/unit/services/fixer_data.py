@@ -140,7 +140,7 @@ NO_VIOLATIONS = SelfReview(violations=())
 PR_TEXT = PullRequestText(
     opening="Hi! Your API builds, and creating and reading users works.",
     fixed=("Updating with kind 1 also ran kind 2; a `break` was missing, and now it is there.",),
-    for_you=(),
+    for_you=("**`case 1`:** does it need a `break`? Right now it also runs `case 2`.",),
     names=(
         "In C#, local variables are written in camelCase: **newCount** instead of `New_Count`.",
     ),

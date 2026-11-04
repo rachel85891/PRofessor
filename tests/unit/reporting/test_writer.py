@@ -158,6 +158,25 @@ def test_the_repo_report_says_why_there_is_no_proposal(tmp_path: Path) -> None:
     )
 
 
+def test_the_repo_report_lists_the_self_review_findings_not_acted_on(tmp_path: Path) -> None:
+    fix = FixOutcome(
+        repo_id="noa__webapi",
+        attempts=1,
+        reason="No PR: the recheck failed.",
+        ignored_review=("Self-review of edit 0 ignored, a missing break is never a violation",),
+    )
+
+    path = MarkdownReportWriter(tmp_path).write_repo_report(
+        data.clean_report().model_copy(update={"fix": fix})
+    )
+
+    assert path.read_text(encoding="utf-8").endswith(
+        "## Review branch\n\nNo PR: the recheck failed.\n\n"
+        "Self-review findings not acted on:\n"
+        "- Self-review of edit 0 ignored, a missing break is never a violation\n"
+    )
+
+
 def test_the_round_report_shows_the_proposals_and_llm_totals(tmp_path: Path) -> None:
     report = data.round_report(reports_dir(tmp_path))
     summary = report.summary.model_copy(

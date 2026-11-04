@@ -79,4 +79,11 @@ Nothing to report: every checked requirement passed.
 {% else %}
 {{ report.fix.reason }}
 {% endif %}
+{% if report.fix.ignored_review %}
+
+Self-review findings not acted on:
+{% for item in report.fix.ignored_review %}
+- {{ item }}
+{% endfor %}
+{% endif %}
 {% endif %}

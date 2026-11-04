@@ -30,7 +30,6 @@ def event(data: SessionEventData, kind: SessionEventType) -> SessionEvent:
 @dataclass
 class Sent:
     prompt: str
-    response_schema: dict[str, Any]
     timeout: float
 
 
@@ -51,10 +50,8 @@ class FakeSession:
         for handler in list(self._handlers):
             handler(event(data, kind))
 
-    async def send_and_wait(
-        self, prompt: str, *, response_schema: dict[str, Any], timeout: float
-    ) -> SessionEvent | None:
-        self.sent.append(Sent(prompt, response_schema, timeout))
+    async def send_and_wait(self, prompt: str, *, timeout: float) -> SessionEvent | None:
+        self.sent.append(Sent(prompt, timeout))
         step = self._copilot.next_step()
         if isinstance(step, BaseException):
             raise step

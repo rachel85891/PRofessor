@@ -183,6 +183,10 @@ llm:
   # --- both providers ---
   # Seconds to wait for one reply (for copilot, also for opening a session).
   timeout_seconds: 60
+  # A role's own wait, instead of timeout_seconds. The fixer's plans took up to 28 s on the
+  # pilot repos through Copilot (2026-11-04); 120 s leaves room for a larger repo.
+  role_timeouts:
+    fixer: 120
   # Retries after a rate limit, a timeout or a server error, waiting retry_backoff_seconds
   # before the first and doubling each time. Other errors are never retried.
   max_retries: 2

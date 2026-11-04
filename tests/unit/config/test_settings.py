@@ -446,6 +446,36 @@ def test_repo_config_maps_every_llm_role_to_a_model(tmp_path: Path) -> None:
     assert llm.api_key is None
 
 
+def test_a_role_without_its_own_timeout_waits_timeout_seconds(tmp_path: Path) -> None:
+    llm = _load(tmp_path, "llm:\n  timeout_seconds: 45\n  role_timeouts: {fixer: 120}\n").llm
+
+    assert llm.role_timeout("fixer") == 120
+    assert llm.role_timeout("writer") == 45
+    assert _load(tmp_path, "").llm.role_timeouts == {}
+
+
+def test_the_repo_config_gives_the_fixer_a_longer_timeout(tmp_path: Path) -> None:
+    llm = load_settings(config_path=DEFAULT_CONFIG_PATH, env_path=tmp_path / ".env").llm
+
+    assert llm.role_timeouts == {"fixer": 120}
+    assert llm.role_timeout("judge") == llm.timeout_seconds == 60
+
+
+@pytest.mark.parametrize(
+    ("yaml_text", "field"),
+    [
+        ("llm:\n  role_timeouts: {fixer: 0}\n", r"llm\.role_timeouts\.fixer"),
+        ("llm:\n  role_timeouts: {grader: 30}\n", r"llm\.role_timeouts\.grader"),
+    ],
+    ids=["not-positive", "unknown-role"],
+)
+def test_a_bad_role_timeout_is_rejected_at_startup(
+    tmp_path: Path, yaml_text: str, field: str
+) -> None:
+    with pytest.raises(ConfigurationError, match=field):
+        _load(tmp_path, yaml_text)
+
+
 @pytest.mark.parametrize("value", [0, -1])
 def test_llm_max_output_tokens_must_be_positive(tmp_path: Path, value: int) -> None:
     with pytest.raises(ConfigurationError, match="max_output_tokens"):

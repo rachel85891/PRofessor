@@ -2,9 +2,9 @@
 
 Each call runs through the developer's Copilot seat: the SDK starts the Copilot runtime
 once per client, and every call gets a new session with one model, no tools and no
-permissions (see `options`). The reply is asked for as JSON with the output type's
-schema, then read and validated here; an unreadable reply gets one more try with the
-problems as feedback.
+permissions (see `options`). The prompt ends with the output type's JSON schema as text
+(never the runtime's strict response format, ADR 0022), and the reply is read and
+validated here; an unreadable reply gets one more try with the problems as feedback.
 
 Retries follow ADR 0020: only rate limits, timeouts and server errors are retried, and
 every attempt is counted. The prompt, the reply and the token are never logged. Each
@@ -19,7 +19,7 @@ import tempfile
 import threading
 import time
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from types import TracebackType
 from typing import Self, TypeVar
@@ -40,7 +40,7 @@ from hw_checker.adapters.llm_copilot_sdk.replies import (
     UnreadableReplyError,
     feedback,
     read_reply,
-    strict_schema,
+    with_reply_format,
 )
 from hw_checker.adapters.llm_copilot_sdk.runtime import (
     LoopThread,
@@ -76,12 +76,18 @@ class CopilotClientConfig:
     models: Mapping[str, str]
     """The Copilot model id for each role."""
     timeout_seconds: float
-    """The longest wait for a session or one reply."""
+    """The longest wait for a session or one reply, for a role without its own."""
     start_timeout_seconds: float
     """The longest wait for the runtime to start and report its login."""
     max_retries: int
     retry_backoff_seconds: float
     max_prompt_chars: int
+    role_timeouts: Mapping[str, float] = field(default_factory=dict)
+    """A role's own longest wait, instead of `timeout_seconds`."""
+
+    def timeout(self, role: str) -> float:
+        """The longest wait for a session or one reply of `role`."""
+        return self.role_timeouts.get(role, self.timeout_seconds)
 
 
 @dataclass
@@ -159,6 +165,7 @@ class CopilotSdkLLMClient:
                 f"The prompt for {role} has {len(prompt)} characters, more than the limit of "
                 f"{self._config.max_prompt_chars}; it was not sent."
             )
+        timeout = self._config.timeout(role)
         started = self._clock()
         attempts = 0
         outcome = "error"
@@ -167,7 +174,7 @@ class CopilotSdkLLMClient:
             while True:
                 attempts += 1
                 try:
-                    result = self._attempt(model, prompt, output_type, usage)
+                    result = self._attempt(model, prompt, output_type, usage, timeout)
                 except AttemptError as failure:
                     outcome = failure.outcome
                     if not failure.retryable or attempts > self._config.max_retries:
@@ -201,12 +208,14 @@ class CopilotSdkLLMClient:
             temp.cleanup()
 
     def _attempt(
-        self, model: str, prompt: str, output_type: type[OutputT], usage: _Usage
+        self, model: str, prompt: str, output_type: type[OutputT], usage: _Usage, timeout: float
     ) -> OutputT:
         loop, runtime, work_dir = self._started()
         try:
             return loop.run(
-                lambda: self._converse(runtime, work_dir, model, prompt, output_type, usage)
+                lambda: self._converse(
+                    runtime, work_dir, model, prompt, output_type, usage, timeout
+                )
             )
         except AttemptError as failure:
             if failure.outcome == failures.CLI_STOPPED:
@@ -278,18 +287,21 @@ class CopilotSdkLLMClient:
         prompt: str,
         output_type: type[OutputT],
         usage: _Usage,
+        timeout: float,
     ) -> OutputT:
         """One attempt: a new session, the prompt, and at most one retry with feedback."""
-        session = await self._open_session(runtime, work_dir, model)
+        session = await self._open_session(runtime, work_dir, model, timeout)
         errors: list[SessionErrorData] = []
         unsubscribe = session.on(lambda event: _observe(event, errors, usage))
         try:
-            content = await self._ask(session, model, prompt, output_type, errors)
+            content = await self._ask(
+                session, model, with_reply_format(prompt, output_type), errors, timeout
+            )
             try:
                 return read_reply(content, output_type)
             except UnreadableReplyError as problem:
                 retry = feedback(problem)
-            content = await self._ask(session, model, retry, output_type, errors)
+            content = await self._ask(session, model, retry, errors, timeout)
             try:
                 return read_reply(content, output_type)
             except UnreadableReplyError:
@@ -298,12 +310,14 @@ class CopilotSdkLLMClient:
             unsubscribe()
             await self._end_session(runtime, session)
 
-    async def _open_session(self, runtime: Runtime, work_dir: Path, model: str) -> Session:
+    async def _open_session(
+        self, runtime: Runtime, work_dir: Path, model: str, timeout: float
+    ) -> Session:
         try:
-            async with asyncio.timeout(self._config.timeout_seconds):
+            async with asyncio.timeout(timeout):
                 return await runtime.create_session(session_options(model, work_dir))
         except TimeoutError:
-            raise failures.timed_out(model, self._config.timeout_seconds) from None
+            raise failures.timed_out(model, timeout) from None
         except CONNECTION_ERRORS:
             raise failures.cli_stopped() from None
         except RUNTIME_ERRORS as error:
@@ -314,18 +328,19 @@ class CopilotSdkLLMClient:
         session: Session,
         model: str,
         prompt: str,
-        output_type: type[BaseModel],
         errors: list[SessionErrorData],
+        timeout: float,
     ) -> str:
+        """Send `prompt` and return the reply's text.
+
+        A timeout aborts the run and is always an error: whatever the run sends after it is
+        never read.
+        """
         try:
-            event = await session.send_and_wait(
-                prompt,
-                response_schema=strict_schema(output_type),
-                timeout=self._config.timeout_seconds,
-            )
+            event = await session.send_and_wait(prompt, timeout=timeout)
         except TimeoutError:
             await self._abort(session)
-            raise failures.timed_out(model, self._config.timeout_seconds) from None
+            raise failures.timed_out(model, timeout) from None
         except CONNECTION_ERRORS:
             raise failures.cli_stopped() from None
         except RUNTIME_ERRORS as error:

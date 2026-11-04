@@ -1,4 +1,6 @@
-"""Reading structured replies: the strict schema, JSON extraction and validation."""
+"""Structured replies: the schema in the prompt, JSON extraction and validation."""
+
+import json
 
 import pytest
 from pydantic import BaseModel
@@ -8,6 +10,7 @@ from hw_checker.adapters.llm_copilot_sdk.replies import (
     feedback,
     read_reply,
     strict_schema,
+    with_reply_format,
 )
 
 
@@ -44,7 +47,12 @@ def test_the_strict_schema_leaves_the_models_own_schema_alone() -> None:
         '{"title": "t", "evidence": [{"file": "a.cs", "line": 3}]}',
         '```json\n{"title": "t", "evidence": [{"file": "a.cs", "line": 3}]}\n```',
         'Here it is:\n{"title": "t", "evidence": [{"file": "a.cs", "line": 3}]}\nDone.',
+        '<invoke name="bash">{"command": "echo"}</invoke>\nThe plan:\n\n```json\n'
+        '{"title": "t", "evidence": [{"file": "a.cs", "line": 3}]}\n```',
+        '```json\n{"title": "t", "evidence": [{"file": "a.cs", "line": 3}]}\n```\n'
+        "```csharp\nvar x = new { a = 1 };\n```",
     ],
+    ids=["alone", "fenced", "in-text", "text-with-braces-first", "code-block-after"],
 )
 def test_the_json_object_is_found_and_validated(content: str) -> None:
     finding = read_reply(content, Finding)
@@ -68,6 +76,14 @@ def test_an_object_that_does_not_fit_names_the_fields_but_not_the_values() -> No
     assert "evidence.0.line" in problems
     assert "secret student text" not in problems
     assert "secret student text" not in feedback(raised.value)
+
+
+def test_the_reply_format_follows_the_prompt_with_the_strict_schema() -> None:
+    text = with_reply_format("Synthetic prompt.", Finding)
+
+    assert text.startswith("Synthetic prompt.\n\n# Reply format\n")
+    assert "```json code block" in text
+    assert json.dumps(strict_schema(Finding), separators=(",", ":")) in text
 
 
 def test_the_feedback_asks_again_for_one_object_and_names_the_problems() -> None:

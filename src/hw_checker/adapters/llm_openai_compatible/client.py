@@ -13,7 +13,7 @@ import re
 import ssl
 import time
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, TypeVar, cast
 
 import httpx2
@@ -57,6 +57,12 @@ class LlmClientConfig:
     max_prompt_chars: int
     extra_body: Mapping[str, Any]
     """Extra JSON fields for every request (OpenRouter's provider routing)."""
+    role_timeouts: Mapping[str, float] = field(default_factory=dict)
+    """A role's own longest wait for one reply, instead of `timeout_seconds`."""
+
+    def timeout(self, role: str) -> float:
+        """The longest wait for one reply of `role`."""
+        return self.role_timeouts.get(role, self.timeout_seconds)
 
 
 @dataclass(frozen=True)
@@ -100,7 +106,7 @@ class OpenAICompatibleLLMClient:
                 openai_api_key=api_key,
                 temperature=config.temperature,
                 max_tokens=config.max_output_tokens,
-                request_timeout=config.timeout_seconds,
+                request_timeout=config.timeout(role),
                 max_retries=0,  # retried here, so only the right errors are
                 extra_body=dict(config.extra_body) or None,
                 http_client=http_client,
@@ -185,7 +191,7 @@ class OpenAICompatibleLLMClient:
         try:
             reply = cast(dict[str, Any], runnable.invoke(prompt))
         except openai.OpenAIError as error:
-            raise self._failure(model, error) from None
+            raise self._failure(model, error, self._config.timeout(role)) from None
         except ValueError:
             # The SDK validates the reply against the schema; JSON and Pydantic errors are
             # ValueErrors. Their text may quote the reply, so it is not kept.
@@ -204,7 +210,7 @@ class OpenAICompatibleLLMClient:
             raise self._unparseable(model, output_type)
         return parsed, usage
 
-    def _failure(self, model: str, error: openai.OpenAIError) -> _AttemptError:
+    def _failure(self, model: str, error: openai.OpenAIError, timeout: float) -> _AttemptError:
         if isinstance(error, openai.AuthenticationError | openai.PermissionDeniedError):
             return _AttemptError(
                 "auth",
@@ -218,7 +224,7 @@ class OpenAICompatibleLLMClient:
         if isinstance(error, openai.APITimeoutError):
             return _AttemptError(
                 "timeout",
-                f"The model {model} did not answer within {self._config.timeout_seconds:g} s.",
+                f"The model {model} did not answer within {timeout:g} s.",
                 retryable=True,
             )
         if isinstance(error, openai.APIConnectionError):

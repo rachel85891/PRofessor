@@ -15,7 +15,10 @@ from hw_checker.domain import (
     FixPlan,
     ProposalStatus,
     PublishOutcome,
+    PullRequestText,
     ReviewPrompt,
+    ReviewViolation,
+    SelfReview,
     StepStatus,
 )
 from hw_checker.domain.errors import LLMError, LLMOutputError
@@ -34,6 +37,14 @@ from tests.unit.services.fixer_data import (
 
 AVIGAIL = "avigail__api"
 NOTE_PLAN = FixPlan(edits=(NAMING_NOTE,), files_notes=())
+PLACEHOLDER_PLAN = FixPlan(
+    edits=(
+        BREAK_FIX.model_copy(update={"replace": "x", "reason": "x"}),
+        NAMING_NOTE.model_copy(update={"replace": "x", "reason": ""}),
+    ),
+    files_notes=(),
+)
+"""What the real model returned under Copilot's brevity rule (stage 14c)."""
 CONFIG: RunnableConfig = {"configurable": {"thread_id": "run-1"}}
 BROKEN = ExecutionResult(
     build_status=StepStatus.FAILED,
@@ -97,6 +108,85 @@ def test_rejected_edits_are_fed_back_and_the_second_plan_is_used(tmp_path: Path)
     report = harness.report_writer.repo_reports[-1]
     assert report.fix is not None and report.fix.attempts == 2
     assert proposal.pr_title == "HW1 review: small fixes and questions"
+
+
+def test_a_placeholder_plan_is_fed_back_and_the_real_second_plan_is_proposed(
+    tmp_path: Path,
+) -> None:
+    fixer = llm(PLACEHOLDER_PLAN, NOTE_PLAN)
+    harness = one_repo(tmp_path, fixer)
+
+    harness.run()
+
+    assert roles(fixer) == ["fixer", "fixer", "judge", "writer"]
+    assert "the reason is empty or a placeholder" in fixer.calls[1].prompt
+    [proposal] = harness.storage.proposals.list_for_run("run-1")
+    assert "camelCase" in proposal.diff
+
+
+def test_placeholder_plans_on_every_attempt_give_no_proposal_and_say_why(
+    tmp_path: Path,
+) -> None:
+    fixer = llm(PLACEHOLDER_PLAN, PLACEHOLDER_PLAN)
+    harness = one_repo(tmp_path, fixer)
+
+    output = harness.run()
+
+    assert roles(fixer)[:2] == ["fixer", "fixer"] and "writer" not in roles(fixer)
+    assert output["summary"].proposals == 0
+    assert harness.storage.proposals.list_for_run("run-1") == ()
+    report = harness.report_writer.repo_reports[-1]
+    assert report.fix is not None and report.fix.attempts == 2
+    assert report.fix.reason == (
+        "No PR: every edit the fixer planned was rejected (the reason is empty or a "
+        "placeholder; give one real sentence saying why)."
+    )
+
+
+def test_a_judge_removing_an_allowed_fix_is_ignored_and_the_report_says_so(
+    tmp_path: Path,
+) -> None:
+    flagged = ReviewViolation(
+        edit_index=0, rule=3, quote="Never implement the core", explanation="Too direct."
+    )
+    unclaimed = BREAK_FIX.model_copy(update={"finding_ids": ()})
+    fixer = FakeLLMClient(
+        {
+            "fixer": [FixPlan(edits=(unclaimed,), files_notes=())],
+            "judge": [SelfReview(violations=(flagged,))],
+            "writer": [PR_TEXT],
+        }
+    )
+    harness = one_repo(tmp_path, fixer)
+
+    harness.run()
+
+    [proposal] = harness.storage.proposals.list_for_run("run-1")
+    assert "break;" in proposal.diff
+    report = harness.report_writer.repo_reports[-1]
+    assert report.fix is not None
+    [ignored] = report.fix.ignored_review
+    assert "a missing break is never a violation" in ignored
+
+
+def test_an_empty_pr_text_on_every_attempt_gives_no_proposal_and_says_why(
+    tmp_path: Path,
+) -> None:
+    empty = PullRequestText(opening="", fixed=(), for_you=(), names=())
+    fixer = FakeLLMClient({"fixer": [NOTE_PLAN], "judge": [NO_VIOLATIONS], "writer": [empty]})
+    harness = one_repo(tmp_path, fixer, fixer_overrides={"reply_attempts": 2})
+
+    output = harness.run()
+
+    assert roles(fixer).count("writer") == 4
+    assert harness.storage.proposals.list_for_run("run-1") == ()
+    report = harness.report_writer.repo_reports[-1]
+    assert report.fix is not None
+    assert report.fix.reason.startswith(
+        "No PR: the fixer failed (fix_repo/write_pr_text: The writer's PR text is unusable: "
+    )
+    assert 'names: 0 items for the 1 edits under "Names"' in report.fix.reason
+    assert output["round_errors"] and "write_pr_text" in output["round_errors"][0]
 
 
 def test_a_fix_that_never_clears_its_claim_falls_back_to_its_note(tmp_path: Path) -> None:

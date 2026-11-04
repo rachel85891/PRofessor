@@ -1,19 +1,23 @@
+import re
 from pathlib import Path
 
 import pytest
 
 from hw_checker.domain import (
     EditApplication,
+    EditKind,
     FixOutcome,
     FixPlan,
     NoteSection,
+    PlannedEdit,
     ProposalStatus,
+    PullRequestText,
     ReviewViolation,
     SelfReview,
     Severity,
     VerifyResult,
 )
-from hw_checker.domain.errors import FixError
+from hw_checker.domain.errors import FixError, LLMOutputError
 from hw_checker.services.fixing import NOTHING_TO_CHANGE, FixService, pr_title
 from tests.fakes.git import COMMIT_SHA, DEFAULT_SHA
 from tests.fakes.llm import FAKE_USAGE
@@ -35,6 +39,25 @@ from tests.unit.services.fixer_data import (
 )
 
 GOLDEN_BODY = Path(__file__).parent / "golden" / "pr_body.md"
+STORE = "Controllers/StoreController.cs"
+STORE_TEXT = (
+    "public class StoreController\n{\n"
+    '    private string path = "users.txt";\n\n'
+    "    public string Read()\n    {\n        return File.ReadAllText(path);\n    }\n}\n"
+)
+READONLY_FIX = PlannedEdit(
+    file=STORE,
+    find='    private string path = "users.txt";',
+    replace=(
+        "    //fix: readonly, the path never changes\n"
+        '    private readonly string path = "users.txt";'
+    ),
+    kind=EditKind.FIX,
+    finding_ids=(),
+    reason="The path is fixed, so it should be readonly.",
+    fallback_note="Could path be readonly? It never changes.",
+    note_section=None,
+)
 
 
 def test_prepare_clones_the_checked_copy_without_touching_it(tmp_path: Path) -> None:
@@ -162,7 +185,9 @@ def test_apply_starts_again_from_the_checked_commit(tmp_path: Path) -> None:
 
 
 def test_the_self_review_asks_the_judge_and_changes_no_file(tmp_path: Path) -> None:
-    violation = ReviewViolation(edit_index=0, rule="wrong", explanation="No bug there.")
+    violation = ReviewViolation(
+        edit_index=0, rule=10, quote="Do not claim a bug that is not there", explanation="No bug."
+    )
     setup = FixerSetup(tmp_path, replies={"judge": [SelfReview(violations=(violation,))]})
     workspace = setup.service.prepare(RUN_ID, "hw01", REPO, setup.fetched)
     application = setup.service.apply(workspace, [BREAK_FIX, NAMING_NOTE])
@@ -177,22 +202,82 @@ def test_the_self_review_asks_the_judge_and_changes_no_file(tmp_path: Path) -> N
     assert setup.text(CONTROLLER) == before
     [call] = setup.llm.calls
     assert "<student_diff>" in call.prompt and "+                break;" in call.prompt
+    assert "3. Never implement the core of the assignment" in call.prompt
+    assert "# Never a violation" in call.prompt
+    assert "Example 2." in call.prompt
 
 
 def test_a_violating_edit_is_removed_and_kept_as_rejected(tmp_path: Path) -> None:
-    violation = ReviewViolation(edit_index=0, rule="wrong", explanation="No bug there.")
+    violation = ReviewViolation(
+        edit_index=1,
+        rule=1,
+        quote="Write every comment you add in English, short",
+        explanation="The note is too long.",
+    )
     setup = FixerSetup(tmp_path)
     workspace = setup.service.prepare(RUN_ID, "hw01", REPO, setup.fetched)
     application = setup.service.apply(workspace, [BREAK_FIX, NAMING_NOTE])
 
     reviewed = setup.service.remove_violations(
-        workspace, application, SelfReview(violations=(violation,))
+        workspace, ASSIGNMENT, application, SelfReview(violations=(violation,))
     )
 
-    assert reviewed.applied == (NAMING_NOTE,)
+    assert reviewed.applied == (BREAK_FIX,)
     [removed] = reviewed.rejected
-    assert removed.reason == "self-review: wrong: No bug there."
-    assert "//fix:" not in setup.text(CONTROLLER)
+    assert removed.reason == "self-review: rule 1: The note is too long."
+    assert "camelCase" not in setup.text(CONTROLLER)
+    assert reviewed.ignored_review == ()
+
+
+def test_a_judge_removing_a_readonly_fix_is_ignored_and_the_report_keeps_why(
+    tmp_path: Path,
+) -> None:
+    violation = ReviewViolation(
+        edit_index=0, rule=9, quote="no refactoring", explanation="A style refactor not taught."
+    )
+    setup = FixerSetup(tmp_path, replies={"judge": [SelfReview(violations=(violation,))]})
+    (setup.checked / STORE).write_bytes(STORE_TEXT.encode())
+    workspace = setup.service.prepare(RUN_ID, "hw01", REPO, setup.fetched)
+    application = setup.service.apply(workspace, [READONLY_FIX])
+    reviewed = setup.service.self_review(RUN_ID, workspace, ASSIGNMENT, application)
+    assert reviewed is not None
+
+    kept = setup.service.remove_violations(workspace, ASSIGNMENT, application, reviewed[0])
+
+    assert kept.applied == (READONLY_FIX,)
+    assert "private readonly string path" in setup.text(STORE)
+    [ignored] = kept.ignored_review
+    assert "readonly for a fixed path is never a violation" in ignored
+
+
+def test_a_judge_flagging_a_real_file_exists_check_removes_it(tmp_path: Path) -> None:
+    exists = READONLY_FIX.model_copy(
+        update={
+            "find": "        return File.ReadAllText(path);",
+            "replace": "        //fix: check the file\n"
+            '        if (!File.Exists(path)) return "";\n'
+            "        return File.ReadAllText(path);",
+        }
+    )
+    violation = ReviewViolation(
+        edit_index=1,
+        rule=4,
+        quote="Never add `File.Exists` checks returning `BadRequest`",
+        explanation="It adds a File.Exists check.",
+    )
+    setup = FixerSetup(tmp_path, replies={"judge": [SelfReview(violations=(violation,))]})
+    workspace = setup.service.prepare(RUN_ID, "hw01", REPO, setup.fetched)
+    setup.service.apply(workspace, [BREAK_FIX])
+    application = EditApplication(applied=(BREAK_FIX, exists), changed_files=(CONTROLLER,))
+    reviewed = setup.service.self_review(RUN_ID, workspace, ASSIGNMENT, application)
+    assert reviewed is not None
+
+    kept = setup.service.remove_violations(workspace, ASSIGNMENT, application, reviewed[0])
+
+    assert kept.applied == (BREAK_FIX,)
+    assert [rejected.reason for rejected in kept.rejected] == [
+        "self-review: rule 4: It adds a File.Exists check."
+    ]
 
 
 def test_edits_without_violations_are_kept(tmp_path: Path) -> None:
@@ -200,7 +285,9 @@ def test_edits_without_violations_are_kept(tmp_path: Path) -> None:
     workspace = setup.service.prepare(RUN_ID, "hw01", REPO, setup.fetched)
     application = setup.service.apply(workspace, [BREAK_FIX])
 
-    assert setup.service.remove_violations(workspace, application, NO_VIOLATIONS) == application
+    assert setup.service.remove_violations(workspace, ASSIGNMENT, application, NO_VIOLATIONS) == (
+        application
+    )
 
 
 @pytest.mark.parametrize("self_review", [False, True])
@@ -219,7 +306,7 @@ def test_the_pr_body_matches_the_golden_file(tmp_path: Path) -> None:
     setup = FixerSetup(tmp_path)
     application = EditApplication(applied=(BREAK_FIX, NAMING_NOTE), changed_files=(CONTROLLER,))
 
-    title, body, usage = setup.service.write_text(
+    title, body, (usage,) = setup.service.write_text(
         RUN_ID,
         ASSIGNMENT,
         (ASSIGNMENT,),
@@ -251,14 +338,65 @@ def test_empty_sections_are_left_out_of_the_body(tmp_path: Path) -> None:
 
 
 def test_the_opening_always_starts_with_hi(tmp_path: Path) -> None:
-    text = PR_TEXT.model_copy(update={"opening": "Your API builds."})
+    text = PR_TEXT.model_copy(update={"opening": "Your API builds and creating users works."})
     setup = FixerSetup(tmp_path, replies={"writer": [text]})
 
     _, body, _ = setup.service.write_text(
         RUN_ID, ASSIGNMENT, (ASSIGNMENT,), RESULTS, EditApplication(), [], []
     )
 
-    assert body.startswith("Hi! Your API builds.")
+    assert body.startswith("Hi! Your API builds and creating users works.")
+
+
+EMPTY_TEXT = PullRequestText(opening="", fixed=(), for_you=(), names=())
+"""What the writer returned on a pilot although an edit was applied (stage 14c)."""
+
+
+def test_an_empty_pr_text_is_asked_for_again_with_the_problems(tmp_path: Path) -> None:
+    setup = FixerSetup(tmp_path, replies={"writer": [EMPTY_TEXT, PR_TEXT]})
+    application = EditApplication(applied=(BREAK_FIX, NAMING_NOTE), changed_files=(CONTROLLER,))
+
+    _, body, usages = setup.service.write_text(
+        RUN_ID, ASSIGNMENT, (ASSIGNMENT,), RESULTS, application, [], []
+    )
+
+    assert body == GOLDEN_BODY.read_text(encoding="utf-8").split("\n\n**Files:**")[0] + "\n"
+    assert len(usages) == 2
+    first, retry = setup.llm.calls
+    assert retry.prompt.startswith(first.prompt)
+    feedback = retry.prompt.removeprefix(first.prompt)
+    assert "# Feedback on your previous reply" in feedback
+    assert 'opening: after "Hi!" write one or two sentences on what works' in feedback
+    assert 'fixed: 0 items for the 1 edits under "Fixed"' in feedback
+    assert 'names: 0 items for the 1 edits under "Names"' in feedback
+
+
+@pytest.mark.parametrize(
+    ("update", "problem"),
+    [
+        ({"opening": "Hi!", "fixed": (), "names": ()}, "fixed: 0 items for the 1 edits"),
+        ({"fixed": ("x",)}, "fixed: an item is empty or too short"),
+        (
+            {"fixed": (f"**`note` in `{CONTROLLER}`:** a break was added to case 1.",)},
+            "fixed: items never name the edit kind or the full path",
+        ),
+        (
+            {"names": (f"In {CONTROLLER}, locals are camelCase: newCount.",)},
+            "names: items never name the edit kind or the full path",
+        ),
+    ],
+    ids=["missing-item", "placeholder-item", "kind-label", "full-path"],
+)
+def test_a_pr_text_still_unusable_after_the_feedback_is_an_output_error(
+    tmp_path: Path, update: dict[str, object], problem: str
+) -> None:
+    setup = FixerSetup(tmp_path, replies={"writer": [PR_TEXT.model_copy(update=update)]})
+    application = EditApplication(applied=(BREAK_FIX, NAMING_NOTE), changed_files=(CONTROLLER,))
+
+    with pytest.raises(LLMOutputError, match=re.escape(problem)):
+        setup.service.write_text(RUN_ID, ASSIGNMENT, (ASSIGNMENT,), RESULTS, application, [], [])
+
+    assert len(setup.llm.calls) == 2
 
 
 CRITICAL = "hw01-critical"
@@ -382,7 +520,10 @@ def test_the_writer_gets_each_edit_under_its_one_section(tmp_path: Path) -> None
     unsectioned = NAMING_NOTE.model_copy(
         update={"note_section": None, "reason": "A note without a section."}
     )
-    setup = FixerSetup(tmp_path)
+    two_questions = PR_TEXT.model_copy(
+        update={"for_you": ("**GET by id:** please write it.", "**Notes:** a note to read.")}
+    )
+    setup = FixerSetup(tmp_path, replies={"writer": [two_questions]})
     application = EditApplication(applied=(BREAK_FIX, NAMING_NOTE, question, unsectioned))
 
     setup.service.write_text(RUN_ID, ASSIGNMENT, (ASSIGNMENT,), RESULTS, application, [], [])
@@ -396,3 +537,5 @@ def test_the_writer_gets_each_edit_under_its_one_section(tmp_path: Path) -> None
     assert for_you < prompt.index(unsectioned.reason) < names
     assert names < prompt.index(NAMING_NOTE.reason)
     assert prompt.count(NAMING_NOTE.reason) == 1
+    assert "In `UsersController.cs`:" in prompt
+    assert "`fix`" not in prompt and "`note`" not in prompt and CONTROLLER not in prompt

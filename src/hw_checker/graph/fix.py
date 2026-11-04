@@ -200,7 +200,7 @@ def build_fix_graph(
             state,
             lambda: {
                 "application": fixing.remove_violations(
-                    state["workspace"], state["application"], review
+                    state["workspace"], by_id[state["assignment_id"]], state["application"], review
                 )
             },
         )
@@ -250,7 +250,7 @@ def build_fix_graph(
 
     def write_pr_text(state: FixState) -> Update:
         def work() -> Update:
-            title, body, usage = fixing.write_text(
+            title, body, usages = fixing.write_text(
                 state["run_id"],
                 by_id[state["assignment_id"]],
                 selected(state),
@@ -259,7 +259,7 @@ def build_fix_graph(
                 state["plan"].files_notes,
                 state["verification"].cleared,
             )
-            return {"pr_title": title, "pr_body": body, "llm_usage": [usage]}
+            return {"pr_title": title, "pr_body": body, "llm_usage": list(usages)}
 
         return step("write_pr_text", state, work, llm=True)
 
