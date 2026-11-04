@@ -4,7 +4,8 @@ The Copilot runtime is an agent that can run shell commands, edit files and call
 servers. A homework checker only needs a reply, so every session gets an empty tool
 allowlist, no MCP servers, a permission handler that rejects every request, an empty
 temporary working directory, and every feature that reads the machine's configuration
-or keeps state between sessions switched off (ADR 0022).
+or keeps state between sessions switched off (ADR 0022). The runtime's coding-agent
+sections of the system prompt are removed too: they conflict with a structured reply.
 """
 
 from pathlib import Path
@@ -12,6 +13,9 @@ from typing import Any
 
 from copilot import PermissionRequest
 from copilot.rpc import PermissionDecisionReject
+from copilot.session import SYSTEM_MESSAGE_SECTIONS
+
+from hw_checker.domain.errors import LLMError
 
 PERMISSION_REFUSAL = "Tools are disabled for this session; answer with text only."
 RUNTIME_LOG_LEVEL = "error"
@@ -19,6 +23,23 @@ BUILTIN_MCP_SERVERS = ("github-mcp-server",)
 """The MCP servers the runtime starts by itself, even with no `mcp_servers` given. The
 built-in GitHub server connected with the logged-in account and 19 tools (2026-11-02,
 runtime 1.0.105); the integration test fails if any MCP server connects."""
+REMOVED_SECTIONS = (
+    # The machine's working directory, OS and file listing: none of the session's business.
+    "environment_context",
+    # "Limit your response to 100 words or less": a full review plan is far longer; with
+    # it, about half the fixer's plans on a real repo came back as one placeholder edit
+    # (stage 14c, ADR 0022).
+    "tone",
+    # Parallel tool calls and batching: sessions have no tools.
+    "tool_efficiency",
+    # "Only comment code that needs a bit of clarification": the review's //fix: lines and
+    # notes are comments by design.
+    "code_change_rules",
+    # "Ask for guidance if uncertain": a session gets one prompt and must answer it.
+    "guidelines",
+)
+"""The runtime's system-prompt sections every session removes; `safety` and the identity
+preamble stay."""
 
 
 def deny_every_permission(
@@ -66,10 +87,7 @@ def session_options(model: str, work_dir: Path) -> dict[str, Any]:
         "disabled_mcp_servers": list(BUILTIN_MCP_SERVERS),
         "on_permission_request": deny_every_permission,
         "working_directory": str(work_dir),
-        "system_message": {
-            "mode": "customize",
-            "sections": {"environment_context": {"action": "remove"}},
-        },
+        "system_message": system_message(REMOVED_SECTIONS),
         "streaming": False,
         "enable_config_discovery": False,
         "skip_custom_instructions": True,
@@ -89,3 +107,21 @@ def session_options(model: str, work_dir: Path) -> dict[str, Any]:
         "embedding_cache_storage": "in-memory",
         "mcp_oauth_token_storage": "in-memory",
     }
+
+
+def system_message(removed: tuple[str, ...]) -> dict[str, Any]:
+    """The system-message customization that removes the `removed` sections.
+
+    The runtime silently ignores a section name it does not know (runtime 1.0.105), so
+    every name is checked against the SDK's own list first.
+
+    Raises:
+        LLMError: a name is not a section the SDK knows.
+    """
+    unknown = [name for name in removed if name not in SYSTEM_MESSAGE_SECTIONS]
+    if unknown:
+        raise LLMError(
+            f"The Copilot SDK has no system-message section {', '.join(unknown)}; the "
+            "session would keep that section, so it is not created."
+        )
+    return {"mode": "customize", "sections": {name: {"action": "remove"} for name in removed}}

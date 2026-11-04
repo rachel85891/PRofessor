@@ -11,7 +11,9 @@ from hw_checker.adapters.llm_copilot_sdk.options import (
     deny_every_permission,
     runtime_options,
     session_options,
+    system_message,
 )
+from hw_checker.domain.errors import LLMError
 
 TOKEN = "github_pat_not_a_real_token"  # pragma: allowlist secret
 
@@ -33,10 +35,6 @@ def test_a_session_has_no_tools_no_mcp_servers_and_only_its_model(tmp_path: Path
 def test_a_session_reads_no_configuration_and_keeps_no_state(tmp_path: Path) -> None:
     options = session_options("model", tmp_path)
 
-    assert options["system_message"] == {
-        "mode": "customize",
-        "sections": {"environment_context": {"action": "remove"}},
-    }
     switched_off = (
         "enable_config_discovery",
         "enable_on_demand_instruction_discovery",
@@ -58,6 +56,30 @@ def test_a_session_reads_no_configuration_and_keeps_no_state(tmp_path: Path) -> 
     assert options["memory"] == {"enabled": False}
     assert options["embedding_cache_storage"] == "in-memory"
     assert options["mcp_oauth_token_storage"] == "in-memory"
+
+
+def test_a_session_drops_the_runtimes_coding_agent_rules_and_keeps_safety(tmp_path: Path) -> None:
+    options = session_options("model", tmp_path)
+
+    assert options["system_message"]["mode"] == "customize"
+    sections = options["system_message"]["sections"]
+    assert sections == {
+        name: {"action": "remove"}
+        for name in (
+            "environment_context",
+            "tone",
+            "tool_efficiency",
+            "code_change_rules",
+            "guidelines",
+        )
+    }
+    assert "safety" not in sections
+    assert "preamble" not in sections and "identity" not in sections
+
+
+def test_a_section_the_sdk_does_not_know_fails_loudly() -> None:
+    with pytest.raises(LLMError, match="no system-message section no_such_section"):
+        system_message(("tone", "no_such_section"))
 
 
 @pytest.mark.parametrize(
