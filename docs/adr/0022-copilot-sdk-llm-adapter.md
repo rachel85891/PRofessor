@@ -38,3 +38,12 @@ The Copilot runtime is an agent. It can run shell commands, read and edit files,
 - Calling `api.githubcopilot.com` directly with the OpenAI-compatible adapter: not a supported way to use a Copilot seat from a program, and the token exchange it needs would mean handling the developer's credentials ourselves.
 - Relying on the SDK's `empty` mode alone for isolation: it turns off the keychain, so the logged-in user cannot be used. The session options are therefore set explicitly in both modes.
 - Putting the schema in the prompt instead of the response format: the SDK has a JSON-schema mode, so it is used, and the reply is still validated here.
+
+## Amendment (stage 14c, 2026-11-04): the runtime's coding-agent rules are removed
+
+The runtime's own system prompt also carries coding-agent rules: answer in 100 words or less (`tone`), batch tool calls (`tool_efficiency`), comment code only where needed (`code_change_rules`) and ask for guidance when unsure (`guidelines`). They conflict with a long structured reply. On a real pilot repo the fixer's plan through Copilot came back as one placeholder edit (an empty or "x" `reason` and `replace`) in 5 of 10 runs, although the model's reasoning had planned the full review. With these four sections removed, 5 of 5 runs gave full plans. Masking the data file did not help, the reply was never cut (`finish_reason=stop`) and no content filter fired.
+
+- Every session now removes `environment_context`, `tone`, `tool_efficiency`, `code_change_rules` and `guidelines` (`options.REMOVED_SECTIONS`). `safety` and the identity preamble stay.
+- The runtime silently ignores a section name it does not know (runtime 1.0.105), so the adapter checks each name against the SDK's `SYSTEM_MESSAGE_SECTIONS` and refuses to create the session otherwise.
+- The fixer's guardrails reject an edit with a placeholder `reason` (ADR 0021), so a placeholder plan is fed back and never reaches a proposal unnoticed.
+- Copilot's added system prompt is smaller: about 1,700 characters instead of about 4,300.
