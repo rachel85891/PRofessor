@@ -1,3 +1,4 @@
+import re
 from pathlib import Path
 
 import pytest
@@ -10,12 +11,13 @@ from hw_checker.domain import (
     NoteSection,
     PlannedEdit,
     ProposalStatus,
+    PullRequestText,
     ReviewViolation,
     SelfReview,
     Severity,
     VerifyResult,
 )
-from hw_checker.domain.errors import FixError
+from hw_checker.domain.errors import FixError, LLMOutputError
 from hw_checker.services.fixing import NOTHING_TO_CHANGE, FixService, pr_title
 from tests.fakes.git import COMMIT_SHA, DEFAULT_SHA
 from tests.fakes.llm import FAKE_USAGE
@@ -304,7 +306,7 @@ def test_the_pr_body_matches_the_golden_file(tmp_path: Path) -> None:
     setup = FixerSetup(tmp_path)
     application = EditApplication(applied=(BREAK_FIX, NAMING_NOTE), changed_files=(CONTROLLER,))
 
-    title, body, usage = setup.service.write_text(
+    title, body, (usage,) = setup.service.write_text(
         RUN_ID,
         ASSIGNMENT,
         (ASSIGNMENT,),
@@ -336,14 +338,65 @@ def test_empty_sections_are_left_out_of_the_body(tmp_path: Path) -> None:
 
 
 def test_the_opening_always_starts_with_hi(tmp_path: Path) -> None:
-    text = PR_TEXT.model_copy(update={"opening": "Your API builds."})
+    text = PR_TEXT.model_copy(update={"opening": "Your API builds and creating users works."})
     setup = FixerSetup(tmp_path, replies={"writer": [text]})
 
     _, body, _ = setup.service.write_text(
         RUN_ID, ASSIGNMENT, (ASSIGNMENT,), RESULTS, EditApplication(), [], []
     )
 
-    assert body.startswith("Hi! Your API builds.")
+    assert body.startswith("Hi! Your API builds and creating users works.")
+
+
+EMPTY_TEXT = PullRequestText(opening="", fixed=(), for_you=(), names=())
+"""What the writer returned on a pilot although an edit was applied (stage 14c)."""
+
+
+def test_an_empty_pr_text_is_asked_for_again_with_the_problems(tmp_path: Path) -> None:
+    setup = FixerSetup(tmp_path, replies={"writer": [EMPTY_TEXT, PR_TEXT]})
+    application = EditApplication(applied=(BREAK_FIX, NAMING_NOTE), changed_files=(CONTROLLER,))
+
+    _, body, usages = setup.service.write_text(
+        RUN_ID, ASSIGNMENT, (ASSIGNMENT,), RESULTS, application, [], []
+    )
+
+    assert body == GOLDEN_BODY.read_text(encoding="utf-8").split("\n\n**Files:**")[0] + "\n"
+    assert len(usages) == 2
+    first, retry = setup.llm.calls
+    assert retry.prompt.startswith(first.prompt)
+    feedback = retry.prompt.removeprefix(first.prompt)
+    assert "# Feedback on your previous reply" in feedback
+    assert 'opening: after "Hi!" write one or two sentences on what works' in feedback
+    assert 'fixed: 0 items for the 1 edits under "Fixed"' in feedback
+    assert 'names: 0 items for the 1 edits under "Names"' in feedback
+
+
+@pytest.mark.parametrize(
+    ("update", "problem"),
+    [
+        ({"opening": "Hi!", "fixed": (), "names": ()}, "fixed: 0 items for the 1 edits"),
+        ({"fixed": ("x",)}, "fixed: an item is empty or too short"),
+        (
+            {"fixed": (f"**`note` in `{CONTROLLER}`:** a break was added to case 1.",)},
+            "fixed: items never name the edit kind or the full path",
+        ),
+        (
+            {"names": (f"In {CONTROLLER}, locals are camelCase: newCount.",)},
+            "names: items never name the edit kind or the full path",
+        ),
+    ],
+    ids=["missing-item", "placeholder-item", "kind-label", "full-path"],
+)
+def test_a_pr_text_still_unusable_after_the_feedback_is_an_output_error(
+    tmp_path: Path, update: dict[str, object], problem: str
+) -> None:
+    setup = FixerSetup(tmp_path, replies={"writer": [PR_TEXT.model_copy(update=update)]})
+    application = EditApplication(applied=(BREAK_FIX, NAMING_NOTE), changed_files=(CONTROLLER,))
+
+    with pytest.raises(LLMOutputError, match=re.escape(problem)):
+        setup.service.write_text(RUN_ID, ASSIGNMENT, (ASSIGNMENT,), RESULTS, application, [], [])
+
+    assert len(setup.llm.calls) == 2
 
 
 CRITICAL = "hw01-critical"
@@ -467,7 +520,10 @@ def test_the_writer_gets_each_edit_under_its_one_section(tmp_path: Path) -> None
     unsectioned = NAMING_NOTE.model_copy(
         update={"note_section": None, "reason": "A note without a section."}
     )
-    setup = FixerSetup(tmp_path)
+    two_questions = PR_TEXT.model_copy(
+        update={"for_you": ("**GET by id:** please write it.", "**Notes:** a note to read.")}
+    )
+    setup = FixerSetup(tmp_path, replies={"writer": [two_questions]})
     application = EditApplication(applied=(BREAK_FIX, NAMING_NOTE, question, unsectioned))
 
     setup.service.write_text(RUN_ID, ASSIGNMENT, (ASSIGNMENT,), RESULTS, application, [], [])
@@ -481,3 +537,5 @@ def test_the_writer_gets_each_edit_under_its_one_section(tmp_path: Path) -> None
     assert for_you < prompt.index(unsectioned.reason) < names
     assert names < prompt.index(NAMING_NOTE.reason)
     assert prompt.count(NAMING_NOTE.reason) == 1
+    assert "In `UsersController.cs`:" in prompt
+    assert "`fix`" not in prompt and "`note`" not in prompt and CONTROLLER not in prompt

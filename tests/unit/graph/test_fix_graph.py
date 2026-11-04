@@ -15,6 +15,7 @@ from hw_checker.domain import (
     FixPlan,
     ProposalStatus,
     PublishOutcome,
+    PullRequestText,
     ReviewPrompt,
     ReviewViolation,
     SelfReview,
@@ -166,6 +167,26 @@ def test_a_judge_removing_an_allowed_fix_is_ignored_and_the_report_says_so(
     assert report.fix is not None
     [ignored] = report.fix.ignored_review
     assert "a missing break is never a violation" in ignored
+
+
+def test_an_empty_pr_text_on_every_attempt_gives_no_proposal_and_says_why(
+    tmp_path: Path,
+) -> None:
+    empty = PullRequestText(opening="", fixed=(), for_you=(), names=())
+    fixer = FakeLLMClient({"fixer": [NOTE_PLAN], "judge": [NO_VIOLATIONS], "writer": [empty]})
+    harness = one_repo(tmp_path, fixer, fixer_overrides={"reply_attempts": 2})
+
+    output = harness.run()
+
+    assert roles(fixer).count("writer") == 4
+    assert harness.storage.proposals.list_for_run("run-1") == ()
+    report = harness.report_writer.repo_reports[-1]
+    assert report.fix is not None
+    assert report.fix.reason.startswith(
+        "No PR: the fixer failed (fix_repo/write_pr_text: The writer's PR text is unusable: "
+    )
+    assert 'names: 0 items for the 1 edits under "Names"' in report.fix.reason
+    assert output["round_errors"] and "write_pr_text" in output["round_errors"][0]
 
 
 def test_a_fix_that_never_clears_its_claim_falls_back_to_its_note(tmp_path: Path) -> None:

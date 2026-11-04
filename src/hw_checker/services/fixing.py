@@ -34,7 +34,7 @@ from hw_checker.domain import (
     StepStatus,
     VerifyResult,
 )
-from hw_checker.domain.errors import FixError
+from hw_checker.domain.errors import FixError, LLMOutputError
 from hw_checker.ports import (
     Clock,
     GitClient,
@@ -65,6 +65,16 @@ BRANCH_PREFIX = "hw-review/"
 STRONG_SEVERITIES = frozenset({Severity.MAJOR, Severity.CRITICAL})
 OPENING = "Hi! "
 """How every PR body starts (the approved PRs)."""
+MIN_OPENING_CHARS = 20
+"""After "Hi!", a shorter opening is not the sentence on what works that the PR needs."""
+MIN_ITEM_CHARS = 15
+"""A shorter section item cannot describe its edit."""
+EDIT_KIND_LABELS = tuple(f"`{kind.value}`" for kind in EditKind)
+"""How the writer's prompt used to label edits; an item never repeats them."""
+WRITER_FEEDBACK = (
+    "\n\n# Feedback on your previous reply\n\n"
+    "It could not be used. Write the whole reply again, without these problems:\n"
+)
 NOTHING_TO_CHANGE = "The fixer found nothing to change, so there is no branch and no PR."
 ALL_REJECTED = "No PR: every edit the fixer planned was rejected ({reasons})."
 FIX_LABEL = "--fix"
@@ -440,14 +450,18 @@ class FixService:
         application: EditApplication,
         files_notes: Sequence[str],
         cleared: Sequence[str],
-    ) -> tuple[str, str, LlmUsage]:
+    ) -> tuple[str, str, tuple[LlmUsage, ...]]:
         """Ask the `writer` role for the PR text, and return the title, the rendered body and
-        the call's usage. The title is decided here, not by the model, from the requirements
+        each call's usage. The title is decided here, not by the model, from the requirements
         the last recheck `cleared`; the body's opening starts with "Hi! ", and its "Files"
         section is `files_notes` only.
 
+        Every applied edit needs an item in its section, and the opening a real sentence on
+        what works; a reply that misses one is asked for once more, with the problems.
+
         Raises:
-            LLMOutputError: the reply could not be read.
+            LLMOutputError: the reply could not be read, or is still unusable after the
+                feedback.
             LLMError: the call failed.
             FixError: the body cannot be rendered.
         """
@@ -464,6 +478,15 @@ class FixService:
             },
         )
         text, tokens = self._llm.complete_with_usage(WRITER_ROLE, prompt, PullRequestText)
+        usages = [self._usage(run_id, WRITER_ROLE, prompt, tokens)]
+        problems = _text_problems(text, groups)
+        if problems:
+            retry = prompt + WRITER_FEEDBACK + "".join(f"- {problem}\n" for problem in problems)
+            text, tokens = self._llm.complete_with_usage(WRITER_ROLE, retry, PullRequestText)
+            usages.append(self._usage(run_id, WRITER_ROLE, retry, tokens))
+            problems = _text_problems(text, groups)
+        if problems:
+            raise LLMOutputError("The writer's PR text is unusable: " + "; ".join(problems))
         # A section without edits stays empty, whatever the writer returned for it.
         text = text.model_copy(
             update={key: getattr(text, key) if groups[key] else () for key in SECTION_HEADINGS}
@@ -475,7 +498,7 @@ class FixService:
             BODY_TEMPLATE, {"opening": opening, "text": text, "files_notes": list(files_notes)}
         )
         title = pr_title(assignment, cleared, assignments)
-        return title, body.strip() + "\n", self._usage(run_id, WRITER_ROLE, prompt, tokens)
+        return title, body.strip() + "\n", tuple(usages)
 
     def propose(
         self,
@@ -643,12 +666,37 @@ def _sections(applied: Sequence[PlannedEdit]) -> dict[str, list[PlannedEdit]]:
 
 
 def _described(edit: PlannedEdit) -> dict[str, object]:
+    """An edit as the writer sees it: the file's name, never the edit kind or the full path."""
     return {
-        "kind": edit.kind.value,
-        "file": edit.file,
+        "file_name": PurePosixPath(edit.file).name,
         "reason": edit.reason,
         "comments": _added_comments(edit),
     }
+
+
+def _text_problems(text: PullRequestText, groups: dict[str, list[PlannedEdit]]) -> list[str]:
+    """What makes the writer's reply unusable: a missing or empty item, an opening that is
+    not a sentence, or an item that names an edit's kind or full path."""
+    problems: list[str] = []
+    if len(text.opening.strip().removeprefix(OPENING.strip()).strip()) < MIN_OPENING_CHARS:
+        problems.append('opening: after "Hi!" write one or two sentences on what works')
+    for key, heading in SECTION_HEADINGS.items():
+        edits, items = groups[key], getattr(text, key)
+        if not edits:
+            continue
+        if len(items) < len(edits):
+            problems.append(
+                f'{key}: {len(items)} items for the {len(edits)} edits under "{heading}"; '
+                "write one item per edit"
+            )
+        if any(len(item.strip()) < MIN_ITEM_CHARS for item in items):
+            problems.append(f"{key}: an item is empty or too short to describe its edit")
+        paths = {edit.file for edit in edits if "/" in edit.file}
+        if any(label in item for item in items for label in EDIT_KIND_LABELS) or any(
+            path in item for item in items for path in paths
+        ):
+            problems.append(f"{key}: items never name the edit kind or the full path")
+    return problems
 
 
 def _passed_titles(
