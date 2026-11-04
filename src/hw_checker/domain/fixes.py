@@ -120,6 +120,8 @@ class VerifyResult(DomainModel):
     """Positions of the applied `fix` edits that verification blames, from 0."""
     cleared: tuple[str, ...] = ()
     """Requirements that failed before (had a finding) and pass on the fix working copy."""
+    blocked: tuple[str, ...] = ()
+    """Claims not held against their fix, because a requirement they depend on still fails."""
 
 
 class FixAttempt(DomainModel):
@@ -167,3 +169,6 @@ class FixOutcome(DomainModel):
     """Self-review violations that were not acted on, and why."""
     attempt_choice: str = ""
     """Which attempt the proposal is made of, and why."""
+    blocked: tuple[str, ...] = ()
+    """Claims of the proposal's fixes that cannot pass until a requirement they depend on
+    passes."""

@@ -83,6 +83,13 @@ Nothing to report: every checked requirement passed.
 
 {{ report.fix.attempt_choice }}
 {% endif %}
+{% if report.fix.blocked %}
+
+Claims not held against their fix:
+{% for item in report.fix.blocked %}
+- {{ item }}
+{% endfor %}
+{% endif %}
 {% if report.fix.ignored_review %}
 
 Self-review findings not acted on:

@@ -3,6 +3,7 @@
 # Updated by the developer on 2026-10-26 (lecturer input): DELETE not required, PUT required, wrong login returns 204, content checks added.
 # Updated by the developer on 2026-10-28 (lecturer input): GET all not required, PUT returns Ok().
 # Updated by the developer on 2026-10-29: update-then-read-back and login-returns-user added (from the manual review).
+# Stage 14d: depends_on added (to be reviewed by the developer).
 # taught_techniques: to be filled from the course slides.
 id: hw01
 order: 1
@@ -54,6 +55,7 @@ requirements:
     kind: http
     title: The created user can be read back by id (the data is saved)
     severity: critical
+    depends_on: [hw01-create]  # reads the user the POST probe created
     probes:
       - method: GET
         path: "/api/users/{user_id}"
@@ -66,6 +68,7 @@ requirements:
     kind: http
     title: Login with correct details succeeds
     severity: major
+    depends_on: [hw01-create]  # logs in as the user the POST probe created
     allowed_alternatives:
       - Returning 201 is acceptable
     probes:
@@ -89,6 +92,7 @@ requirements:
     kind: http
     title: Login returns the stored user, including its id
     severity: minor
+    depends_on: [hw01-create, hw01-login]  # the created user's id, from a login that succeeds
     probes:
       - method: POST
         path: /api/users/login
@@ -155,6 +159,7 @@ requirements:
     kind: http
     title: PUT updates a user
     severity: major
+    depends_on: [hw01-create]  # updates the user the POST probe created
     allowed_alternatives:
       - The assignment asks PUT to return Ok() (200); 204 is also accepted
     probes:
@@ -172,6 +177,7 @@ requirements:
     kind: http
     title: After PUT, the user is read back by the same id with the new details
     severity: major
+    depends_on: [hw01-update, hw01-read-back]  # needs the update, and GET by id to read it
     probes:
       - method: GET
         path: "/api/users/{user_id}"

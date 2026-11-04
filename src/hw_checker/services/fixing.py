@@ -363,8 +363,9 @@ class FixService:
 
         It passes when the build is not worse, no requirement that passed now fails, and
         every requirement a `fix` claims passes. A worse build or a newly failing
-        requirement blames every `fix`; an unmet claim blames its own fix. Nothing is run
-        when nothing was applied.
+        requirement blames every `fix`; an unmet claim blames its own fix, unless a
+        requirement it `depends_on` still fails: then it is kept in `blocked`. Nothing is
+        run when nothing was applied.
 
         Raises:
             ExecutionEnvironmentError: the engine cannot be reached.
@@ -390,8 +391,21 @@ class FixService:
             if edit.kind is EditKind.FIX
         ]
         blamed = {index for index, _ in fixes} if problems else set()
+        depends = {r.id: r.depends_on for a in assignments for r in a.requirements}
+        blocked: list[str] = []
         for index, fix in fixes:
-            unmet = [r for r in fix.finding_ids if r not in passed_after]
+            unmet: list[str] = []
+            for claim in fix.finding_ids:
+                if claim in passed_after:
+                    continue
+                waiting = [d for d in depends.get(claim, ()) if d not in passed_after]
+                if waiting:
+                    blocked.append(
+                        f"`{claim}` can't pass until {_ticked(waiting)} passes "
+                        f"(claimed by the fix in {fix.file})"
+                    )
+                else:
+                    unmet.append(claim)
             if unmet:
                 problems.append(
                     f"the fix in {fix.file} claims {', '.join(unmet)}, which still fails"
@@ -403,6 +417,7 @@ class FixService:
             problems=tuple(problems),
             failing_fixes=tuple(sorted(blamed)),
             cleared=tuple(sorted(failed_before & passed_after)),
+            blocked=tuple(blocked),
         )
 
     def fall_back(
@@ -533,6 +548,7 @@ class FixService:
         body: str,
         attempts: int,
         attempt_choice: str = "",
+        blocked: Sequence[str] = (),
     ) -> FixOutcome:
         """Commit the applied edits as one review commit on the review branch and save the
         proposal (pending review, verified); with nothing applied, propose nothing and say why.
@@ -583,6 +599,7 @@ class FixService:
             edits=len(application.applied),
             ignored_review=application.ignored_review,
             attempt_choice=attempt_choice,
+            blocked=tuple(blocked),
         )
 
     @staticmethod
@@ -676,6 +693,10 @@ def attempt_choice(tried: Sequence[FixAttempt], fell_back: bool) -> str:
         f"{_edits(len(best.application.applied))}"
     )
     return f"{choice} (the most of the attempts that passed; {others})." if others else f"{choice}."
+
+
+def _ticked(requirement_ids: Sequence[str]) -> str:
+    return " and ".join(f"`{requirement_id}`" for requirement_id in requirement_ids)
 
 
 def _edits(count: int) -> str:

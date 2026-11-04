@@ -205,6 +205,31 @@ def test_an_attempt_that_passes_the_recheck_beats_an_earlier_one_that_failed(
     )
 
 
+def test_a_fix_whose_claim_waits_on_a_failing_dependency_is_proposed_and_reported(
+    tmp_path: Path,
+) -> None:
+    [general, hw01, hw02] = CATALOG
+    build, http = hw01.requirements
+    waiting = http.model_copy(update={"depends_on": (build.id,)})
+    catalog = (general, hw01.model_copy(update={"requirements": (build, waiting)}), hw02)
+    claim = BREAK_FIX.model_copy(update={"finding_ids": ("hw01-http",)})
+    failing = builders.finding(requirement_id="hw01-http", assignment_id="hw01")
+    fixer = llm(FixPlan(edits=(claim, NAMING_NOTE), files_notes=()))
+    harness = one_repo(tmp_path, fixer, catalog=catalog, outcomes={"hw01-http": (failing,)})
+
+    harness.run()
+
+    assert roles(fixer) == ["fixer", "judge", "writer"]
+    [proposal] = harness.storage.proposals.list_for_run("run-1")
+    assert "//fix: added the missing break" in proposal.diff
+    report = harness.report_writer.repo_reports[-1]
+    assert report.fix is not None
+    assert report.fix.blocked == (
+        "`hw01-http` can't pass until `hw01-build` passes "
+        "(claimed by the fix in Controllers/UsersController.cs)",
+    )
+
+
 def test_a_placeholder_plan_is_fed_back_and_the_real_second_plan_is_proposed(
     tmp_path: Path,
 ) -> None:

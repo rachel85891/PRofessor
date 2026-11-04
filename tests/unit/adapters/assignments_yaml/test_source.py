@@ -458,3 +458,41 @@ def test_problems_in_different_requirements_of_one_file_are_all_reported(tmp_pat
 
     assert "requirement 'hw01-r1', field 'chek': unknown key" in message
     assert "requirement 'hw01-r2', probe 1, field 'path'" in message
+
+
+def test_depends_on_names_the_requirements_that_must_pass_first(tmp_path: Path) -> None:
+    hw = HW01.replace(
+        "    title: POST /api/products creates a product\n",
+        "    title: POST /api/products creates a product\n    depends_on: [hw01-r1, gen-r1]\n",
+    )
+
+    [_, hw01] = load(tmp_path, {"_general": GENERAL, "hw01": hw}).load_all()
+
+    assert hw01.requirements[1].depends_on == ("hw01-r1", "gen-r1")
+    assert hw01.requirements[0].depends_on == ()
+
+
+@pytest.mark.parametrize(
+    ("depends_on", "problem"),
+    [
+        ("[hw01-r9]", "field 'depends_on': unknown requirement 'hw01-r9'; check the spelling."),
+        ("[hw01-r2]", "a requirement cannot depend on itself"),
+        ("[hw01-r3]", "field 'depends_on': it depends on itself through other requirements."),
+    ],
+    ids=["unknown", "itself", "cycle"],
+)
+def test_depends_on_is_validated_when_loading(
+    tmp_path: Path, depends_on: str, problem: str
+) -> None:
+    hw = HW01.replace(
+        "    title: POST /api/products creates a product\n",
+        f"    title: POST /api/products creates a product\n    depends_on: {depends_on}\n",
+    ).replace(
+        "    title: The project builds\n",
+        "    title: The project builds\n    depends_on: [hw01-r2]\n",
+    )
+
+    message = problems_of(load(tmp_path, {"_general": GENERAL, "hw01": hw}))
+
+    assert "assignments/hw01/requirements.yaml: requirement 'hw01-r2'" in message
+    assert problem in message

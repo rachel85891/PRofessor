@@ -310,6 +310,7 @@ def build_fix_graph(
                         state.get("pr_body", ""),
                         state["attempt"],
                         attempt_choice(state.get("tried", []), state.get("fell_back", False)),
+                        state["verification"].blocked if "verification" in state else (),
                     )
                 ]
             },

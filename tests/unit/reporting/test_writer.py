@@ -176,6 +176,25 @@ def test_the_repo_report_says_which_attempt_was_used(tmp_path: Path) -> None:
     )
 
 
+def test_the_repo_report_lists_the_claims_waiting_on_a_dependency(tmp_path: Path) -> None:
+    fix = FixOutcome(
+        repo_id="noa__webapi",
+        attempts=1,
+        reason="No PR: the recheck failed.",
+        blocked=("`hw01-b` can't pass until `hw01-a` passes (claimed by the fix in A.cs)",),
+    )
+
+    path = MarkdownReportWriter(tmp_path).write_repo_report(
+        data.clean_report().model_copy(update={"fix": fix})
+    )
+
+    assert path.read_text(encoding="utf-8").endswith(
+        "## Review branch\n\nNo PR: the recheck failed.\n\n"
+        "Claims not held against their fix:\n"
+        "- `hw01-b` can't pass until `hw01-a` passes (claimed by the fix in A.cs)\n"
+    )
+
+
 def test_the_repo_report_lists_the_self_review_findings_not_acted_on(tmp_path: Path) -> None:
     fix = FixOutcome(
         repo_id="noa__webapi",
