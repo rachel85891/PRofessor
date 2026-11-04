@@ -16,6 +16,8 @@ from hw_checker.domain import (
     ProposalStatus,
     PublishOutcome,
     ReviewPrompt,
+    ReviewViolation,
+    SelfReview,
     StepStatus,
 )
 from hw_checker.domain.errors import LLMError, LLMOutputError
@@ -138,6 +140,32 @@ def test_placeholder_plans_on_every_attempt_give_no_proposal_and_say_why(
         "No PR: every edit the fixer planned was rejected (the reason is empty or a "
         "placeholder; give one real sentence saying why)."
     )
+
+
+def test_a_judge_removing_an_allowed_fix_is_ignored_and_the_report_says_so(
+    tmp_path: Path,
+) -> None:
+    flagged = ReviewViolation(
+        edit_index=0, rule=3, quote="Never implement the core", explanation="Too direct."
+    )
+    unclaimed = BREAK_FIX.model_copy(update={"finding_ids": ()})
+    fixer = FakeLLMClient(
+        {
+            "fixer": [FixPlan(edits=(unclaimed,), files_notes=())],
+            "judge": [SelfReview(violations=(flagged,))],
+            "writer": [PR_TEXT],
+        }
+    )
+    harness = one_repo(tmp_path, fixer)
+
+    harness.run()
+
+    [proposal] = harness.storage.proposals.list_for_run("run-1")
+    assert "break;" in proposal.diff
+    report = harness.report_writer.repo_reports[-1]
+    assert report.fix is not None
+    [ignored] = report.fix.ignored_review
+    assert "a missing break is never a violation" in ignored
 
 
 def test_a_fix_that_never_clears_its_claim_falls_back_to_its_note(tmp_path: Path) -> None:

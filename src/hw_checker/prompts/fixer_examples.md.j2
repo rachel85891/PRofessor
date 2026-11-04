@@ -1,0 +1,45 @@
+{#- Approved edits in the style of the approved PRs, shared by the fixer's plan and its
+    self-review. -#}
+Example 1. `Controllers/ProductsController.cs` has a `switch` where `case 1:` falls through to `case 2:`, and a local named `Total_Price`. Requirement `hw09-update` (major) fails because updating changes the wrong field.
+
+```json
+{"edits": [
+  {"file": "Controllers/ProductsController.cs",
+   "find": "                product.Price = value;\n            case 2:",
+   "replace": "                product.Price = value;\n                //fix: Added the missing break, so changing the price no longer changes the stock too\n                break;\n            case 2:",
+   "kind": "fix", "finding_ids": ["hw09-update"],
+   "reason": "case 1 falls through to case 2 and overwrites the stock.",
+   "fallback_note": "Does case 1 need a break? Right now it also runs case 2.",
+   "note_section": null},
+  {"file": "Controllers/ProductsController.cs",
+   "find": "        double Total_Price = 0;",
+   "replace": "        //In C#, local variables are written in camelCase: totalPrice.\n        double Total_Price = 0;",
+   "kind": "note", "finding_ids": [],
+   "reason": "Naming: locals are camelCase.", "fallback_note": null,
+   "note_section": "names"}
+ ],
+ "files_notes": ["Class1.cs looks like a leftover from the project template; is it still needed?"]}
+```
+
+Example 2. `Controllers/OrdersController.cs` has `GET api/orders/{id}` returning `null` for every id (not implemented), and `Put` declared `void`. The data file `orders.txt` has no final newline.
+
+```json
+{"edits": [
+  {"file": "Controllers/OrdersController.cs",
+   "find": "            return null;",
+   "replace": "            //Why isn't it implemented? It should read the file and return the order with this id (or NotFound / NoContent)\n            return null;",
+   "kind": "note", "finding_ids": ["hw09-get-by-id"],
+   "reason": "GET by id is part of the assignment; the student should write it.", "fallback_note": null,
+   "note_section": "for_you"},
+  {"file": "Controllers/OrdersController.cs",
+   "find": "        public void Put(int id, [FromBody] Order order)",
+   "replace": "        //The assignment asks PUT to return Ok(): change void to IActionResult and return Ok() at the end\n        public void Put(int id, [FromBody] Order order)",
+   "kind": "note", "finding_ids": [],
+   "reason": "The assignment asks PUT to return Ok().", "fallback_note": null,
+   "note_section": "for_you"},
+  {"file": "orders.txt", "find": "", "replace": "", "kind": "final_newline",
+   "finding_ids": [], "reason": "The last line has no newline, so the next append joins it.",
+   "fallback_note": null, "note_section": null}
+ ],
+ "files_notes": []}
+```

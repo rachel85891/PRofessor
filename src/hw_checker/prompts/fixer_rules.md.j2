@@ -1,0 +1,13 @@
+{#- The review rules (docs/fix-pr-workflow.md §3), shared by the fixer's plan and its
+    self-review. One numbered rule per line: the self-review quotes them by number. -#}
+1. Write every comment you add in English, short, right after `//` with no space. Mark every code change with a `//fix: ...` line directly above the changed code, saying what you changed and why (`//fix: Keep the id, otherwise the updated user is saved without it`). Every other comment is a question or an instruction for the student (`//Why isn't it implemented? It should read the file and return the user with this id (or NotFound / NoContent)`).
+2. Fix only small, safe things: a missing `break`, an id lost on update, `readonly` for a fixed path, a stray `using`, a controller class name without the `Controller` suffix (the route does not change), a broken data file (for example a missing final newline).
+3. Never implement the core of the assignment (for example an unimplemented GET by id). Leave a question instead.
+4. Never add `File.Exists` checks returning `BadRequest`, and do not comment on them: the path is not user input.
+5. PUT returns `Ok()`: the assignment asks for it. If PUT is `void`, add a note for the student (`//The assignment asks PUT to return Ok(): change void to IActionResult and return Ok() at the end`); do not change it.
+6. Do not mention GET all (not required in HW1), layers, or a `Models` folder (taught later).
+7. Naming (C# conventions) is in scope, as notes only: PascalCase types, properties and methods; camelCase locals; files named after their type; uncommon file names; unclear abbreviations. Never rename a stored model property: System.Text.Json is case-sensitive, so the existing data file would stop loading. Add a note with the `PropertyNameCaseInsensitive` tip instead.
+8. Leftover or duplicate files go in `files_notes` (one short sentence each); never edit or delete them.
+9. Second-year level: no refactoring, and no techniques that have not been taught{% if assignment.taught_techniques %} (taught so far: {{ assignment.taught_techniques | join(", ") }}){% endif %}.
+10. Do not claim a bug that is not there. When unsure, ask a question in a note instead of changing code.
+11. Speak to the student about the assignment: write "The assignment asks…", never mention the lecturer.

@@ -48,6 +48,7 @@ from hw_checker.ports.llm import TokenUsage
 from hw_checker.services.deterministic_checks import DETERMINISTIC_KINDS, DeterministicCheckService
 from hw_checker.services.execution import ExecutionService
 from hw_checker.services.fix_edits import EditRules, apply_edits, fallback_edit
+from hw_checker.services.fix_review import judge, numbered_rules
 
 logger = logging.getLogger(__name__)
 
@@ -56,6 +57,7 @@ JUDGE_ROLE = "judge"
 WRITER_ROLE = "writer"
 PLAN_TEMPLATE = "fixer_plan.md.j2"
 REVIEW_TEMPLATE = "fixer_review.md.j2"
+RULES_TEMPLATE = "fixer_rules.md.j2"
 WRITER_TEMPLATE = "pr_text.md.j2"
 BODY_TEMPLATE = "pr_body.md.j2"
 FIXES_FOLDER = "fixes"
@@ -287,32 +289,43 @@ class FixService:
         return review, self._usage(run_id, JUDGE_ROLE, prompt, tokens)
 
     def remove_violations(
-        self, workspace: FixWorkspace, application: EditApplication, review: SelfReview
+        self,
+        workspace: FixWorkspace,
+        assignment: Assignment,
+        application: EditApplication,
+        review: SelfReview,
     ) -> EditApplication:
         """Remove the edits the self-review found breaking a rule (kept as rejected, with the
-        reason), applying the others again from the checked commit.
+        reason), applying the others again from the checked commit. A violation that does
+        not quote its rule, or reports an edit the rules allow outright, is ignored; the
+        reasons are kept for the repo report (`fix_review`).
 
         Raises:
             GitOperationError: the copy cannot be reset.
             FixError: a file cannot be read or written.
         """
         applied = application.applied
-        broken: dict[int, str] = {}
-        for violation in review.violations:
-            if 0 <= violation.edit_index < len(applied):
-                broken.setdefault(
-                    violation.edit_index, f"self-review: {violation.rule}: {violation.explanation}"
-                )
-        logger.info("Self-review: %d of %d edits removed", len(broken), len(applied))
+        rules = numbered_rules(self._templates.render(RULES_TEMPLATE, {"assignment": assignment}))
+        outcome = judge(review, applied, rules)
+        broken = outcome.broken
+        logger.info(
+            "Self-review: %d of %d edits removed, %d violations ignored",
+            len(broken),
+            len(applied),
+            len(outcome.ignored),
+        )
         if not broken:
-            return application
+            return application.model_copy(update={"ignored_review": outcome.ignored})
         kept = [edit for index, edit in enumerate(applied) if index not in broken]
         reapplied = self.apply(workspace, kept)
         removed = tuple(
             RejectedEdit(edit=applied[index], reason=reason) for index, reason in broken.items()
         )
         return reapplied.model_copy(
-            update={"rejected": application.rejected + reapplied.rejected + removed}
+            update={
+                "rejected": application.rejected + reapplied.rejected + removed,
+                "ignored_review": outcome.ignored,
+            }
         )
 
     def verify(
@@ -399,7 +412,10 @@ class FixService:
             dropped.append(RejectedEdit(edit=edit, reason=reason))
         reapplied = self.apply(workspace, edits)
         return reapplied.model_copy(
-            update={"rejected": application.rejected + reapplied.rejected + tuple(dropped)}
+            update={
+                "rejected": application.rejected + reapplied.rejected + tuple(dropped),
+                "ignored_review": application.ignored_review,
+            }
         )
 
     @staticmethod
@@ -482,7 +498,10 @@ class FixService:
         """
         if not application.applied:
             return FixOutcome(
-                repo_id=repo.repo_id, attempts=attempts, reason=_nothing_applied(application)
+                repo_id=repo.repo_id,
+                attempts=attempts,
+                reason=_nothing_applied(application),
+                ignored_review=application.ignored_review,
             )
         copy = workspace.working_copy
         self._git.create_branch(copy, workspace.branch_name, workspace.base_sha)
@@ -515,6 +534,7 @@ class FixService:
             diff_path=diff_path,
             attempts=attempts,
             edits=len(application.applied),
+            ignored_review=application.ignored_review,
         )
 
     @staticmethod

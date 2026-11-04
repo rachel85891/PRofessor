@@ -72,6 +72,8 @@ class EditApplication(DomainModel):
     applied: tuple[PlannedEdit, ...] = ()
     rejected: tuple[RejectedEdit, ...] = ()
     changed_files: tuple[str, ...] = ()
+    ignored_review: tuple[str, ...] = ()
+    """Self-review violations that were not acted on, and why (for the repo report)."""
 
 
 class ReviewViolation(DomainModel):
@@ -79,7 +81,10 @@ class ReviewViolation(DomainModel):
 
     edit_index: int
     """The edit's position in the list the review was given, from 0."""
-    rule: str
+    rule: int
+    """The number of the review rule (docs/fix-pr-workflow.md §3) the edit breaks."""
+    quote: str
+    """The words of that rule the edit breaks, copied from the rule."""
     explanation: str
 
 
@@ -149,3 +154,5 @@ class FixOutcome(DomainModel):
     edits: int = Field(default=0, ge=0)
     reason: str = ""
     """Why there is no proposal; empty when there is one."""
+    ignored_review: tuple[str, ...] = ()
+    """Self-review violations that were not acted on, and why."""

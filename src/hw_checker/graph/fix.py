@@ -200,7 +200,7 @@ def build_fix_graph(
             state,
             lambda: {
                 "application": fixing.remove_violations(
-                    state["workspace"], state["application"], review
+                    state["workspace"], by_id[state["assignment_id"]], state["application"], review
                 )
             },
         )

@@ -4,9 +4,11 @@ import pytest
 
 from hw_checker.domain import (
     EditApplication,
+    EditKind,
     FixOutcome,
     FixPlan,
     NoteSection,
+    PlannedEdit,
     ProposalStatus,
     ReviewViolation,
     SelfReview,
@@ -35,6 +37,25 @@ from tests.unit.services.fixer_data import (
 )
 
 GOLDEN_BODY = Path(__file__).parent / "golden" / "pr_body.md"
+STORE = "Controllers/StoreController.cs"
+STORE_TEXT = (
+    "public class StoreController\n{\n"
+    '    private string path = "users.txt";\n\n'
+    "    public string Read()\n    {\n        return File.ReadAllText(path);\n    }\n}\n"
+)
+READONLY_FIX = PlannedEdit(
+    file=STORE,
+    find='    private string path = "users.txt";',
+    replace=(
+        "    //fix: readonly, the path never changes\n"
+        '    private readonly string path = "users.txt";'
+    ),
+    kind=EditKind.FIX,
+    finding_ids=(),
+    reason="The path is fixed, so it should be readonly.",
+    fallback_note="Could path be readonly? It never changes.",
+    note_section=None,
+)
 
 
 def test_prepare_clones_the_checked_copy_without_touching_it(tmp_path: Path) -> None:
@@ -162,7 +183,9 @@ def test_apply_starts_again_from_the_checked_commit(tmp_path: Path) -> None:
 
 
 def test_the_self_review_asks_the_judge_and_changes_no_file(tmp_path: Path) -> None:
-    violation = ReviewViolation(edit_index=0, rule="wrong", explanation="No bug there.")
+    violation = ReviewViolation(
+        edit_index=0, rule=10, quote="Do not claim a bug that is not there", explanation="No bug."
+    )
     setup = FixerSetup(tmp_path, replies={"judge": [SelfReview(violations=(violation,))]})
     workspace = setup.service.prepare(RUN_ID, "hw01", REPO, setup.fetched)
     application = setup.service.apply(workspace, [BREAK_FIX, NAMING_NOTE])
@@ -177,22 +200,82 @@ def test_the_self_review_asks_the_judge_and_changes_no_file(tmp_path: Path) -> N
     assert setup.text(CONTROLLER) == before
     [call] = setup.llm.calls
     assert "<student_diff>" in call.prompt and "+                break;" in call.prompt
+    assert "3. Never implement the core of the assignment" in call.prompt
+    assert "# Never a violation" in call.prompt
+    assert "Example 2." in call.prompt
 
 
 def test_a_violating_edit_is_removed_and_kept_as_rejected(tmp_path: Path) -> None:
-    violation = ReviewViolation(edit_index=0, rule="wrong", explanation="No bug there.")
+    violation = ReviewViolation(
+        edit_index=1,
+        rule=1,
+        quote="Write every comment you add in English, short",
+        explanation="The note is too long.",
+    )
     setup = FixerSetup(tmp_path)
     workspace = setup.service.prepare(RUN_ID, "hw01", REPO, setup.fetched)
     application = setup.service.apply(workspace, [BREAK_FIX, NAMING_NOTE])
 
     reviewed = setup.service.remove_violations(
-        workspace, application, SelfReview(violations=(violation,))
+        workspace, ASSIGNMENT, application, SelfReview(violations=(violation,))
     )
 
-    assert reviewed.applied == (NAMING_NOTE,)
+    assert reviewed.applied == (BREAK_FIX,)
     [removed] = reviewed.rejected
-    assert removed.reason == "self-review: wrong: No bug there."
-    assert "//fix:" not in setup.text(CONTROLLER)
+    assert removed.reason == "self-review: rule 1: The note is too long."
+    assert "camelCase" not in setup.text(CONTROLLER)
+    assert reviewed.ignored_review == ()
+
+
+def test_a_judge_removing_a_readonly_fix_is_ignored_and_the_report_keeps_why(
+    tmp_path: Path,
+) -> None:
+    violation = ReviewViolation(
+        edit_index=0, rule=9, quote="no refactoring", explanation="A style refactor not taught."
+    )
+    setup = FixerSetup(tmp_path, replies={"judge": [SelfReview(violations=(violation,))]})
+    (setup.checked / STORE).write_bytes(STORE_TEXT.encode())
+    workspace = setup.service.prepare(RUN_ID, "hw01", REPO, setup.fetched)
+    application = setup.service.apply(workspace, [READONLY_FIX])
+    reviewed = setup.service.self_review(RUN_ID, workspace, ASSIGNMENT, application)
+    assert reviewed is not None
+
+    kept = setup.service.remove_violations(workspace, ASSIGNMENT, application, reviewed[0])
+
+    assert kept.applied == (READONLY_FIX,)
+    assert "private readonly string path" in setup.text(STORE)
+    [ignored] = kept.ignored_review
+    assert "readonly for a fixed path is never a violation" in ignored
+
+
+def test_a_judge_flagging_a_real_file_exists_check_removes_it(tmp_path: Path) -> None:
+    exists = READONLY_FIX.model_copy(
+        update={
+            "find": "        return File.ReadAllText(path);",
+            "replace": "        //fix: check the file\n"
+            '        if (!File.Exists(path)) return "";\n'
+            "        return File.ReadAllText(path);",
+        }
+    )
+    violation = ReviewViolation(
+        edit_index=1,
+        rule=4,
+        quote="Never add `File.Exists` checks returning `BadRequest`",
+        explanation="It adds a File.Exists check.",
+    )
+    setup = FixerSetup(tmp_path, replies={"judge": [SelfReview(violations=(violation,))]})
+    workspace = setup.service.prepare(RUN_ID, "hw01", REPO, setup.fetched)
+    setup.service.apply(workspace, [BREAK_FIX])
+    application = EditApplication(applied=(BREAK_FIX, exists), changed_files=(CONTROLLER,))
+    reviewed = setup.service.self_review(RUN_ID, workspace, ASSIGNMENT, application)
+    assert reviewed is not None
+
+    kept = setup.service.remove_violations(workspace, ASSIGNMENT, application, reviewed[0])
+
+    assert kept.applied == (BREAK_FIX,)
+    assert [rejected.reason for rejected in kept.rejected] == [
+        "self-review: rule 4: It adds a File.Exists check."
+    ]
 
 
 def test_edits_without_violations_are_kept(tmp_path: Path) -> None:
@@ -200,7 +283,9 @@ def test_edits_without_violations_are_kept(tmp_path: Path) -> None:
     workspace = setup.service.prepare(RUN_ID, "hw01", REPO, setup.fetched)
     application = setup.service.apply(workspace, [BREAK_FIX])
 
-    assert setup.service.remove_violations(workspace, application, NO_VIOLATIONS) == application
+    assert setup.service.remove_violations(workspace, ASSIGNMENT, application, NO_VIOLATIONS) == (
+        application
+    )
 
 
 @pytest.mark.parametrize("self_review", [False, True])
