@@ -1,5 +1,6 @@
 """The fixer subgraph in the round (ADR 0021), with a fake LLM and a fake runner."""
 
+import json
 from pathlib import Path
 from typing import Any, cast
 
@@ -10,6 +11,7 @@ from langgraph.types import Command
 
 from hw_checker.bootstrap import checkpoint_serializer
 from hw_checker.domain import (
+    EditKind,
     ExecutionResult,
     FailureKind,
     FixPlan,
@@ -102,12 +104,105 @@ def test_rejected_edits_are_fed_back_and_the_second_plan_is_used(tmp_path: Path)
 
     assert roles(fixer) == ["fixer", "fixer", "judge", "writer"]
     second_plan = fixer.calls[1].prompt
-    assert "Feedback on your previous plan (attempt 1 of 2)" in second_plan
+    assert "Your previous plan (attempt 1 of 2)" in second_plan
     assert "users.json is not a .cs file" in second_plan
     [proposal] = harness.storage.proposals.list_for_run("run-1")
     report = harness.report_writer.repo_reports[-1]
     assert report.fix is not None and report.fix.attempts == 2
     assert proposal.pr_title == "HW1 review: small fixes and questions"
+
+
+MODEL_NOTE = NAMING_NOTE.model_copy(
+    update={
+        "file": "Models/User.cs",
+        "find": "    public int id { get; set; }\n",
+        "replace": "    //Properties are PascalCase: Id.\n    public int id { get; set; }\n",
+        "reason": "Naming: properties are PascalCase.",
+    }
+)
+NEWLINE = OUTSIDE.model_copy(
+    update={
+        "kind": EditKind.FINAL_NEWLINE,
+        "find": "",
+        "replace": "",
+        "reason": "The data file has no final newline.",
+    }
+)
+FOUR_EDITS = FixPlan(
+    edits=(BREAK_FIX.model_copy(update={"finding_ids": ()}), NAMING_NOTE, MODEL_NOTE, NEWLINE),
+    files_notes=(),
+)
+FOUR_TEXT = PR_TEXT.model_copy(
+    update={
+        "fixed": (*PR_TEXT.fixed, "**`users.json`** did not end with a new line; now it does."),
+        "for_you": (),
+        "names": (*PR_TEXT.names, "Properties are PascalCase: **Id** instead of `id`."),
+    }
+)
+
+
+def test_a_retry_never_replaces_an_acceptable_attempt_with_more_edits(tmp_path: Path) -> None:
+    first = FixPlan(edits=(*FOUR_EDITS.edits, OUTSIDE), files_notes=())
+    fixer = FakeLLMClient(
+        {"fixer": [first, NOTE_PLAN], "judge": [NO_VIOLATIONS], "writer": [FOUR_TEXT]}
+    )
+    harness = one_repo(tmp_path, fixer)
+
+    harness.run()
+
+    assert roles(fixer) == ["fixer", "judge", "fixer", "judge", "writer"]
+    [proposal] = harness.storage.proposals.list_for_run("run-1")
+    assert "break;" in proposal.diff and "PascalCase: Id" in proposal.diff
+    report = harness.report_writer.repo_reports[-1]
+    assert report.fix is not None and (report.fix.edits, report.fix.attempts) == (4, 2)
+    assert report.fix.attempt_choice == (
+        "Attempt 1 of 2 is used: its recheck passed with 4 applied edits (the most of the "
+        "attempts that passed; attempt 2: recheck passed, 1 applied edit)."
+    )
+
+
+def test_the_retry_prompt_lists_the_kept_edits_and_asks_for_the_whole_plan(
+    tmp_path: Path,
+) -> None:
+    first = FixPlan(edits=(*FOUR_EDITS.edits, OUTSIDE), files_notes=())
+    fixer = FakeLLMClient(
+        {"fixer": [first, FOUR_EDITS], "judge": [NO_VIOLATIONS], "writer": [FOUR_TEXT]}
+    )
+    harness = one_repo(tmp_path, fixer)
+
+    harness.run()
+
+    retry = fixer.calls[2].prompt
+    kept = retry.split("<previous_edits>\n")[1].split("\n</previous_edits>")[0]
+    assert [edit["reason"] for edit in json.loads(kept)] == [
+        edit.reason for edit in FOUR_EDITS.edits
+    ]
+    assert "Return the **whole** plan again" in retry
+    assert "Keep every kept edit exactly as it is, unless the feedback above names it." in retry
+    assert "- Rejected fix in users.json: " in retry
+    report = harness.report_writer.repo_reports[-1]
+    assert report.fix is not None and report.fix.attempt_choice.startswith("Attempt 2 of 2")
+
+
+def test_an_attempt_that_passes_the_recheck_beats_an_earlier_one_that_failed(
+    tmp_path: Path,
+) -> None:
+    claim = BREAK_FIX.model_copy(update={"finding_ids": ("hw01-http",)})
+    failing = builders.finding(requirement_id="hw01-http", assignment_id="hw01")
+    first = FixPlan(edits=(claim, NAMING_NOTE, MODEL_NOTE), files_notes=())
+    fixer = llm(first, NOTE_PLAN)
+    harness = one_repo(tmp_path, fixer, outcomes={"hw01-http": (failing,)})
+
+    harness.run()
+
+    [proposal] = harness.storage.proposals.list_for_run("run-1")
+    assert "//fix:" not in proposal.diff and "camelCase" in proposal.diff
+    report = harness.report_writer.repo_reports[-1]
+    assert report.fix is not None and report.fix.edits == 1
+    assert report.fix.attempt_choice == (
+        "Attempt 2 of 2 is used: its recheck passed with 1 applied edit "
+        "(the most of the attempts that passed; attempt 1: recheck failed)."
+    )
 
 
 def test_a_placeholder_plan_is_fed_back_and_the_real_second_plan_is_proposed(

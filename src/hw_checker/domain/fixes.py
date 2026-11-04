@@ -122,6 +122,15 @@ class VerifyResult(DomainModel):
     """Requirements that failed before (had a finding) and pass on the fix working copy."""
 
 
+class FixAttempt(DomainModel):
+    """One attempt's plan, the edits it kept and their recheck: what a proposal is made of."""
+
+    number: int = Field(ge=1)
+    plan: FixPlan
+    application: EditApplication
+    verification: VerifyResult
+
+
 class LlmUsage(DomainModel):
     """The tokens of one LLM call, and the run that paid for it."""
 
@@ -156,3 +165,5 @@ class FixOutcome(DomainModel):
     """Why there is no proposal; empty when there is one."""
     ignored_review: tuple[str, ...] = ()
     """Self-review violations that were not acted on, and why."""
+    attempt_choice: str = ""
+    """Which attempt the proposal is made of, and why."""

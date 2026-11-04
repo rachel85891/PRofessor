@@ -50,6 +50,7 @@ from hw_checker.domain.findings import (
 from hw_checker.domain.fixes import (
     EditApplication,
     EditKind,
+    FixAttempt,
     FixOutcome,
     FixPlan,
     FixWorkspace,
@@ -131,6 +132,7 @@ __all__ = [
     "Finding",
     "FindingBrief",
     "FindingSource",
+    "FixAttempt",
     "FixOutcome",
     "FixPlan",
     "FixProposal",

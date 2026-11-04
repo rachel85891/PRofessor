@@ -137,7 +137,7 @@ def test_feedback_from_the_last_attempt_goes_into_the_prompt(tmp_path: Path) -> 
         workspace, ASSIGNMENT, (ASSIGNMENT,), RESULTS, 2, ["Rejected fix in x.cs: too long"]
     )
 
-    assert "Feedback on your previous plan (attempt 1 of 2)" in prompt
+    assert "Your previous plan (attempt 1 of 2)" in prompt
     assert "- Rejected fix in x.cs: too long" in prompt
 
 
