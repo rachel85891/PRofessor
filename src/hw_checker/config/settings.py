@@ -255,6 +255,9 @@ class LlmSettings(BaseModel):
     """The most tokens a reply may have; always sent, so a call never reserves the
     model's whole output limit (ADR 0020)."""
     timeout_seconds: float = Field(default=60, gt=0)
+    """The longest wait for one reply, for a role without its own in `role_timeouts`."""
+    role_timeouts: dict[LlmRole, Annotated[float, Field(gt=0)]] = {}
+    """A role's own longest wait for one reply (the fixer's long plans, stage 14c)."""
     max_retries: int = Field(default=2, ge=0, le=10)
     """Retries after a rate limit, a timeout or a server error; never after other errors."""
     retry_backoff_seconds: float = Field(default=2, ge=0, le=60)
@@ -273,6 +276,10 @@ class LlmSettings(BaseModel):
     is used (ADR 0022)."""
     student_code_approved: bool = False
     """Whether the lecturer approved sending students' code to the LLM; the developer sets it."""
+
+    def role_timeout(self, role: LlmRole) -> float:
+        """The longest wait for one reply of `role`."""
+        return self.role_timeouts.get(role, self.timeout_seconds)
 
     def role_models(self) -> dict[LlmRole, str]:
         """The model of each role for the configured provider."""

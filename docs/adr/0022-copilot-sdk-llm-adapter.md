@@ -47,3 +47,11 @@ The runtime's own system prompt also carries coding-agent rules: answer in 100 w
 - The runtime silently ignores a section name it does not know (runtime 1.0.105), so the adapter checks each name against the SDK's `SYSTEM_MESSAGE_SECTIONS` and refuses to create the session otherwise.
 - The fixer's guardrails reject an edit with a placeholder `reason` (ADR 0021), so a placeholder plan is fed back and never reaches a proposal unnoticed.
 - Copilot's added system prompt is smaller: about 1,700 characters instead of about 4,300.
+
+## Amendment (stage 14c fix, 2026-11-04): no strict response format, and role timeouts
+
+With the sections above removed, the pilot reruns still got placeholder plans. Replaying one pilot's fixer prompt through the adapter at the production 60 s timeout gave 5 placeholder plans in 11 runs, each in one attempt of 4 to 15 s: no timeout, abort or retry was involved. The timeout is only the client's wait; the runtime never sees it. The placeholders came fast, with about 100 output tokens and often no reasoning: the model wrote straight into the strict schema and filled it minimally. Without the response format, 6 of 6 runs gave full plans, and with this amendment's adapter 9 of 9 on two pilots did. The writer's empty PR text on a pilot came back filled 3 of 3 times.
+
+- **Structured output** (replaces the decision above): the runtime's strict `responseFormat` is not sent. The prompt ends with a "Reply format" part holding the output type's closed JSON schema as text. The adapter still extracts the JSON object (the last fenced `json` block first) and validates it, with the same one retry. This reverses the rejected alternative "Putting the schema in the prompt instead of the response format".
+- `tool_instructions`, `runtime_instructions` and `last_instructions` are removed too. Without them the model once wrote a tool call as text before its reply, and the last one says "Respond concisely to the user".
+- **Role timeouts:** `llm.role_timeouts` gives a role its own wait instead of `timeout_seconds` (for both providers). The fixer's calls took up to 28 s on the pilots; `config.yaml` gives it 120 s. A timeout aborts the run and is always an error (retried, then recorded); a run's later output is never read.

@@ -43,6 +43,7 @@ class MakeClient(Protocol):
         timeout_seconds: float = 5,
         start_timeout_seconds: float = 5,
         max_retries: int = 2,
+        role_timeouts: dict[str, float] | None = None,
         **copilot: Any,
     ) -> Harness: ...
 
@@ -59,6 +60,7 @@ def make() -> Iterator[MakeClient]:
         timeout_seconds: float = 5,
         start_timeout_seconds: float = 5,
         max_retries: int = 2,
+        role_timeouts: dict[str, float] | None = None,
         **copilot_options: Any,
     ) -> Harness:
         copilot = FakeCopilot(steps=list(steps) or [PONG], **copilot_options)
@@ -69,6 +71,7 @@ def make() -> Iterator[MakeClient]:
             max_retries=max_retries,
             retry_backoff_seconds=1,
             max_prompt_chars=1000,
+            role_timeouts=role_timeouts or {},
         )
         sleeps: list[float] = []
         client = CopilotSdkLLMClient(
@@ -104,17 +107,38 @@ def test_a_valid_reply_is_parsed_into_the_output_type(make: MakeClient) -> None:
     assert make().client.complete("reviewer", PROMPT, Pong) == Pong(answer="pong")
 
 
-def test_the_prompt_is_sent_as_text_with_the_strict_schema(make: MakeClient) -> None:
+def test_the_prompt_is_sent_as_text_with_the_schema_at_the_end(make: MakeClient) -> None:
     harness = make()
 
     harness.client.complete("reviewer", PROMPT, Pong)
 
     [session] = harness.copilot.sessions()
     [sent] = session.sent
-    assert sent.prompt == PROMPT
-    assert sent.response_schema["required"] == ["answer"]
-    assert sent.response_schema["additionalProperties"] is False
+    assert sent.prompt.startswith(PROMPT + "\n\n# Reply format\n")
+    assert '"required":["answer"]' in sent.prompt
+    assert '"additionalProperties":false' in sent.prompt
     assert sent.timeout == 5
+
+
+def test_a_role_with_its_own_timeout_uses_it(make: MakeClient) -> None:
+    harness = make(PONG, role_timeouts={"judge": 120})
+
+    harness.client.complete("judge", PROMPT, Pong)
+    harness.client.complete("reviewer", PROMPT, Pong)
+
+    timeouts = [sent.timeout for session in harness.copilot.sessions() for sent in session.sent]
+    assert timeouts == [120, 5]
+
+
+def test_a_reply_after_a_timeout_comes_from_a_new_session(make: MakeClient) -> None:
+    harness = make(TimeoutError(), '{"answer": "late"}')
+
+    assert harness.client.complete("reviewer", PROMPT, Pong) == Pong(answer="late")
+
+    first, second = harness.copilot.sessions()
+    assert first.aborted and first.disconnected
+    assert len(first.sent) == 1
+    assert not second.aborted
 
 
 def test_sessions_get_no_tools_and_an_empty_temporary_working_directory(
@@ -197,7 +221,7 @@ def test_an_unreadable_reply_is_retried_once_with_the_problems_as_feedback(
 
     [session] = harness.copilot.sessions()
     first, retry = session.sent
-    assert first.prompt == PROMPT
+    assert first.prompt.startswith(PROMPT)
     assert "no JSON object" in retry.prompt
     assert "I think the answer" not in retry.prompt
 

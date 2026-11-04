@@ -37,6 +37,13 @@ REMOVED_SECTIONS = (
     "code_change_rules",
     # "Ask for guidance if uncertain": a session gets one prompt and must answer it.
     "guidelines",
+    # How to use the shell and file tools; without tools the model still wrote a tool call
+    # as text before its reply (stage 14c).
+    "tool_instructions",
+    # Progress updates, notifications and the runtime's session folder.
+    "runtime_instructions",
+    # "Respond concisely to the user", and iterating until a task is verified.
+    "last_instructions",
 )
 """The runtime's system-prompt sections every session removes; `safety` and the identity
 preamble stay."""

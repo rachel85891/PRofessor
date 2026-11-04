@@ -25,9 +25,7 @@ class Session(Protocol):
         """Call `handler` with every event of the session; returns the unsubscribe call."""
         ...
 
-    async def send_and_wait(
-        self, prompt: str, *, response_schema: dict[str, Any], timeout: float
-    ) -> SessionEvent | None:
+    async def send_and_wait(self, prompt: str, *, timeout: float) -> SessionEvent | None:
         """Send `prompt` and return the final assistant message event."""
         ...
 

@@ -79,6 +79,7 @@ def client(
     max_retries: int = 2,
     max_prompt_chars: int = 1000,
     temperature: float | None = 0,
+    role_timeouts: dict[str, float] | None = None,
 ) -> tuple[OpenAICompatibleLLMClient, list[float]]:
     sleeps: list[float] = []
     config = LlmClientConfig(
@@ -91,6 +92,7 @@ def client(
         retry_backoff_seconds=1,
         max_prompt_chars=max_prompt_chars,
         extra_body={"provider": {"data_collection": "deny", "require_parameters": True}},
+        role_timeouts=role_timeouts or {},
     )
     llm = OpenAICompatibleLLMClient(
         config,
@@ -116,6 +118,24 @@ def test_each_role_calls_its_own_model_with_the_routing_options() -> None:
     assert first["response_format"]["type"] == "json_schema"
     assert first["response_format"]["json_schema"]["name"] == "Pong"
     assert str(transport.requests[0].url) == "https://llm.test/api/v1/chat/completions"
+
+
+def test_a_role_with_its_own_timeout_uses_it() -> None:
+    transport = Transport(pong)
+    llm, _ = client(transport, role_timeouts={"judge": 30})
+
+    llm.complete("judge", PROMPT, Pong)
+    llm.complete("reviewer", PROMPT, Pong)
+
+    timeouts = [request.extensions["timeout"]["read"] for request in transport.requests]
+    assert timeouts == [30, 5]
+
+
+def test_a_timeout_names_the_roles_own_limit() -> None:
+    llm, _ = client(Transport(timeout), max_retries=0, role_timeouts={"judge": 30})
+
+    with pytest.raises(LLMError, match="did not answer within 30 s"):
+        llm.complete("judge", PROMPT, Pong)
 
 
 def test_no_temperature_is_sent_when_it_is_not_set() -> None:

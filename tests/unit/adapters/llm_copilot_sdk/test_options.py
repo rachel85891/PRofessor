@@ -71,6 +71,9 @@ def test_a_session_drops_the_runtimes_coding_agent_rules_and_keeps_safety(tmp_pa
             "tool_efficiency",
             "code_change_rules",
             "guidelines",
+            "tool_instructions",
+            "runtime_instructions",
+            "last_instructions",
         )
     }
     assert "safety" not in sections

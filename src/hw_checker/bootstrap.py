@@ -407,7 +407,8 @@ def llm_http_client(llm: LlmSettings) -> httpx2.Client:
     The SDK's default trusts only certifi's bundle, which rejects a TLS-inspecting
     proxy whose root certificate is installed in the system store.
     """
-    return httpx2.Client(verify=ssl.create_default_context(), timeout=llm.timeout_seconds)
+    longest = max([llm.timeout_seconds, *llm.role_timeouts.values()])
+    return httpx2.Client(verify=ssl.create_default_context(), timeout=longest)
 
 
 def build_code_host(settings: Settings) -> GitHubCodeHost:
@@ -458,6 +459,7 @@ def llm_config(llm: LlmSettings) -> LlmClientConfig:
         retry_backoff_seconds=llm.retry_backoff_seconds,
         max_prompt_chars=llm.max_prompt_chars,
         extra_body=llm.extra_body,
+        role_timeouts={str(role): seconds for role, seconds in llm.role_timeouts.items()},
     )
 
 
@@ -470,6 +472,7 @@ def copilot_config(llm: LlmSettings) -> CopilotClientConfig:
         max_retries=llm.max_retries,
         retry_backoff_seconds=llm.retry_backoff_seconds,
         max_prompt_chars=llm.max_prompt_chars,
+        role_timeouts={str(role): seconds for role, seconds in llm.role_timeouts.items()},
     )
 
 
