@@ -17,6 +17,13 @@ from hw_checker.domain import EditApplication, EditKind, NoteSection, PlannedEdi
 CODE_SUFFIX = ".cs"
 FORBIDDEN_TEXT = "File.Exists"
 BAD_REQUEST = "BadRequest("
+MIN_REASON_CHARS = 8
+"""A shorter `reason` is a placeholder, not the one sentence the plan asks for."""
+PLACEHOLDER_REASONS = frozenset(
+    {"placeholder", "no reason", "not applicable", "see above", "same as above", "to be added"}
+)
+"""Longer reasons that still only fill the field (compared lowercased, without a final
+period)."""
 _HEBREW = re.compile(r"[\u0590-\u05FF]")
 _LECTURER = re.compile(r"\blecturer", re.IGNORECASE)
 _FIX_MARKER = re.compile(r"^//\s*fix:", re.IGNORECASE)
@@ -100,6 +107,8 @@ def fallback_edit(fix: PlannedEdit) -> PlannedEdit | None:
 def _apply(
     edit: PlannedEdit, files: Mapping[str, bytes], texts: dict[str, str], rules: EditRules
 ) -> str | None:
+    if _placeholder(edit.reason):
+        return "the reason is empty or a placeholder; give one real sentence saying why"
     path = edit.file.replace("\\", "/")
     problem = _path_problem(path, files, edit.kind, rules)
     if problem:
@@ -113,6 +122,11 @@ def _apply(
     if edit.kind is EditKind.FINAL_NEWLINE:
         return _final_newline(path, text, texts)
     return _replace(path, text, edit, rules, texts)
+
+
+def _placeholder(reason: str) -> bool:
+    text = reason.strip()
+    return len(text) < MIN_REASON_CHARS or text.lower().rstrip(".") in PLACEHOLDER_REASONS
 
 
 def _path_problem(

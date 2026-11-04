@@ -64,6 +64,7 @@ STRONG_SEVERITIES = frozenset({Severity.MAJOR, Severity.CRITICAL})
 OPENING = "Hi! "
 """How every PR body starts (the approved PRs)."""
 NOTHING_TO_CHANGE = "The fixer found nothing to change, so there is no branch and no PR."
+ALL_REJECTED = "No PR: every edit the fixer planned was rejected ({reasons})."
 FIX_LABEL = "--fix"
 """Added to the repo id for the recheck's logs and containers: `<repo_id>--fix<attempt>`."""
 TRUNCATED = "\n... (cut here: the file is longer)"
@@ -472,7 +473,7 @@ class FixService:
         attempts: int,
     ) -> FixOutcome:
         """Commit the applied edits as one review commit on the review branch and save the
-        proposal (pending review, verified); with nothing applied, propose nothing.
+        proposal (pending review, verified); with nothing applied, propose nothing and say why.
 
         Raises:
             GitOperationError: the branch or the commit cannot be made (for example the
@@ -480,7 +481,9 @@ class FixService:
             StorageError: the diff or the proposal cannot be saved.
         """
         if not application.applied:
-            return FixOutcome(repo_id=repo.repo_id, attempts=attempts, reason=NOTHING_TO_CHANGE)
+            return FixOutcome(
+                repo_id=repo.repo_id, attempts=attempts, reason=_nothing_applied(application)
+            )
         copy = workspace.working_copy
         self._git.create_branch(copy, workspace.branch_name, workspace.base_sha)
         head = self._git.commit(
@@ -677,3 +680,11 @@ def _passing(assignments: tuple[Assignment, ...], results: Sequence[AssignmentRe
         for requirement in assignment.requirements
         if requirement.kind in DETERMINISTIC_KINDS and requirement.id not in failing
     }
+
+
+def _nothing_applied(application: EditApplication) -> str:
+    """Why there is no proposal: nothing was planned, or every planned edit was rejected."""
+    if not application.rejected:
+        return NOTHING_TO_CHANGE
+    reasons = dict.fromkeys(rejected.reason for rejected in application.rejected)
+    return ALL_REJECTED.format(reasons="; ".join(reasons))

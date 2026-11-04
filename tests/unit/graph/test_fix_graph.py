@@ -34,6 +34,14 @@ from tests.unit.services.fixer_data import (
 
 AVIGAIL = "avigail__api"
 NOTE_PLAN = FixPlan(edits=(NAMING_NOTE,), files_notes=())
+PLACEHOLDER_PLAN = FixPlan(
+    edits=(
+        BREAK_FIX.model_copy(update={"replace": "x", "reason": "x"}),
+        NAMING_NOTE.model_copy(update={"replace": "x", "reason": ""}),
+    ),
+    files_notes=(),
+)
+"""What the real model returned under Copilot's brevity rule (stage 14c)."""
 CONFIG: RunnableConfig = {"configurable": {"thread_id": "run-1"}}
 BROKEN = ExecutionResult(
     build_status=StepStatus.FAILED,
@@ -97,6 +105,39 @@ def test_rejected_edits_are_fed_back_and_the_second_plan_is_used(tmp_path: Path)
     report = harness.report_writer.repo_reports[-1]
     assert report.fix is not None and report.fix.attempts == 2
     assert proposal.pr_title == "HW1 review: small fixes and questions"
+
+
+def test_a_placeholder_plan_is_fed_back_and_the_real_second_plan_is_proposed(
+    tmp_path: Path,
+) -> None:
+    fixer = llm(PLACEHOLDER_PLAN, NOTE_PLAN)
+    harness = one_repo(tmp_path, fixer)
+
+    harness.run()
+
+    assert roles(fixer) == ["fixer", "fixer", "judge", "writer"]
+    assert "the reason is empty or a placeholder" in fixer.calls[1].prompt
+    [proposal] = harness.storage.proposals.list_for_run("run-1")
+    assert "camelCase" in proposal.diff
+
+
+def test_placeholder_plans_on_every_attempt_give_no_proposal_and_say_why(
+    tmp_path: Path,
+) -> None:
+    fixer = llm(PLACEHOLDER_PLAN, PLACEHOLDER_PLAN)
+    harness = one_repo(tmp_path, fixer)
+
+    output = harness.run()
+
+    assert roles(fixer)[:2] == ["fixer", "fixer"] and "writer" not in roles(fixer)
+    assert output["summary"].proposals == 0
+    assert harness.storage.proposals.list_for_run("run-1") == ()
+    report = harness.report_writer.repo_reports[-1]
+    assert report.fix is not None and report.fix.attempts == 2
+    assert report.fix.reason == (
+        "No PR: every edit the fixer planned was rejected (the reason is empty or a "
+        "placeholder; give one real sentence saying why)."
+    )
 
 
 def test_a_fix_that_never_clears_its_claim_falls_back_to_its_note(tmp_path: Path) -> None:

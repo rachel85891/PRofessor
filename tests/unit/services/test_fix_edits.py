@@ -138,6 +138,8 @@ def test_an_edit_that_does_not_fit_the_files_is_rejected(
             "                break;\n            case 2:\n",
             "never mentions the lecturer",
         ),
+        ("x", "needs a //fix: ... line directly above the changed code"),
+        ("", "needs a //fix: ... line directly above the changed code"),
     ],
     ids=[
         "no-marker",
@@ -148,6 +150,8 @@ def test_an_edit_that_does_not_fit_the_files_is_rejected(
         "bad-request",
         "hebrew",
         "lecturer",
+        "placeholder",
+        "empty",
     ],
 )
 def test_a_fix_that_breaks_a_rule_is_rejected(replace: str, reason: str) -> None:
@@ -196,8 +200,9 @@ def test_a_note_adds_only_comment_lines() -> None:
         ("    public int Id { get; set; }", "may only add // comment lines"),
         ("    // note\n    public int id { get; set; } = 0;", "may only add // comment lines"),
         ("    //fix: renamed\n    public int id { get; set; }", "must not carry a //fix: line"),
+        ("x", "may only add // comment lines and must leave the code unchanged"),
     ],
-    ids=["changes-code", "adds-code", "fix-marker"],
+    ids=["changes-code", "adds-code", "fix-marker", "placeholder"],
 )
 def test_a_note_that_changes_code_is_rejected(replace: str, reason: str) -> None:
     model = {"Models/User.cs": MODEL.encode()}
@@ -238,6 +243,21 @@ def test_a_final_newline_only_fixes_a_data_file_without_one(
     result = apply_edits(files(extra=extra), [edit(file=file, kind=EditKind.FINAL_NEWLINE)], RULES)
 
     assert reason in reasons(result)[0]
+
+
+@pytest.mark.parametrize("reason", ["", "   ", "x", "...", "TODO", "Placeholder.", "see above"])
+@pytest.mark.parametrize("kind", [EditKind.FIX, EditKind.NOTE, EditKind.FINAL_NEWLINE])
+def test_an_edit_without_a_real_reason_is_rejected(kind: EditKind, reason: str) -> None:
+    planned = edit(
+        kind=kind, reason=reason, file=DATA if kind is EditKind.FINAL_NEWLINE else CONTROLLER
+    )
+
+    result = apply_edits(files(), [planned], RULES)
+
+    assert result.files == {}
+    assert reasons(result) == [
+        "the reason is empty or a placeholder; give one real sentence saying why"
+    ]
 
 
 def test_edits_over_the_limit_are_rejected() -> None:
