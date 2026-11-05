@@ -30,6 +30,7 @@ from hw_checker.domain import (
     FixWorkspace,
     LlmUsage,
     NoteSection,
+    NotEvaluatedReason,
     PlannedEdit,
     PrSectionId,
     PullRequestText,
@@ -91,6 +92,7 @@ TRUNCATED = "\n... (cut here: the file is longer)"
 CALL_ID_LENGTH = 24
 _FILE_CLOSE = "</student_file>"
 _RESPONSE_CLOSE = "</app_response>"
+_LOG_CLOSE = "</app_log>"
 _DIFF_CLOSE = "</student_diff>"
 _KEPT_CLOSE = "</previous_edits>"
 
@@ -243,6 +245,7 @@ class FixService:
             "lenient_notes": [note for a in assignments for note in a.lenient_notes],
             "findings": _findings(results),
             "responses": _responses(results),
+            "windows_paths": _windows_paths(results),
             "feedback": list(feedback),
             "kept": _kept_text(kept),
             "attempt": attempt,
@@ -952,3 +955,21 @@ def _nothing_applied(application: EditApplication) -> str:
         return NOTHING_TO_CHANGE
     reasons = dict.fromkeys(rejected.reason for rejected in application.rejected)
     return ALL_REJECTED.format(reasons="; ".join(reasons))
+
+
+def _windows_paths(results: Sequence[AssignmentResult]) -> dict[str, object] | None:
+    """The `windows_path` requirements and the paths from the run log, for the prompt's
+    hint; None when there are none."""
+    entries = [
+        entry
+        for result in results
+        for entry in result.not_evaluated
+        if entry.reason is NotEvaluatedReason.WINDOWS_PATH
+    ]
+    if not entries:
+        return None
+    paths = dict.fromkeys(entry.detail for entry in entries if entry.detail)
+    return {
+        "requirements": [entry.requirement_id for entry in entries],
+        "paths": "\n".join(paths).replace(_LOG_CLOSE, "<\\/app_log>"),
+    }

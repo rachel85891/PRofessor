@@ -35,7 +35,11 @@ NOT_EVALUATED_REASONS: dict[NotEvaluatedReason, str] = {
         "not return, so it was not sent."
     ),
 }
-"""One sentence per reason a requirement was not checked."""
+"""One sentence per reason a requirement was not checked; the reasons in
+`TEMPLATE_WORDED_REASONS` are worded in the report template instead."""
+
+TEMPLATE_WORDED_REASONS = frozenset({NotEvaluatedReason.WINDOWS_PATH})
+"""Reasons whose sentence names a detail (such as a path), so the template words them."""
 
 FAILURE_KINDS: dict[FailureKind, str] = {
     FailureKind.BUILD_FAILED: "The project does not build.",

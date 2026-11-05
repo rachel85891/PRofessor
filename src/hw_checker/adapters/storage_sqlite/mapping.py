@@ -97,7 +97,9 @@ def repo_run_from_rows(
             ),
             not_evaluated=tuple(
                 NotEvaluated(
-                    requirement_id=item.requirement_id, reason=NotEvaluatedReason(item.reason)
+                    requirement_id=item.requirement_id,
+                    reason=NotEvaluatedReason(item.reason),
+                    detail=item.detail or "",
                 )
                 for item in not_evaluated
                 if item.result_assignment_id == assignment_id
@@ -159,6 +161,7 @@ def not_evaluated_rows(repo_run: RepoRunResult) -> list[NotEvaluatedRow]:
             position=position,
             requirement_id=entry.requirement_id,
             reason=entry.reason.value,
+            detail=entry.detail or None,
         )
         for result in repo_run.assignment_results
         for position, entry in enumerate(result.not_evaluated)

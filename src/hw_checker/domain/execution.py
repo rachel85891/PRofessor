@@ -3,7 +3,7 @@
 import re
 from enum import StrEnum
 from pathlib import Path
-from typing import Self
+from typing import Annotated, Self
 
 from pydantic import Field, model_validator
 
@@ -438,6 +438,9 @@ class ExecutionResult(DomainModel):
     serving_controllers: tuple[str, ...] = ()
     """Every controller that could serve at least one probe, sorted by name."""
     code_facts: CodeFacts | None = None
+    windows_paths: tuple[Annotated[str, Field(max_length=MAX_PATH_TEXT_CHARS)], ...] = ()
+    """Paths with a Windows folder separator that the app's run log names in a file or
+    directory exception; a 5xx answer may then be the Linux container's fault."""
     """Names declared in the student's code, for the naming checks; None when not read."""
 
     @property

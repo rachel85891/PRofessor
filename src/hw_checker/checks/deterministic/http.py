@@ -17,6 +17,7 @@ from hw_checker.checks.deterministic.messages import (
 )
 from hw_checker.domain import (
     CheckInput,
+    ExecutionResult,
     ExpectedJson,
     Finding,
     NotEvaluatedReason,
@@ -30,6 +31,8 @@ from hw_checker.domain import (
 UNJUDGEABLE_WHEN_NOT_SUCCESS = frozenset({ResponseShape.NOT_JSON, ResponseShape.EMPTY})
 ERROR_STATUS_MIN = 400
 """A failed request with a status from here on (4xx, 5xx) keeps its response as evidence."""
+SERVER_ERROR_MIN = 500
+"""A 5xx answer: with a Windows path in the run log, it may be the container's fault."""
 
 
 @dataclass(frozen=True)
@@ -53,6 +56,10 @@ def evaluate_http(check_input: CheckInput) -> tuple[Finding, ...] | NotEvaluated
     failing probe may be our environment's fault, so it is not evaluated instead. A probe
     that was not sent because none of its paths is declared in the code makes the whole
     requirement not evaluated (`route_not_found`): the route may just be named differently.
+    A request that failed with a 5xx while the run log names a path written with Windows
+    folder separators is not evaluated (`windows_path`): it likely works on Windows, so it is
+    not held against the student; neither is a probe left unsent because it needed a value
+    from such a request.
     A failing probe whose body did not fit the student's model (a field matched no property
     or could not be converted) is not evaluated either (`body_mismatch`): the request, not
     the student's code, may be what failed. A probe that was not sent because an earlier
@@ -84,6 +91,8 @@ def evaluate_http(check_input: CheckInput) -> tuple[Finding, ...] | NotEvaluated
     if any(result.route_resolution is RouteResolution.ROUTE_NOT_FOUND for result in results):
         return NotEvaluatedReason.ROUTE_NOT_FOUND
     if any(result.route_resolution is RouteResolution.DEPENDENCY_MISSING for result in results):
+        if _needs_a_windows_path_failure(execution, results):
+            return NotEvaluatedReason.WINDOWS_PATH
         return NotEvaluatedReason.DEPENDENCY_FAILED
     failures = [(result, failure) for result in results if (failure := _failure(result))]
     if not failures:
@@ -91,7 +100,9 @@ def evaluate_http(check_input: CheckInput) -> tuple[Finding, ...] | NotEvaluated
     if any(result.body_mismatched for result, _ in failures):
         return NotEvaluatedReason.BODY_MISMATCH
     if execution.has_unresolved_paths:
-        return NotEvaluatedReason.ENVIRONMENT_ISSUE
+        return NotEvaluatedReason.ENVIRONMENT_ISSUE  # a hard-coded path the run could not adapt
+    if execution.windows_paths and any(_server_error(result) for result, _ in failures):
+        return NotEvaluatedReason.WINDOWS_PATH
     lines = [failure.line for _, failure in failures]
     probes = Localized(
         he="\n".join(line.he for line in lines), en="\n".join(line.en for line in lines)
@@ -109,6 +120,29 @@ def evaluate_http(check_input: CheckInput) -> tuple[Finding, ...] | NotEvaluated
         deterministic_finding(
             check_input, header.render(probes=probes), facts, responses=responses
         ),
+    )
+
+
+def _server_error(result: ProbeResult) -> bool:
+    return result.actual_status is not None and result.actual_status >= SERVER_ERROR_MIN
+
+
+def _needs_a_windows_path_failure(execution: ExecutionResult, results: list[ProbeResult]) -> bool:
+    """True when a probe was not sent for want of a value whose capturing probe failed with
+    a 5xx while the run log names a Windows path."""
+    if not execution.windows_paths:
+        return False
+    needed = {
+        name
+        for result in results
+        if result.route_resolution is RouteResolution.DEPENDENCY_MISSING
+        for name in result.probe.variables_used
+    }
+    return any(
+        result.probe.capture is not None
+        and result.probe.capture.name in needed
+        and _server_error(result)
+        for result in execution.probe_results
     )
 
 

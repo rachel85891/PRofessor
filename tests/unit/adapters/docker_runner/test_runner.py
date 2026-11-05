@@ -958,3 +958,15 @@ def test_environment_values_are_never_logged(
         runner(FakeEngine()).execute(secret)
 
     assert all("hunter2" not in record.getMessage() for record in caplog.records)
+
+
+def test_the_run_log_s_windows_paths_are_kept_with_the_result(repo: Path, tmp_path: Path) -> None:
+    log = (
+        "      System.IO.FileNotFoundException: Could not find file "
+        "'/data/project/..\\data\\users.txt'.\n"
+    )
+    engine = FakeEngine(logs_by_kind={"app": log})
+
+    result = runner(engine).execute(request(repo, tmp_path))
+
+    assert result.windows_paths == ("/data/project/..\\data\\users.txt",)

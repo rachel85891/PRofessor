@@ -14,6 +14,8 @@ from hw_checker.domain import (
     CheckedCommit,
     CommitChoice,
     HttpMethod,
+    NotEvaluated,
+    NotEvaluatedReason,
     ProposalStatus,
     ResponseEvidence,
     ReviewOutcome,
@@ -205,3 +207,20 @@ def test_a_findings_response_evidence_is_saved_and_loaded_back(storage: SqlStora
 
     loaded = storage.runs.get(run.run_id).repo_runs[2].assignment_results[0].findings[0]
     assert loaded.responses == (answer,)
+
+
+def test_a_not_evaluated_detail_is_saved_and_loaded_back(storage: SqlStorage) -> None:
+    run = builders.full_run()
+    repo_run = run.repo_runs[2]
+    [result] = repo_run.assignment_results
+    skipped = NotEvaluated(
+        requirement_id="hw01-r9", reason=NotEvaluatedReason.WINDOWS_PATH, detail="a\\b.txt"
+    )
+    result = result.model_copy(update={"not_evaluated": (skipped,)})
+    repo_runs = (*run.repo_runs[:2], repo_run.model_copy(update={"assignment_results": (result,)}))
+    run = run.model_copy(update={"repo_runs": repo_runs})
+
+    storage.runs.save(run)
+
+    loaded = storage.runs.get(run.run_id).repo_runs[2].assignment_results[0].not_evaluated
+    assert loaded == (skipped,)

@@ -126,6 +126,7 @@ class NotEvaluatedRow(Base):
     position: Mapped[int] = mapped_column(Integer)
     requirement_id: Mapped[str] = mapped_column(ID_TYPE)
     reason: Mapped[str] = mapped_column(String(32), index=True)
+    detail: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
 class JudgedFindingRow(_FindingColumns, Base):

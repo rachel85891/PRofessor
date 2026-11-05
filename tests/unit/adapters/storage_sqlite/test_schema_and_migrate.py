@@ -67,7 +67,7 @@ def test_migrate_is_idempotent(tmp_path: Path) -> None:
     try:
         with db.engine.connect() as connection:
             versions = connection.execute(text("SELECT version_num FROM alembic_version")).all()
-        assert versions == [("0005",)]
+        assert versions == [("0006",)]
     finally:
         db.dispose()
 

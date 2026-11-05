@@ -215,6 +215,7 @@ def test_not_evaluated_reasons() -> None:
         "route_not_found",
         "body_mismatch",
         "dependency_failed",
+        "windows_path",
     }
 
 

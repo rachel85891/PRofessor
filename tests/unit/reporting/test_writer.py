@@ -11,6 +11,7 @@ from hw_checker.domain import (
     FailureKind,
     FixOutcome,
     HttpMethod,
+    NotEvaluated,
     NotEvaluatedReason,
     PublishOutcome,
     PublishRecord,
@@ -20,10 +21,12 @@ from hw_checker.domain.errors import StorageError
 from hw_checker.reporting.wording import (
     FAILURE_KINDS,
     NOT_EVALUATED_REASONS,
+    TEMPLATE_WORDED_REASONS,
     describe_checked_commit,
 )
 from hw_checker.reporting.writer import (
     COUNTS_COLUMNS,
+    TEMPLATES_DIR,
     MarkdownReportWriter,
     code_fence,
     table_cell,
@@ -286,6 +289,12 @@ def test_counts_file_keeps_hebrew_names(tmp_path: Path) -> None:
 
 @pytest.mark.parametrize("reason", list(NotEvaluatedReason))
 def test_every_not_evaluated_reason_has_a_sentence(reason: NotEvaluatedReason) -> None:
+    if reason in TEMPLATE_WORDED_REASONS:
+        assert reason not in NOT_EVALUATED_REASONS
+        assert f'item.reason_id == "{reason.value}"' in (
+            Path(TEMPLATES_DIR, "repo_report.md.j2").read_text(encoding="utf-8")
+        )
+        return
     sentence = NOT_EVALUATED_REASONS[reason]
     assert sentence[0].isupper() and sentence.endswith(".")
 
@@ -382,3 +391,25 @@ def test_the_repo_report_shows_the_apps_answer_to_a_failed_request(tmp_path: Pat
         '  {"errors":{"Name":["The Name field is required."]}}\n  ```\n'
     ) in text
     assert "  The app answered GET /api/users/1 with 500 and an empty body.\n" in text
+
+
+def test_the_repo_report_words_a_windows_path_with_the_path(tmp_path: Path) -> None:
+    report = data.full_report()
+    [first, *rest] = report.repo_run.assignment_results
+    skipped = NotEvaluated(
+        requirement_id="hw01-r9",
+        reason=NotEvaluatedReason.WINDOWS_PATH,
+        detail="/app/..\\data\\users.txt",
+    )
+    result = first.model_copy(update={"not_evaluated": (*first.not_evaluated, skipped)})
+    repo_run = report.repo_run.model_copy(update={"assignment_results": (result, *rest)})
+
+    path = MarkdownReportWriter(tmp_path).write_repo_report(
+        report.model_copy(update={"repo_run": repo_run})
+    )
+
+    text = path.read_text(encoding="utf-8")
+    assert (
+        "A request it needs answered with a server error after the app could not open "
+        "`/app/..\\data\\users.txt`: a path written with `\\` as the folder separator"
+    ) in text

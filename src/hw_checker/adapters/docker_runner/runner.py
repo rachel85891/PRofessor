@@ -66,6 +66,7 @@ from hw_checker.adapters.docker_runner.runner_config import (
     DockerRunnerConfig,
     FrameworkImages,
 )
+from hw_checker.adapters.docker_runner.windows_paths import windows_paths_in_log
 from hw_checker.config.logging_setup import log_context
 from hw_checker.domain import (
     BodyAdaptation,
@@ -509,6 +510,7 @@ class _Execution:
             logs_excerpt=excerpt_log(log),
             logs_path=self.request.logs_dir,
             probe_results=probe_results,
+            windows_paths=windows_paths_in_log(log),
         )
 
     def _wait_until_ready(self, app: str, sidecar: str, base_url: str) -> StepOutcome:

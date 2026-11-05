@@ -232,6 +232,11 @@ If step 2 or 3 finds several fields (for example both `userId` and `roleId`), no
 - When no field has a key's name, the one field whose name contains it is used, ignoring case, `_`, `-` and digits: `password` matches `LogInPassword`, `l_password` or `logpassword`. When several fields contain it (`name` in `FirstName` and `LastName`), nothing is guessed.
 - Required fields the body does not mention get placeholder values; an e-mail field gets an e-mail address.
 - A failing probe whose body had a key that fits no field (or a value that could not be converted) is "not evaluated" (reason `body_mismatch`), with the details shown to the reviewer.
+- The model is looked up in every project of the solution, since a student may keep it in a separate project (for example `Entities`). When several projects declare the name, the one the controller's `using` lines point to is used (or a `global using`, the controller's own namespace, or a namespace written in the parameter's type); otherwise the model is ambiguous and the body is sent as written.
+
+**When a request fails.** For a failed request answered with a 4xx or 5xx status, the start of the response body (up to 1,000 characters, cut after a whole word or line) is kept with the finding: the reviewer sees it in the report, and the fixer sees it as data. For a validation error it names the failing field.
+
+**Windows paths.** A path such as `"..\data\users.txt"` works on Windows, but in the Linux container `\` is part of a file name, so the request answers 500. When a request fails with a 5xx and the app's run log shows a `FileNotFoundException` or `DirectoryNotFoundException` for a path containing `\`, the requirement is "not evaluated" (reason `windows_path`, with the path from the log), and so are the requirements that need it: probes left unsent for a value it should have returned, and requirements whose `depends_on` reaches it and that failed. The fixer may add one note about it, as the course rule `windows-paths` says.
 
 **build**: The project builds and starts without crashing. No other fields are needed.
 

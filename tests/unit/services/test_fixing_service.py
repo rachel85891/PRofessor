@@ -11,6 +11,8 @@ from hw_checker.domain import (
     FixPlan,
     HttpMethod,
     NoteSection,
+    NotEvaluated,
+    NotEvaluatedReason,
     PlannedEdit,
     ProposalStatus,
     PullRequestText,
@@ -589,3 +591,20 @@ def test_without_failed_answers_the_prompt_has_no_response_section(tmp_path: Pat
     prompt = setup.service.plan_prompt(workspace, ASSIGNMENT, (ASSIGNMENT,), RESULTS, 1)
 
     assert "app_response" not in prompt
+
+
+def test_a_windows_path_is_a_hint_in_the_prompt_with_the_path_as_data(tmp_path: Path) -> None:
+    setup = FixerSetup(tmp_path)
+    workspace = setup.service.prepare(RUN_ID, "hw01", REPO, setup.fetched)
+    skipped = NotEvaluated(
+        requirement_id="hw01-update",
+        reason=NotEvaluatedReason.WINDOWS_PATH,
+        detail="/app/..\\data\\users.txt",
+    )
+    results = (AssignmentResult(assignment_id="hw01", not_evaluated=(skipped,)),)
+
+    prompt = setup.service.plan_prompt(workspace, ASSIGNMENT, (ASSIGNMENT,), results, 1)
+
+    assert "Not checked (`windows_path`): hw01-update." in prompt
+    assert "<app_log>\n/app/..\\data\\users.txt\n</app_log>\n" in prompt
+    assert "isn't a folder separator" in prompt  # the course rule's example

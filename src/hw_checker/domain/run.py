@@ -11,7 +11,7 @@ from pydantic import AwareDatetime, Field, model_validator
 
 from hw_checker.domain.assignment import SHA256_HEX_PATTERN, Severity
 from hw_checker.domain.base import DomainModel, Identifier, NonBlankStr
-from hw_checker.domain.execution import ExecutionResult
+from hw_checker.domain.execution import MAX_PATH_TEXT_CHARS, ExecutionResult
 from hw_checker.domain.findings import Finding, JudgedFinding
 from hw_checker.domain.fixes import FixOutcome, LlmUsage
 from hw_checker.domain.publishing import PublishRecord
@@ -38,6 +38,10 @@ class RunStatus(StrEnum):
     FAILED = "failed"
 
 
+MAX_NOT_EVALUATED_DETAIL_CHARS = 4 * MAX_PATH_TEXT_CHARS
+"""Upper bound for what a not-evaluated reason is about (a few paths)."""
+
+
 class NotEvaluatedReason(StrEnum):
     """Why a requirement could not be checked; none of these count against the student."""
 
@@ -51,13 +55,19 @@ class NotEvaluatedReason(StrEnum):
     """A failing probe's body had fields that do not fit the student's model."""
     DEPENDENCY_FAILED = "dependency_failed"
     """A probe needed a value an earlier probe failed to capture, so it was not sent."""
+    WINDOWS_PATH = "windows_path"
+    """A request failed with a 5xx while the app could not open a path written with
+    Windows folder separators, which likely works on Windows but not in the Linux
+    container (or a requirement depends on one that failed so)."""
 
 
 class NotEvaluated(DomainModel):
-    """A requirement that was not checked, and why."""
+    """A requirement that was not checked, and why. `detail` adds what the reason is
+    about, such as the paths of `windows_path`."""
 
     requirement_id: Identifier
     reason: NotEvaluatedReason
+    detail: str = Field(default="", max_length=MAX_NOT_EVALUATED_DETAIL_CHARS)
 
 
 class AssignmentResult(DomainModel):

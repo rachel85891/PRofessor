@@ -782,3 +782,27 @@ def test_only_4xx_and_5xx_answers_are_kept_as_response_evidence() -> None:
     [finding] = outcome
 
     assert [(r.status, r.body) for r in finding.responses] == [(500, "")]
+
+
+def test_an_unadapted_hard_coded_path_stays_an_environment_issue_before_a_windows_path() -> None:
+    crashed = result(GET_MISSING, 500)
+    execution = run_ok(crashed).model_copy(
+        update={
+            "path_rewrites": (UNRESOLVED,),
+            "windows_paths": ("/app/C:\\Projects\\Shop\\orders.txt",),
+        }
+    )
+
+    outcome = evaluate_http(check_input(HTTP_REQUIREMENT, execution))
+
+    assert outcome is NotEvaluatedReason.ENVIRONMENT_ISSUE
+
+
+def test_a_server_error_with_a_windows_path_in_the_log_is_not_evaluated() -> None:
+    execution = run_ok(result(GET_MISSING, 500)).model_copy(
+        update={"windows_paths": ("/app/..\\data\\users.txt",)}
+    )
+
+    outcome = evaluate_http(check_input(HTTP_REQUIREMENT, execution))
+
+    assert outcome is NotEvaluatedReason.WINDOWS_PATH

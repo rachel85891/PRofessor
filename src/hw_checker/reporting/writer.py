@@ -67,6 +67,8 @@ class _NotEvaluatedItem:
     requirement_id: str
     title: str
     reason: str
+    reason_id: str
+    detail: str
 
 
 @dataclass(frozen=True)
@@ -216,7 +218,9 @@ def _not_evaluated(report: RepoReport) -> list[_NotEvaluatedItem]:
         _NotEvaluatedItem(
             entry.requirement_id,
             _title(report, entry.requirement_id),
-            NOT_EVALUATED_REASONS[entry.reason],
+            NOT_EVALUATED_REASONS.get(entry.reason, ""),
+            entry.reason.value,
+            entry.detail,
         )
         for result in report.repo_run.assignment_results
         for entry in result.not_evaluated
