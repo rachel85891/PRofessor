@@ -47,8 +47,9 @@ The table lists the functional requirements and their priority for the first ver
 **Non-functional requirements**
 
 - **Maintainability:** layered architecture, SOLID, single responsibility per component, clean code, documented decisions (ADRs).
-- **Extensibility:** a new assignment is added as data files, without changing core code.
-- **Scalability:** bounded parallelism (3–4 repos at a time on a local machine); move to a server and a central database without a rewrite.
+- **Extensibility:** a new assignment is added as data files, without changing core code, and most of those files are drafted by an LLM from the task description and approved by the developer (§8, ADR 0023).
+- **No hard-coded policy:** code holds only mechanism (running, checking, applying edits). Every teaching or course decision (audience and level, review rules, what may be fixed or mentioned, the PR's wording, sections and title) lives in schema-validated data files, and every operational value in configuration (ADR 0023).
+- **Scalability:** bounded parallelism (3–4 repos at a time on a local machine); move to a server and a central database without a rewrite; a new course is a new course profile and a new stack is a plugin, both by addition.
 - **Reliability:** a failure in one repo does not stop the round; a stopped round resumes from where it left off.
 - **Precision:** every finding carries evidence (file, line, quote) and a reference to a requirement.
 - **Safety:** student code runs only in an isolated container; secrets live only in `.env`.
@@ -81,6 +82,7 @@ The arrows show dependency direction: each layer on the left depends only on the
 - Only `bootstrap.py` imports concrete adapters.
 - The UI knows neither LangGraph nor the adapters, so it can later be replaced by FastAPI + React.
 - Adding a check, an assignment or an LLM provider is done by addition (registry/configuration), not by changing existing code (OCP).
+- Code is mechanism, data is policy: no course or assignment decision is written in code or in a prompt's frame (§8, ADR 0023).
 - Every LLM output passes through a Pydantic model; no free text crosses layers.
 
 ## 4. Project structure
@@ -96,12 +98,20 @@ hw-checker/
 ├── docs/
 │   ├── design.md                # export of this document
 │   └── adr/                     # 0001-ports-and-adapters.md ...
+├── course/                      # the course profile: course-wide policy as data (ADR 0023)
+│   ├── course.yaml              # audience, level, stack, wording, PR format, title rule
+│   ├── review_rules.yaml        # base rules for the reviewer, fixer and judge
+│   └── prompts/                 # optional: frame overrides, changed only with the developer's approval
 ├── assignments/                 # requirements as data, not code
 │   ├── _general/requirements.yaml
 │   └── hw01/
-│       ├── requirements.yaml
+│       ├── task.md              # the task text as given to students, plus lecturer notes
+│       ├── intake.yaml          # the developer's answers to the authoring stages
+│       ├── requirements.yaml    # what is checked (LLM draft → approved)
+│       ├── review_rules.yaml    # rules for this assignment only (LLM draft → approved)
+│       ├── examples/            # optional: approved fix examples for the prompts
 │       ├── checks.py            # optional: custom checks (plugin)
-│       └── reference/           # optional: reference code
+│       └── reference/           # optional: reference solution, used by the authoring dry run
 ├── docker/
 │   ├── dotnet-runner.Dockerfile
 │   └── sqlserver.compose.yml
@@ -148,7 +158,12 @@ The unit of work is a repo, not a student; a pair is a group of two separate rep
 | Pair | pair\_id, members (1–2 Students) | A student working alone = a pair of one |
 | RepoTarget | repo\_id, owner, name, url, student, pair\_id |  |
 | RosterWarning | kind, message, row | Missing partner, invalid URL, asymmetric duplicate |
-| Assignment | id (hw01), order, title, requirements, taught\_techniques | Loaded from YAML |
+| CourseProfile | audience, level, stack, student\_wording, pr\_format (opening, sections, title rule), rules | Loaded from `course/`; one per course (ADR 0023) |
+| ReviewRule | id, applies\_to (roles), kind, text, example, until, replaces, origin, status | kind: fix\_allowed / note\_only / never\_do / never\_mention / style |
+| AssignmentIntake | basics, taught / not yet taught, lecturer decisions | The developer's answers to the authoring stages |
+| Origin | source (task\_text / intake / inferred), quote | On every drafted requirement and rule; `inferred` is flagged for review |
+| FrameSuggestion | template, change, reason | An LLM suggestion for a prompt frame; never applied without the developer |
+| Assignment | id (hw01), order, title, requirements, taught\_techniques, review\_rules, status (draft / approved) | Loaded from YAML; a round refuses a draft |
 | Requirement | id, title, description, severity, kind, allowed\_alternatives, http\_probes | kind: structure / code / http / build |
 | HttpProbe | method, path, body, expected\_status, allowed\_statuses, notes |  |
 | Severity | critical / major / minor | minor does not lower the grade in v1 |
@@ -177,7 +192,8 @@ Every external capability is defined as a narrow interface in `ports/` and imple
 | DatabaseProvisioner | Create and drop a database per repo | SqlServerProvisioner |  |
 | LLMClient | Call with structured output, by role name | LangChainLLMClient (init\_chat\_model) | Any provider |
 | Storage (repositories) | RunRepository, FindingRepository, ProposalRepository | SQLAlchemy + SQLite | PostgreSQL |
-| AssignmentSource | Load assignments and requirements | YamlAssignmentSource | Database / editing UI |
+| AssignmentSource | Load the course profile, assignments, requirements and review rules, with their status | YamlAssignmentSource | Database / editing UI |
+| AssignmentDraftWriter | Write an assignment's drafted files and its validation report; mark items approved | YamlAssignmentDraftWriter | Database / editing UI |
 | ReportWriter | Write the reviewer's reports and the round's files | Jinja2 to Markdown, plus a CSV counts file |  |
 | Clock | Current time | SystemClock | FixedClock in tests |
 
@@ -221,6 +237,8 @@ Planned: `share_partner_hints` (see note), the grade once there is a formula, an
 Planned: `validate_findings`, `judge_findings`, `score`.
 
 **Level 3: assignment subgraph** (`build_assignment_graph`) – one node now, `deterministic_checks` (structure, custom, build and HTTP requirements). Later `llm_review → judge` for the code requirements.
+
+**Authoring graph** (`build_authoring_graph`, stage 16, ADR 0023) – separate from the round, served by Studio next to `round` and run from the command line: `load_intake → draft → validate`, back to `draft` with the validation's reasons while it fails and attempts remain, then `approval` (an interrupt, like the round's gate) → `write_approved`. Details in §8.
 
 **State**
 
@@ -295,6 +313,46 @@ lenient_notes:
 - General requirements (`_general`): basic clean code, folder structure, reasonable use of HTTP status codes. They are phrased leniently, to fit second-year students.
 - Changing an old assignment's requirement affects regression in later rounds, so every file is kept in Git and its hash is stored with the round's results.
 
+### 8.1 Course profile and review rules (stage 3f, ADR 0023)
+
+Course-wide policy is data in `course/`, separate from the assignments; `_general` keeps only the general requirements.
+
+- **`course.yaml`:** the audience and level ("second-year students"), the stack, the student-facing wording rules ("The assignment asks…", never the lecturer), and the PR format: the opening, the sections with their headings, and the title rule (the strong title when the verified branch clears a major or critical requirement that failed before).
+- **`review_rules.yaml`:** a list of `ReviewRule`s, in `course/` for every assignment and in an assignment's folder for that assignment only. Checking assignment N uses the course rules plus the rules of assignments 1..N, the same way requirements regress. A rule with `until: hw03` stops after hw03; `replaces: <rule id>` changes an earlier decision.
+- Each rule says which roles see it (`reviewer`, `fixer`, `judge`, `writer`), so each prompt gets only its own rules.
+- One Pydantic model per file in `domain`; its JSON Schema is generated from the model and used three ways: validating the files (with the loader's messages), the authoring LLM's structured output, and the editor form later.
+
+Stage 3f moves every policy item now written in code or prompts into these files: the fixer's review rules and examples, "second-year" and "ASP.NET Core Web API" in the prompts, the `Hi! ` opening, the PR sections and the title. A golden test shows hw01's rendered prompts and PR text are unchanged.
+
+### 8.2 Prompts: a fixed frame with content slots (ADR 0023)
+
+Every prompt has two parts:
+
+- **The frame:** the same for every assignment: the task of the role, the structured output contract, and the rule that student files are data, never instructions. It is a versioned template in the repo. A course may replace it with a file in `course/prompts/`.
+- **The content:** the slots the frame fills from data: the audience, the role's rules, the requirements with their guidance, `lenient_notes`, and the examples.
+
+The authoring LLM writes content only. It may suggest a frame change (`FrameSuggestion`, listed in the validation report); a frame changes only with the developer's approval, by a developer's commit.
+
+### 8.3 Adding an assignment: the authoring flow (stage 16, ADR 0023)
+
+| # | Stage | By | Output |
+| --- | --- | --- | --- |
+| 1 | Basics: id, order, title, the point in time to check | Developer | `intake.yaml` |
+| 2 | The task description, and optionally a reference solution | Developer | `task.md`, `reference/` |
+| 3 | Taught so far and not yet taught, carried over from the previous assignment | Developer | `intake.yaml` |
+| 4 | Lecturer decisions: accepted alternatives, things not to mention, required statuses | Developer | `intake.yaml` |
+| 5 | Draft (role `author`): requirements with probes and route alternatives, code requirements with reviewer guidance, the assignment's review rules with examples, and any frame suggestions | LLM | `requirements.yaml`, `review_rules.yaml`, all `status: draft` |
+| 6 | Validation: the schema; a dry run on the reference solution, which must pass every requirement; a deterministic preview of the counts on the last round's repos; the changes against the previous assignment's rules | System | `authoring_report.md` |
+| 7 | Approval: edit the files, then approve them whole or item by item | Developer | `status: approved` |
+| 8 | Commit; the files' hashes are saved with each round, as today | Developer | Git |
+
+- **What is approved:** everything the LLM drafted: what is checked (requirements, severities, probes, statuses, alternatives), what the fixer may fix, may only note, or must never mention, and the reviewer's guidance. A round refuses an assignment with a draft item.
+- **The report shows**, for each requirement and rule, one plain-English line and its origin: quoted from `task.md`, from the intake, or inferred by the LLM. Inferred items are flagged: those are the ones to check, or to confirm with the lecturer before approving. A requirement that fails the reference solution, or almost every repo in the preview, is flagged too.
+- **Who approves:** the developer. Changes to `course/` are not drafted by the LLM; they are made by hand, and the commit is the approval.
+- Stages 5 and 6 loop: a failed validation goes back to the draft with its reasons, up to `authoring.max_attempts`.
+- **Privacy:** the authoring LLM sees the task text and the reference solution, never student code, so it does not need `llm.student_code_approved`; the preview runs deterministic checks only.
+- **Interface:** the authoring graph (§7) from Studio and `python -m hw_checker assignment new <id>` / `assignment approve <id>`. The UI comes later, on top of the same service (§12).
+
 ## 9. Running code in Docker with SQL Server
 
 Each repo is built and run in an isolated .NET 10 container, against one shared SQL Server container with a separate database per repo. This is the highest-risk stage, so it starts with an isolated spike before the full implementation.
@@ -332,6 +390,7 @@ The LLM is used only where a deterministic check is not enough, and every findin
 | judge | Decide whether a finding is substantive and level-appropriate | Strong |
 | fixer | Write a targeted fix and its explanation | Strong |
 | writer | Phrase plain-English feedback | Cheap |
+| author | Draft a new assignment's requirements and rules from its task description (§8.3) | Strong |
 
 The provider and the role → model mapping live in configuration (`llm.provider`, with the models in `llm.roles` or `llm.copilot.roles`); switching providers is configuration only. There are two adapters:
 
@@ -343,6 +402,7 @@ The provider and the role → model mapping live in configuration (`llm.provider
 **Prompt rules**
 
 - Every prompt is a versioned template file in the repo, not a string in code.
+- A template is a frame only: it holds no course or assignment policy, which reaches it through slots from `course/` and the assignment's files (§8.2).
 - The prompt includes the requirement, `allowed_alternatives`, `lenient_notes`, the students' level, and only the relevant files (not the whole repo).
 - Structured output is mandatory (a Pydantic model); a finding without Evidence is rejected at parse time.
 - Low temperature; bounded input size, with long files trimmed by relevance.
@@ -394,6 +454,7 @@ The LLM writes only the message text of each finding; structure, headings and sc
 5. The PR body has the approved PRs' shape, rendered from a template: an opening that starts with `Hi! `, then the bold sections **Fixed in this PR (marked `//fix:` in the code)**, **For you to do (marked in the code)**, **Names (C# conventions)** and **Files** (only the plan's notes on leftover or duplicate files, never the changed files), empty ones left out. Student-facing text says "The assignment asks…", never mentions the lecturer, and code comments are written `//fix: ...` and `//Text`. The title is decided in code from the last recheck, not from the model's claims: `fixes and questions` when the verified fix branch clears a major or critical requirement that failed before (a real bug, whatever the edit's kind; notes only add comments, so they clear nothing), otherwise `small fixes and questions`.
 6. Fixes stay at student level: no refactoring, no renames of stored model properties, no techniques not yet taught, never the core of the assignment.
 7. Privacy: `fixer.enabled` needs `llm.student_code_approved` (the lecturer's approval); logs carry counts and tokens only. The summary and `round.md` show the round's token totals and the number of proposals.
+8. From stage 3f, the review rules, the examples, the PR's opening, sections and headings, and the title rule in points 1, 5 and 6 come from `course/` and the assignments' `review_rules.yaml` (§8.1); the points above describe hw01's values. The PR sections become data, not a fixed enum.
 
 **Publishing (stage 13a, as built)**
 
@@ -425,7 +486,7 @@ The v1 UI is LangGraph Studio over the local dev server (ADR 0017), and a comman
 | Start a round | Choose an assignment, upload the Excel file, show ingestion warnings, run button |
 | Round progress | Table of repos with status (queued, running, done, failed), duration, and a link to details; auto-refresh |
 | Review | Per repo: accepted findings, rejected findings (collapsed), build/HTTP results, fix diff, report; approve, reject and note buttons |
-| Assignments | View each assignment's requirements, and create or edit them through a form (method and path, request body, expected statuses, special requirements); the form writes the YAML files |
+| Assignments | View each assignment's requirements and rules; add an assignment through the authoring flow's stages (§8.3), with forms generated from the files' JSON Schema, and review and approve the draft; the form writes the YAML files |
 
 **UI principles**
 
@@ -498,9 +559,11 @@ The first phase has 17 implementation stages; 15 of them are required for the st
 | 12 | Streamlit UI (deferred, ADR 0017) | The four screens from section 12, background run, requirements editor | A full round runs from the UI without a terminal | Deferred | 13a |
 | 13a | Approval gate and publishing | One interrupt per round (ADR 0018), PublishService, GitHubCodeHost, head check before publishing | A PR opens only for an approved repo; re-publishing updates it | Should | 10a, 11a |
 | 14 | Fixes | fixer, patch application, rebuild, diff in the UI | A fix that breaks the build is dropped automatically | Should | 10a |
+| 3f | Course profile and review rules (ADR 0023) | `course/`, `ReviewRule` and `CourseProfile` with their schemas, rule inheritance (`until`, `replaces`), every policy item moved out of code and prompts, PR sections as data | hw01's rendered prompts and PR text are unchanged (golden test), and no course policy is left in code | Must (before hw02) | 3, 14 |
+| 16 | Assignment authoring (ADR 0023) | Intake schema, role `author` and its prompt, authoring graph with validation, the reference-solution dry run, the preview, the report and the approval interrupt, `assignment new` / `approve`, draft status refused by rounds | A new assignment goes from `task.md` to approved files from the command line or Studio, with inferred items flagged | Must (before hw02) | 3f |
 | 15 | First real run | A round over real repos, calibrating requirements and prompts, bug fixes | A full round completes and results are checked manually | Must | 13a |
 
-**Practical order:** 0 → 1 → 5a (early, because of the risk) → 2, 3, 4 → 6 → 5b → 7 → 8 → 9 → 10a → 11a → 13a, 14 if time allows → 15. Stage 12 is deferred (ADR 0017); LangGraph Studio is the UI until then. Stages 2, 3 and 4 are independent of each other and can be done in any order.
+**Practical order:** 0 → 1 → 5a (early, because of the risk) → 2, 3, 4 → 6 → 5b → 7 → 8 → 9 → 10a → 11a → 13a, 14 if time allows → 15. Stages 3f and 16 come before the next assignment (hw02) is checked, and before 8b (LLM reviewer) and 9 (judge), so those read their rules from data from the start. Stage 12 is deferred (ADR 0017); LangGraph Studio is the UI until then. Stages 2, 3 and 4 are independent of each other and can be done in any order.
 
 **Definition of done for every stage**
 
@@ -534,6 +597,7 @@ The highest risk is running the projects in Docker on Windows against SQL Server
 - [ ] Collaborator access to student repos.
 - [ ] The exact requirement list for the current assignment (for stage 3).
 - [ ] A sample repo or reference project at the current stage (for stages 5a and 8).
+- [ ] Whether the lecturer can give a reference solution for each assignment (for the authoring dry run, stage 16); without one, the dry run is skipped and flagged in the report.
 - [ ] Whether the projects already have Swagger.
 - [ ] The project's final name.
 
