@@ -177,7 +177,7 @@ def test_without_git_state_not_committed_is_not_evaluated(tmp_path: Path) -> Non
 @pytest.mark.parametrize(
     ("text", "masked"),
     [
-        ("C:\\\\Users\\\\x\\\\db.txt", "C:\\\\…"),
+        ("C:\\\\Users\\\\x\\\\db.txt", "C:\\…"),
         ("D:/data/db.txt", "D:/…"),
         ("/home/someone/app/db.txt", "/home/…"),
         ("/Users/someone/db.txt", "/Users/…"),

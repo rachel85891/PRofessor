@@ -88,14 +88,17 @@ class Site:
         return resolve_reference(PurePosixPath(page.site_path).parent.as_posix(), value)
 
     def loaded_scripts(self, page: Page) -> tuple[str, ...]:
-        """The external scripts (paths relative to the client folder) `page` loads that
-        exist with that exact name."""
+        """The external scripts (paths relative to the client folder) `page` loads, with
+        letter case ignored: a name that differs only in case is `client_file_refs`'s
+        finding, and the script's own problems are still checked against the page."""
+        by_case = {path.casefold(): path for path in self.scripts}
         loaded = (
             self.resolve(page, reference.value)
             for reference in page.references
             if reference.tag == "script"
         )
-        return tuple(path for path in loaded if path is not None and path in self.scripts)
+        found = (by_case.get(path.casefold()) for path in loaded if path is not None)
+        return tuple(path for path in found if path is not None)
 
 
 def resolve_reference(page_folder: str, value: str) -> str | None:

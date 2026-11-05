@@ -155,8 +155,8 @@ def client_element_ids(check_input: CheckInput, params: ClientParams) -> tuple[F
             if any(_builds_ids(other) for other in scripts):
                 continue
             declared = frozenset().union(*(page.ids for page in pages))
-            for element_id, offset, literal_start in _lookups(script):
-                if element_id in declared or _mentioned(element_id, scripts, script, literal_start):
+            for element_id, offset, _ in _lookups(script):
+                if element_id in declared or _mentioned(element_id, scripts):
                     continue
                 line = script.line_of(offset)
                 example = LOCATED_EXAMPLE.render(item=code(element_id), file=script.path, line=line)
@@ -228,15 +228,16 @@ def _builds_ids(script: Script) -> bool:
     return False
 
 
-def _mentioned(element_id: str, scripts: list[Script], script: Script, lookup_start: int) -> bool:
-    """True when `element_id` appears as a word in a string of `scripts` other than the
-    lookup's own literal."""
+def _mentioned(element_id: str, scripts: list[Script]) -> bool:
+    """True when `element_id` appears as a word in the fixed text of a string of `scripts`
+    that is not a lookup's argument (as in `el.id = "x"` or `'<div id="x">'`)."""
     word = re.compile(rf"(?<![\w-]){re.escape(element_id)}(?![\w-])")
-    for other in scripts:
-        for literal in other.scan.literals:
-            if other is script and literal.start == lookup_start:
+    for script in scripts:
+        lookup_starts = {start for _, _, start in _lookups(script)}
+        for literal in script.scan.literals:
+            if literal.start in lookup_starts:
                 continue
-            if word.search(literal.text):
+            if any(part is not None and word.search(part) for part in literal.parts):
                 return True
     return False
 

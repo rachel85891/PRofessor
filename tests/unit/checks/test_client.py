@@ -327,3 +327,23 @@ def test_without_a_usable_route_table_fetch_routes_are_not_evaluated(tmp_path: P
     for table in (None, minimal):
         result = client_fetch_routes(check_input(tmp_path, execution(table)), PARAMS)
         assert result is NotEvaluatedReason.ENVIRONMENT_ISSUE
+
+
+def test_a_script_loaded_with_other_letter_case_is_still_checked(tmp_path: Path) -> None:
+    write(
+        tmp_path,
+        f"{WEB}/update.html",
+        page('<script src="Update.js"></script>', '<input id="name">'),
+    )
+    script = (
+        'const first = document.querySelector("#firstname");\n'
+        "const hello = `Hello ${user.firstname}`;\n"
+        'const again = document.querySelector("#firstname").value;\n'
+    )
+    write(tmp_path, f"{WEB}/update.js", script)
+
+    finding = only_finding(client_element_ids(check_input(tmp_path), PARAMS))
+
+    assert f"`firstname` ({WEB}/update.js, line 1)" in finding.message_en
+    assert f"`firstname` ({WEB}/update.js, line 3)" in finding.message_en
+    assert "Total: 2." in finding.message_en

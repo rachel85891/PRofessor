@@ -35,7 +35,7 @@ MAX_SOURCE_BYTES = 1_000_000
 GITIGNORE = ".gitignore"
 PROJECT_SUFFIXES = (".sln", ".slnx", ".csproj")
 MASK = "…"
-_DRIVE_PATH = re.compile(r"^\s*(?P<keep>[A-Za-z]:[\\/]+)\S")
+_DRIVE_PATH = re.compile(r"^\s*(?P<keep>[A-Za-z]:[\\/])[\\/]*\S")
 _HOME_PATH = re.compile(r"^\s*(?P<keep>/(?:home|Users)/)[^/\s]+/\S")
 
 
@@ -228,7 +228,9 @@ def _folder(path: str) -> str:
 
 
 def masked_path(text: str) -> str | None:
-    """`C:\\…` or `/home/…` when the literal `text` is a full disk path; None otherwise."""
+    """`C:\\…` or `/home/…` when the literal `text` is a full disk path; None otherwise.
+
+    One separator is kept, so a C# `"C:\\\\x"` (escaped backslash) shows as `C:\\…`."""
     for pattern in (_DRIVE_PATH, _HOME_PATH):
         match = pattern.match(text)
         if match is not None:
