@@ -67,6 +67,7 @@ from hw_checker.domain.findings import (
     Finding,
     FindingSource,
     JudgedFinding,
+    ResponseEvidence,
     Verdict,
 )
 from hw_checker.domain.fixes import (
@@ -214,6 +215,7 @@ __all__ = [
     "RepoTarget",
     "Requirement",
     "RequirementKind",
+    "ResponseEvidence",
     "ResponseShape",
     "ReviewDecision",
     "ReviewOutcome",

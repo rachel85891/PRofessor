@@ -16,8 +16,9 @@ MAX_LOGS_EXCERPT_CHARS = 8000
 MAX_PROBE_ERROR_CHARS = 500
 """Upper bound for the short error text of a single probe."""
 
-MAX_RESPONSE_EXCERPT_CHARS = 500
-"""Upper bound for the start of a probe's response body kept for the reviewer."""
+MAX_RESPONSE_EXCERPT_CHARS = 1000
+"""Upper bound for the start of a probe's response body kept for the reviewer and shown
+with a failed request (for a validation error, it names the failing field)."""
 
 MAX_CAPTURED_CHARS = 500
 """Upper bound for a value captured from a response."""

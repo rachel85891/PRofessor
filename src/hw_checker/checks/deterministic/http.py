@@ -21,12 +21,15 @@ from hw_checker.domain import (
     Finding,
     NotEvaluatedReason,
     ProbeResult,
+    ResponseEvidence,
     ResponseShape,
     RouteResolution,
     StepStatus,
 )
 
 UNJUDGEABLE_WHEN_NOT_SUCCESS = frozenset({ResponseShape.NOT_JSON, ResponseShape.EMPTY})
+ERROR_STATUS_MIN = 400
+"""A failed request with a status from here on (4xx, 5xx) keeps its response as evidence."""
 
 
 @dataclass(frozen=True)
@@ -99,7 +102,27 @@ def evaluate_http(check_input: CheckInput) -> tuple[Finding, ...] | NotEvaluated
         else HTTP_PROBES_FAILED
     )
     facts = tuple(failure.fact for _, failure in failures)
-    return (deterministic_finding(check_input, header.render(probes=probes), facts),)
+    responses = tuple(
+        evidence for result, _ in failures if (evidence := _response(result)) is not None
+    )
+    return (
+        deterministic_finding(
+            check_input, header.render(probes=probes), facts, responses=responses
+        ),
+    )
+
+
+def _response(result: ProbeResult) -> ResponseEvidence | None:
+    """The app's answer to a request that failed with a 4xx or 5xx status."""
+    status = result.actual_status
+    if status is None or status < ERROR_STATUS_MIN:
+        return None
+    return ResponseEvidence(
+        method=result.probe.method,
+        path=result.sent_path or result.probe.path,
+        status=status,
+        body=result.response_excerpt,
+    )
 
 
 def _failure(result: ProbeResult) -> _Failure | None:

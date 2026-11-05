@@ -33,6 +33,7 @@ from hw_checker.domain import (
     RepoRunResult,
     RepoRunStatus,
     RepoTarget,
+    ResponseEvidence,
     ReviewDecision,
     ReviewOutcome,
     Run,
@@ -132,6 +133,7 @@ def _finding_columns(finding: Finding, position: int) -> dict[str, Any]:
         "message_he": finding.message_he,
         "message_en": finding.message_en,
         "evidence": None if finding.evidence is None else finding.evidence.model_dump(mode="json"),
+        "responses": [response.model_dump(mode="json") for response in finding.responses],
     }
 
 
@@ -185,6 +187,7 @@ def finding_from_row(row: FindingRow | JudgedFindingRow) -> Finding:
         message_he=row.message_he,
         message_en=row.message_en,
         evidence=None if row.evidence is None else Evidence.model_validate(row.evidence),
+        responses=tuple(ResponseEvidence.model_validate(item) for item in row.responses or ()),
         source=FindingSource(row.source),
         confidence=row.confidence,
     )

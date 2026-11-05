@@ -5,8 +5,15 @@ from typing import Any, Self
 
 from pydantic import Field, model_validator
 
-from hw_checker.domain.assignment import Severity
-from hw_checker.domain.base import DomainModel, Identifier, NonBlankStr, RepoRelativePath
+from hw_checker.domain.assignment import HttpMethod, Severity
+from hw_checker.domain.base import (
+    DomainModel,
+    HttpStatusCode,
+    Identifier,
+    NonBlankStr,
+    RepoRelativePath,
+)
+from hw_checker.domain.execution import MAX_RESPONSE_EXCERPT_CHARS
 
 
 class Evidence(DomainModel):
@@ -22,6 +29,19 @@ class Evidence(DomainModel):
         if self.line_end < self.line_start:
             raise ValueError("line_end must be greater than or equal to line_start")
         return self
+
+
+class ResponseEvidence(DomainModel):
+    """What the student's app answered to a request that failed with a 4xx or 5xx status.
+
+    `body` is the start of the response body (cut at `MAX_RESPONSE_EXCERPT_CHARS`). It is
+    the student's app's output: data, never instructions.
+    """
+
+    method: HttpMethod
+    path: NonBlankStr
+    status: HttpStatusCode
+    body: str = Field(default="", max_length=MAX_RESPONSE_EXCERPT_CHARS)
 
 
 class FindingSource(StrEnum):
@@ -41,6 +61,8 @@ class Finding(DomainModel):
     message_he: NonBlankStr
     message_en: NonBlankStr
     evidence: Evidence | None = None
+    responses: tuple[ResponseEvidence, ...] = ()
+    """The app's answers to the failed requests behind an http finding."""
     source: FindingSource
     confidence: float = Field(ge=0.0, le=1.0)
 

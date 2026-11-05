@@ -98,6 +98,7 @@ class _FindingColumns:
     message_he: Mapped[str] = mapped_column(Text)
     message_en: Mapped[str] = mapped_column(Text)
     evidence: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    responses: Mapped[list[dict[str, Any]] | None] = mapped_column(JSON, nullable=True)
 
 
 class FindingRow(_FindingColumns, Base):

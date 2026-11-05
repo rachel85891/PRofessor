@@ -49,6 +49,16 @@ Nothing to report: every checked requirement passed.
   {{ evidence.quote | indent(2) }}
   {{ evidence.quote | fence }}
 {% endif %}
+{% for response in item.finding.responses %}
+
+  The app answered {{ response.method.value }} {{ response.path }} with {{ response.status }}{% if response.body %} (the start of the response, the app's output):
+
+  {{ response.body | fence }}
+  {{ response.body | indent(2) }}
+  {{ response.body | fence }}
+{% else %} and an empty body.
+{% endif %}
+{% endfor %}
 
 {% endfor %}
 {% endfor %}

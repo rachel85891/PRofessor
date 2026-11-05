@@ -1,6 +1,7 @@
 import pytest
 
 from hw_checker.adapters.docker_runner.http_response import (
+    CUT_MARKER,
     EXCERPT_CHARS,
     HttpResponse,
     excerpt,
@@ -58,4 +59,18 @@ def test_a_body_with_blank_lines_is_kept_whole() -> None:
 def test_excerpt_is_trimmed_and_bounded() -> None:
     assert excerpt('  {"id":3}\n') == '{"id":3}'
     long = excerpt("x" * 2000)
-    assert len(long) == EXCERPT_CHARS and long.endswith("...")
+    assert len(long) == EXCERPT_CHARS == 1000
+    assert long == "x" * (EXCERPT_CHARS - len(CUT_MARKER)) + CUT_MARKER
+
+
+def test_a_long_excerpt_is_cut_after_a_whole_word() -> None:
+    cut = excerpt(" ".join(["validation"] * 200))
+
+    assert len(cut) <= EXCERPT_CHARS
+    assert cut.endswith("validation" + CUT_MARKER)
+
+
+def test_a_body_that_fits_is_kept_whole() -> None:
+    body = '{"errors":{"Name":["The Name field is required."]}}'
+
+    assert excerpt(body) == body

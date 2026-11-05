@@ -28,6 +28,7 @@ TABLES = {
 }
 PUBLISHING_COLUMNS = {"base_sha", "head_sha", "local_repo_dir", "pr_title", "pr_body"}
 REPO_RUN_COLUMNS_SINCE_0004 = {"checked_commit"}
+FINDING_COLUMNS_SINCE_0005 = {"id", "responses"}
 
 
 def url_for(path: Path) -> str:
@@ -66,7 +67,7 @@ def test_migrate_is_idempotent(tmp_path: Path) -> None:
     try:
         with db.engine.connect() as connection:
             versions = connection.execute(text("SELECT version_num FROM alembic_version")).all()
-        assert versions == [("0004",)]
+        assert versions == [("0005",)]
     finally:
         db.dispose()
 
@@ -105,7 +106,13 @@ def test_migrate_upgrades_a_0001_database_and_keeps_its_rows(tmp_path: Path) -> 
                 if column.name not in REPO_RUN_COLUMNS_SINCE_0004 and column.name != "id"
             }
             session.execute(insert(RepoRunRow).values(**values))
-            session.add_all(mapping.finding_rows(old_repo_run))
+            for row in mapping.finding_rows(old_repo_run):
+                columns = {c.name: getattr(row, c.key) for c in FindingRow.__table__.columns}
+                session.execute(
+                    insert(FindingRow).values(
+                        **{k: v for k, v in columns.items() if k not in FINDING_COLUMNS_SINCE_0005}
+                    )
+                )
     finally:
         db.dispose()
 

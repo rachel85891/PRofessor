@@ -10,9 +10,11 @@ from hw_checker.domain import (
     CommitChoice,
     FailureKind,
     FixOutcome,
+    HttpMethod,
     NotEvaluatedReason,
     PublishOutcome,
     PublishRecord,
+    ResponseEvidence,
 )
 from hw_checker.domain.errors import StorageError
 from hw_checker.reporting.wording import (
@@ -353,3 +355,30 @@ def test_the_checked_commit_line_says_why_the_latest_was_checked(
     )
 
     assert expected in describe_checked_commit(checked)
+
+
+def test_the_repo_report_shows_the_apps_answer_to_a_failed_request(tmp_path: Path) -> None:
+    report = data.full_report()
+    [first, *rest] = report.repo_run.assignment_results
+    answer = ResponseEvidence(
+        method=HttpMethod.POST,
+        path="/api/users",
+        status=400,
+        body='{"errors":{"Name":["The Name field is required."]}}',
+    )
+    empty = ResponseEvidence(method=HttpMethod.GET, path="/api/users/1", status=500)
+    finding = first.findings[0].model_copy(update={"responses": (answer, empty)})
+    result = first.model_copy(update={"findings": (finding, *first.findings[1:])})
+    repo_run = report.repo_run.model_copy(update={"assignment_results": (result, *rest)})
+
+    path = MarkdownReportWriter(tmp_path).write_repo_report(
+        report.model_copy(update={"repo_run": repo_run})
+    )
+
+    text = path.read_text(encoding="utf-8")
+    assert (
+        "  The app answered POST /api/users with 400 (the start of the response, the app's "
+        "output):\n\n  ```\n"
+        '  {"errors":{"Name":["The Name field is required."]}}\n  ```\n'
+    ) in text
+    assert "  The app answered GET /api/users/1 with 500 and an empty body.\n" in text

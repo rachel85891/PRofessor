@@ -620,7 +620,7 @@ def test_probes_run_in_order_with_body_and_content_type(repo: Path, tmp_path: Pa
 
 
 def test_probe_records_a_short_response_excerpt(repo: Path, tmp_path: Path) -> None:
-    long_body = '{"id":3,"bio":"' + "x" * 1000 + '"}'
+    long_body = '{"id":3,"bio":"' + "x" * 2000 + '"}'
     engine = FakeEngine(
         probe_responses={
             ("POST", "/api/products"): (201, {"Location": "/api/products/3"}, long_body)
@@ -631,7 +631,7 @@ def test_probe_records_a_short_response_excerpt(repo: Path, tmp_path: Path) -> N
 
     post = result.probe_results[2]
     assert post.actual_status == 201
-    assert len(post.response_excerpt) == 500 and post.response_excerpt.startswith('{"id":3')
+    assert len(post.response_excerpt) == 1000 and post.response_excerpt.startswith('{"id":3')
     assert result.probe_results[0].response_excerpt == ""
 
 

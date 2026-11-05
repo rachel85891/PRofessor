@@ -27,6 +27,7 @@ from hw_checker.domain import (
     ProbeResult,
     Requirement,
     RequirementKind,
+    ResponseEvidence,
     ResponseShape,
     RouteResolution,
     Severity,
@@ -745,3 +746,39 @@ def test_every_judged_shape_has_a_name_in_both_languages() -> None:
     from hw_checker.checks.deterministic.messages import SHAPE_NAMES
 
     assert set(SHAPE_NAMES) == {shape.value for shape in ResponseShape} - {"cut"}
+
+
+# ---------------------------------------------------------------- response evidence
+
+VALIDATION_ERROR = (
+    '{"title":"One or more validation errors occurred.","errors":{"Name":["required"]}}'
+)
+
+
+def test_a_failed_request_keeps_the_start_of_the_response_as_evidence() -> None:
+    failed = result(CREATE, 400).model_copy(
+        update={"sent_path": "/api/products", "response_excerpt": VALIDATION_ERROR}
+    )
+    passed = result(GET_ALL, 200).model_copy(update={"response_excerpt": "[]"})
+
+    outcome = evaluate_http(check_input(HTTP_REQUIREMENT, run_ok(passed, failed)))
+    assert isinstance(outcome, tuple)
+    [finding] = outcome
+
+    assert finding.responses == (
+        ResponseEvidence(
+            method=HttpMethod.POST, path="/api/products", status=400, body=VALIDATION_ERROR
+        ),
+    )
+
+
+def test_only_4xx_and_5xx_answers_are_kept_as_response_evidence() -> None:
+    no_answer = result(CREATE, None)
+    redirect = result(GET_ALL, 302).model_copy(update={"response_excerpt": "moved"})
+    crashed = result(GET_MISSING, 500)
+
+    outcome = evaluate_http(check_input(HTTP_REQUIREMENT, run_ok(redirect, no_answer, crashed)))
+    assert isinstance(outcome, tuple)
+    [finding] = outcome
+
+    assert [(r.status, r.body) for r in finding.responses] == [(500, "")]

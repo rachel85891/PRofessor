@@ -90,6 +90,7 @@ FIX_LABEL = "--fix"
 TRUNCATED = "\n... (cut here: the file is longer)"
 CALL_ID_LENGTH = 24
 _FILE_CLOSE = "</student_file>"
+_RESPONSE_CLOSE = "</app_response>"
 _DIFF_CLOSE = "</student_diff>"
 _KEPT_CLOSE = "</previous_edits>"
 
@@ -241,6 +242,7 @@ class FixService:
             "requirements": [r for a in assignments for r in a.requirements],
             "lenient_notes": [note for a in assignments for note in a.lenient_notes],
             "findings": _findings(results),
+            "responses": _responses(results),
             "feedback": list(feedback),
             "kept": _kept_text(kept),
             "attempt": attempt,
@@ -818,6 +820,21 @@ def _findings(results: Sequence[AssignmentResult]) -> list[dict[str, str]]:
                 }
             )
     return found
+
+
+def _responses(results: Sequence[AssignmentResult]) -> list[dict[str, str]]:
+    """The app's answers to failed requests, with the data delimiter neutralized."""
+    return [
+        {
+            "requirement_id": finding.requirement_id,
+            "request": f"{response.method.value} {response.path}",
+            "status": str(response.status),
+            "body": response.body.replace(_RESPONSE_CLOSE, "<\\/app_response>"),
+        }
+        for result in results
+        for finding in result.findings
+        for response in finding.responses
+    ]
 
 
 def _sections(applied: Sequence[PlannedEdit]) -> dict[str, list[PlannedEdit]]:

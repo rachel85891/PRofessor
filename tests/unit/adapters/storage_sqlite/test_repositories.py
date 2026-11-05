@@ -13,7 +13,9 @@ from hw_checker.adapters.storage_sqlite import SqlStorage, migrate
 from hw_checker.domain import (
     CheckedCommit,
     CommitChoice,
+    HttpMethod,
     ProposalStatus,
+    ResponseEvidence,
     ReviewOutcome,
     Run,
 )
@@ -185,3 +187,21 @@ def test_the_checked_commit_and_the_branch_head_are_saved_and_loaded_back(
 
     assert storage.runs.get(run.run_id).repo_runs[2].checked_commit == checked
     assert storage.proposals.get("p-1").branch_head_sha == "5" * 40
+
+
+def test_a_findings_response_evidence_is_saved_and_loaded_back(storage: SqlStorage) -> None:
+    run = builders.full_run()
+    answer = ResponseEvidence(
+        method=HttpMethod.POST, path="/api/users", status=400, body='{"errors":{}}'
+    )
+    repo_run = run.repo_runs[2]
+    [result] = repo_run.assignment_results
+    finding = result.findings[0].model_copy(update={"responses": (answer,)})
+    result = result.model_copy(update={"findings": (finding,)})
+    repo_runs = (*run.repo_runs[:2], repo_run.model_copy(update={"assignment_results": (result,)}))
+    run = run.model_copy(update={"repo_runs": repo_runs})
+
+    storage.runs.save(run)
+
+    loaded = storage.runs.get(run.run_id).repo_runs[2].assignment_results[0].findings[0]
+    assert loaded.responses == (answer,)
