@@ -7,6 +7,7 @@ from typing import Self
 from pydantic import AwareDatetime, Field, model_validator
 
 from hw_checker.domain.base import DomainModel, Identifier, NonBlankStr
+from hw_checker.domain.vcs import CheckedCommit
 
 
 class PublishOutcome(StrEnum):
@@ -74,6 +75,8 @@ class PendingReview(DomainModel):
     """The proposal's diff, written next to the reports; None when the diff is empty."""
     last_attempt: PublishRecord | None = None
     """The last publish attempt, when an earlier approval failed to publish."""
+    checked_commit: CheckedCommit | None = None
+    """How the checked commit (the pull request's base) was chosen, when `ends_when` did."""
 
 
 class ReviewPrompt(DomainModel):

@@ -115,5 +115,6 @@ def test_a_rules_own_example_is_shown_after_the_examples(tmp_path: Path) -> None
     prompt = setup.service.plan_prompt(workspace, hw, (HW01, hw), RESULTS, 1)
 
     number = role_policy(COURSE, hw, (HW01, hw), ReviewRole.FIXER).rules.index(rule.text) + 1
-    assert f"Example 3. An edit that follows rule {number}.\n\n```json\n" in prompt
+    # The course's own rule examples come first; this one follows them.
+    assert f"Example 4. An edit that follows rule {number}.\n\n```json\n" in prompt
     assert '"find": "x;"' in prompt

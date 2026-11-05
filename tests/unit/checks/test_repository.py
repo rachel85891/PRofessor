@@ -7,6 +7,7 @@ from hw_checker.checks.deterministic.repository import (
     GitignoreCoversParams,
     NoAbsolutePathsParams,
     NotCommittedParams,
+    checked_files,
     gitignore_covers,
     masked_path,
     matched_unit,
@@ -233,3 +234,16 @@ def test_only_tracked_files_are_read(tmp_path: Path) -> None:
     assert no_absolute_paths(tracked, SOURCES) == ()
     (finding,) = no_absolute_paths(check_input(tmp_path), SOURCES)
     assert "Api/Generated.cs" in finding.message_en and "bin" not in finding.message_en
+
+
+def test_a_given_file_list_is_used_as_it_is(tmp_path: Path) -> None:
+    files = ("Api/Program.cs", "Api/bin/x.cs")
+    given = CheckInput(
+        repo_dir=tmp_path,
+        assignment=ASSIGNMENT,
+        requirement=REQUIREMENT,
+        files=files,
+        tracked=TrackedFiles(paths=()),
+    )
+
+    assert checked_files(given) == ("Api/Program.cs",)

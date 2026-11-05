@@ -25,7 +25,7 @@ from hw_checker.checks.deterministic.messages import (
     MessageTemplate,
 )
 from hw_checker.checks.deterministic.source_text import Literal, SourceScan, scan_source
-from hw_checker.checks.deterministic.structure import scan_repo
+from hw_checker.checks.deterministic.structure import repo_tree
 from hw_checker.checks.registry import check
 from hw_checker.domain import CheckInput, Evidence, Finding, NotEvaluatedReason, TrackedFiles
 
@@ -104,10 +104,11 @@ def matched_unit(pattern: str, path: str) -> str | None:
 
 
 def checked_files(check_input: CheckInput) -> tuple[str, ...]:
-    """The working copy's files (without bin/, obj/ and .git/) that git tracks; every file
-    when git's state was not read."""
-    files = scan_repo(check_input.repo_dir).files
-    if check_input.tracked is None:
+    """The files a check looks at (`repo_tree`, without bin/, obj/ and .git/): a given file
+    list as it is; otherwise the working copy's files that git tracks, or every file when
+    git's state was not read."""
+    files = repo_tree(check_input).files
+    if check_input.files is not None or check_input.tracked is None:
         return files
     tracked = set(check_input.tracked.paths)
     return tuple(path for path in files if path in tracked)

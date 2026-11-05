@@ -30,6 +30,7 @@ from hw_checker.domain import (
     FixWorkspace,
     LlmUsage,
     NoteSection,
+    NotEvaluatedReason,
     PlannedEdit,
     PrSectionId,
     PullRequestText,
@@ -90,6 +91,8 @@ FIX_LABEL = "--fix"
 TRUNCATED = "\n... (cut here: the file is longer)"
 CALL_ID_LENGTH = 24
 _FILE_CLOSE = "</student_file>"
+_RESPONSE_CLOSE = "</app_response>"
+_LOG_CLOSE = "</app_log>"
 _DIFF_CLOSE = "</student_diff>"
 _KEPT_CLOSE = "</previous_edits>"
 
@@ -184,6 +187,9 @@ class FixService:
         return FixWorkspace(
             working_copy=copy,
             base_sha=fetched.commit_sha,
+            branch_head_sha=None
+            if fetched.latest_sha == fetched.commit_sha
+            else fetched.latest_sha,
             branch_name=f"{BRANCH_PREFIX}{assignment_id}-{self._clock.now():%Y-%m-%d}",
         )
 
@@ -238,6 +244,8 @@ class FixService:
             "requirements": [r for a in assignments for r in a.requirements],
             "lenient_notes": [note for a in assignments for note in a.lenient_notes],
             "findings": _findings(results),
+            "responses": _responses(results),
+            "windows_paths": _windows_paths(results),
             "feedback": list(feedback),
             "kept": _kept_text(kept),
             "attempt": attempt,
@@ -652,6 +660,7 @@ class FixService:
             pr_body=body,
             diff=diff,
             verified=True,
+            branch_head_sha=workspace.branch_head_sha,
         )
         self._proposals.save(proposal)
         logger.info("Proposal saved: %d edits", len(application.applied))
@@ -816,6 +825,21 @@ def _findings(results: Sequence[AssignmentResult]) -> list[dict[str, str]]:
     return found
 
 
+def _responses(results: Sequence[AssignmentResult]) -> list[dict[str, str]]:
+    """The app's answers to failed requests, with the data delimiter neutralized."""
+    return [
+        {
+            "requirement_id": finding.requirement_id,
+            "request": f"{response.method.value} {response.path}",
+            "status": str(response.status),
+            "body": response.body.replace(_RESPONSE_CLOSE, "<\\/app_response>"),
+        }
+        for result in results
+        for finding in result.findings
+        for response in finding.responses
+    ]
+
+
 def _sections(applied: Sequence[PlannedEdit]) -> dict[str, list[PlannedEdit]]:
     """The applied edits by the writer's section they belong in: code and data changes under
     "fixed", and each note in the one section its plan gave it (a question without one)."""
@@ -931,3 +955,21 @@ def _nothing_applied(application: EditApplication) -> str:
         return NOTHING_TO_CHANGE
     reasons = dict.fromkeys(rejected.reason for rejected in application.rejected)
     return ALL_REJECTED.format(reasons="; ".join(reasons))
+
+
+def _windows_paths(results: Sequence[AssignmentResult]) -> dict[str, object] | None:
+    """The `windows_path` requirements and the paths from the run log, for the prompt's
+    hint; None when there are none."""
+    entries = [
+        entry
+        for result in results
+        for entry in result.not_evaluated
+        if entry.reason is NotEvaluatedReason.WINDOWS_PATH
+    ]
+    if not entries:
+        return None
+    paths = dict.fromkeys(entry.detail for entry in entries if entry.detail)
+    return {
+        "requirements": [entry.requirement_id for entry in entries],
+        "paths": "\n".join(paths).replace(_LOG_CLOSE, "<\\/app_log>"),
+    }

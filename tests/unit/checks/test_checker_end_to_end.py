@@ -111,6 +111,7 @@ def test_builtin_checks_are_registered() -> None:
     assert CheckRegistry(builtin_checks()).check_names() == {
         "file_exists",
         "folder_exists",
+        "project_count",
         "pascal_case_types",
         "pascal_case_properties",
         "pascal_case_methods",

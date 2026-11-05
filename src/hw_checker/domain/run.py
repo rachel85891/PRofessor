@@ -11,11 +11,12 @@ from pydantic import AwareDatetime, Field, model_validator
 
 from hw_checker.domain.assignment import SHA256_HEX_PATTERN, Severity
 from hw_checker.domain.base import DomainModel, Identifier, NonBlankStr
-from hw_checker.domain.execution import ExecutionResult
+from hw_checker.domain.execution import MAX_PATH_TEXT_CHARS, ExecutionResult
 from hw_checker.domain.findings import Finding, JudgedFinding
 from hw_checker.domain.fixes import FixOutcome, LlmUsage
 from hw_checker.domain.publishing import PublishRecord
 from hw_checker.domain.roster import RepoTarget
+from hw_checker.domain.vcs import CheckedCommit
 
 RUN_ID_SUFFIX_LENGTH = 6
 
@@ -37,6 +38,10 @@ class RunStatus(StrEnum):
     FAILED = "failed"
 
 
+MAX_NOT_EVALUATED_DETAIL_CHARS = 4 * MAX_PATH_TEXT_CHARS
+"""Upper bound for what a not-evaluated reason is about (a few paths)."""
+
+
 class NotEvaluatedReason(StrEnum):
     """Why a requirement could not be checked; none of these count against the student."""
 
@@ -50,13 +55,19 @@ class NotEvaluatedReason(StrEnum):
     """A failing probe's body had fields that do not fit the student's model."""
     DEPENDENCY_FAILED = "dependency_failed"
     """A probe needed a value an earlier probe failed to capture, so it was not sent."""
+    WINDOWS_PATH = "windows_path"
+    """A request failed with a 5xx while the app could not open a path written with
+    Windows folder separators, which likely works on Windows but not in the Linux
+    container (or a requirement depends on one that failed so)."""
 
 
 class NotEvaluated(DomainModel):
-    """A requirement that was not checked, and why."""
+    """A requirement that was not checked, and why. `detail` adds what the reason is
+    about, such as the paths of `windows_path`."""
 
     requirement_id: Identifier
     reason: NotEvaluatedReason
+    detail: str = Field(default="", max_length=MAX_NOT_EVALUATED_DETAIL_CHARS)
 
 
 class AssignmentResult(DomainModel):
@@ -87,6 +98,8 @@ class RepoRunResult(DomainModel):
     repo_run_id: Identifier
     repo: RepoTarget
     commit_sha: Identifier | None = None
+    checked_commit: CheckedCommit | None = None
+    """How `commit_sha` was chosen, for an assignment with `ends_when`."""
     status: RepoRunStatus
     execution: ExecutionResult | None = None
     assignment_results: tuple[AssignmentResult, ...] = ()
@@ -168,6 +181,8 @@ class RepoSummary(DomainModel):
     """The repo's reviewer report; None when it was not written."""
     publication: PublishRecord | None = None
     """The repo's last publish attempt in this round; None when it was not published."""
+    checked_commit: CheckedCommit | None = None
+    """How the checked commit was chosen, for an assignment with `ends_when`."""
 
     @classmethod
     def from_repo_run(cls, repo_run: RepoRunResult, report_path: Path | None = None) -> Self:
@@ -192,6 +207,7 @@ class RepoSummary(DomainModel):
             ),
             errors=repo_run.errors,
             report_path=report_path,
+            checked_commit=repo_run.checked_commit,
         )
 
 

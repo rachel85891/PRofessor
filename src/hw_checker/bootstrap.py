@@ -124,7 +124,8 @@ def build_graph_services(settings: Settings, fixer_llm: LLMClient | None = None)
         workspace / RUNS_FOLDER,
         settings.runner.logs_root,
     )
-    checks = DeterministicCheckService(DeterministicRequirementChecker(registry), git_client)
+    checker = DeterministicRequirementChecker(registry)
+    checks = DeterministicCheckService(checker, git_client)
     assignment_source = YamlAssignmentSource(settings.assignments_dir, settings.course_dir)
     fixing = (
         FixService(
@@ -157,7 +158,7 @@ def build_graph_services(settings: Settings, fixer_llm: LLMClient | None = None)
             )
         ),
         assignments=AssignmentCatalogService(assignment_source, registry),
-        fetch=RepoFetchService(git_client, workspace / CLONES_FOLDER),
+        fetch=RepoFetchService(git_client, workspace / CLONES_FOLDER, checker),
         execution=execution,
         checks=checks,
         run_records=RunRecordService(storage.runs, clock),

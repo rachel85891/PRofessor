@@ -7,6 +7,9 @@
 {% endif %}
 - Repo: {{ repo.url }}
 - Commit: {{ short_sha or "not fetched" }}
+{% if checked_commit %}
+- Checked commit: {{ checked_commit }}
+{% endif %}
 - Run: {{ report.run_id }}
 - Assignment: {{ report.assignment_id }}
 - Status: {{ report.repo_run.status.value }}
@@ -46,6 +49,16 @@ Nothing to report: every checked requirement passed.
   {{ evidence.quote | indent(2) }}
   {{ evidence.quote | fence }}
 {% endif %}
+{% for response in item.finding.responses %}
+
+  The app answered {{ response.method.value }} {{ response.path }} with {{ response.status }}{% if response.body %} (the start of the response, the app's output):
+
+  {{ response.body | fence }}
+  {{ response.body | indent(2) }}
+  {{ response.body | fence }}
+{% else %} and an empty body.
+{% endif %}
+{% endfor %}
 
 {% endfor %}
 {% endfor %}
@@ -54,7 +67,11 @@ Nothing to report: every checked requirement passed.
 ## Not evaluated
 
 {% for item in not_evaluated %}
+{% if item.reason_id == "windows_path" %}
+- **{{ item.requirement_id }}**: {{ item.title }}. A request it needs answered with a server error after the app could not open {% for path in item.detail.split(", ") %}`{{ path }}`{% if not loop.last %}, {% endif %}{% endfor %}: a path written with `\` as the folder separator, which works on Windows but not in the Linux container, so this was not held against the student. Check it by hand on Windows if needed.
+{% else %}
 - **{{ item.requirement_id }}**: {{ item.title }}. {{ item.reason }}
+{% endif %}
 {% endfor %}
 
 {% endif %}

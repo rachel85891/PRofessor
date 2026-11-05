@@ -39,15 +39,26 @@ class CheckSpec:
     name: str
     params_model: type[BaseModel]
     description: str
+    reads_file_list: bool = False
+    """True when the check looks at file names only, so it can run on `CheckInput.files`."""
 
 
 def check[F: CheckFunction](
-    name: str, params_model: type[BaseModel], description: str
+    name: str,
+    params_model: type[BaseModel],
+    description: str,
+    *,
+    reads_file_list: bool = False,
 ) -> Callable[[F], F]:
-    """Mark a function as the check `name`; return it unchanged. Registers nothing."""
+    """Mark a function as the check `name`; return it unchanged. Registers nothing.
+
+    `reads_file_list` marks a check that only looks at file names, so it can run on a
+    commit's file list (an assignment's `ends_when`) as well as on the working copy.
+    """
 
     def mark(function: F) -> F:
-        setattr(function, _SPEC_ATTRIBUTE, CheckSpec(name, params_model, description))
+        spec = CheckSpec(name, params_model, description, reads_file_list)
+        setattr(function, _SPEC_ATTRIBUTE, spec)
         return function
 
     return mark
@@ -115,6 +126,7 @@ class CheckRegistry:
                     _describe_field(field_name, field)
                     for field_name, field in registered.spec.params_model.model_fields.items()
                 ),
+                reads_file_list=registered.spec.reads_file_list,
             )
             for name, registered in sorted(self._checks.items())
         )

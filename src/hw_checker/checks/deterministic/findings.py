@@ -4,7 +4,7 @@ import hashlib
 from collections.abc import Iterable
 
 from hw_checker.checks.deterministic.messages import Localized
-from hw_checker.domain import CheckInput, Evidence, Finding, FindingSource
+from hw_checker.domain import CheckInput, Evidence, Finding, FindingSource, ResponseEvidence
 
 DETERMINISTIC_CONFIDENCE = 1.0
 ID_DIGEST_LENGTH = 16
@@ -15,6 +15,7 @@ def deterministic_finding(
     message: Localized,
     facts: Iterable[str],
     evidence: Evidence | None = None,
+    responses: tuple[ResponseEvidence, ...] = (),
 ) -> Finding:
     """A finding for `check_input.requirement`, with an id stable across re-runs.
 
@@ -32,6 +33,7 @@ def deterministic_finding(
         message_he=message.he,
         message_en=message.en,
         evidence=evidence,
+        responses=responses,
         source=FindingSource.DETERMINISTIC,
         confidence=DETERMINISTIC_CONFIDENCE,
     )

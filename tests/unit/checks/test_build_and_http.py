@@ -27,6 +27,7 @@ from hw_checker.domain import (
     ProbeResult,
     Requirement,
     RequirementKind,
+    ResponseEvidence,
     ResponseShape,
     RouteResolution,
     Severity,
@@ -745,3 +746,63 @@ def test_every_judged_shape_has_a_name_in_both_languages() -> None:
     from hw_checker.checks.deterministic.messages import SHAPE_NAMES
 
     assert set(SHAPE_NAMES) == {shape.value for shape in ResponseShape} - {"cut"}
+
+
+# ---------------------------------------------------------------- response evidence
+
+VALIDATION_ERROR = (
+    '{"title":"One or more validation errors occurred.","errors":{"Name":["required"]}}'
+)
+
+
+def test_a_failed_request_keeps_the_start_of_the_response_as_evidence() -> None:
+    failed = result(CREATE, 400).model_copy(
+        update={"sent_path": "/api/products", "response_excerpt": VALIDATION_ERROR}
+    )
+    passed = result(GET_ALL, 200).model_copy(update={"response_excerpt": "[]"})
+
+    outcome = evaluate_http(check_input(HTTP_REQUIREMENT, run_ok(passed, failed)))
+    assert isinstance(outcome, tuple)
+    [finding] = outcome
+
+    assert finding.responses == (
+        ResponseEvidence(
+            method=HttpMethod.POST, path="/api/products", status=400, body=VALIDATION_ERROR
+        ),
+    )
+
+
+def test_only_4xx_and_5xx_answers_are_kept_as_response_evidence() -> None:
+    no_answer = result(CREATE, None)
+    redirect = result(GET_ALL, 302).model_copy(update={"response_excerpt": "moved"})
+    crashed = result(GET_MISSING, 500)
+
+    outcome = evaluate_http(check_input(HTTP_REQUIREMENT, run_ok(redirect, no_answer, crashed)))
+    assert isinstance(outcome, tuple)
+    [finding] = outcome
+
+    assert [(r.status, r.body) for r in finding.responses] == [(500, "")]
+
+
+def test_an_unadapted_hard_coded_path_stays_an_environment_issue_before_a_windows_path() -> None:
+    crashed = result(GET_MISSING, 500)
+    execution = run_ok(crashed).model_copy(
+        update={
+            "path_rewrites": (UNRESOLVED,),
+            "windows_paths": ("/app/C:\\Projects\\Shop\\orders.txt",),
+        }
+    )
+
+    outcome = evaluate_http(check_input(HTTP_REQUIREMENT, execution))
+
+    assert outcome is NotEvaluatedReason.ENVIRONMENT_ISSUE
+
+
+def test_a_server_error_with_a_windows_path_in_the_log_is_not_evaluated() -> None:
+    execution = run_ok(result(GET_MISSING, 500)).model_copy(
+        update={"windows_paths": ("/app/..\\data\\users.txt",)}
+    )
+
+    outcome = evaluate_http(check_input(HTTP_REQUIREMENT, execution))
+
+    assert outcome is NotEvaluatedReason.WINDOWS_PATH

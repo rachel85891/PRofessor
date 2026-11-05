@@ -11,7 +11,11 @@ from hw_checker.checks.deterministic.repository import (
     no_absolute_paths,
     not_committed,
 )
-from hw_checker.checks.deterministic.structure import file_exists, folder_exists
+from hw_checker.checks.deterministic.structure import (
+    file_exists,
+    folder_exists,
+    project_count,
+)
 from hw_checker.checks.registry import CheckFunction
 
 REPOSITORY_CHECKS: tuple[CheckFunction, ...] = (gitignore_covers, not_committed, no_absolute_paths)
@@ -25,4 +29,11 @@ CLIENT_CHECKS: tuple[CheckFunction, ...] = (
 def builtin_checks() -> tuple[CheckFunction, ...]:
     """Every built-in registered check: the structure checks, the six naming checks, the
     repository checks and the client-file checks."""
-    return (file_exists, folder_exists, *NAMING_CHECKS, *REPOSITORY_CHECKS, *CLIENT_CHECKS)
+    return (
+        file_exists,
+        folder_exists,
+        project_count,
+        *NAMING_CHECKS,
+        *REPOSITORY_CHECKS,
+        *CLIENT_CHECKS,
+    )

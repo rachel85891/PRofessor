@@ -79,11 +79,31 @@ class AssignmentCatalogService:
         return [f"{label}: {draft}" for label, rules in sets for draft in rules.drafts]
 
     def _check_problems(self, assignments: tuple[Assignment, ...]) -> tuple[str, ...]:
-        return tuple(
+        problems = [
             f"{assignment.id}: requirement '{requirement.id}', check '{requirement.check}': "
             f"{problem}"
             for assignment in assignments
             for requirement in assignment.requirements
             if requirement.check is not None
             for problem in self._catalog.validate_params(requirement.check, requirement.params)
-        )
+        ]
+        for assignment in assignments:
+            problems.extend(self._end_problems(assignment))
+        return tuple(problems)
+
+    def _end_problems(self, assignment: Assignment) -> list[str]:
+        """`ends_when` names a known check that reads file names only, with valid params."""
+        end = assignment.ends_when
+        if end is None:
+            return []
+        prefix = f"{assignment.id}: ends_when, check '{end.check}'"
+        problems = self._catalog.validate_params(end.check, end.params)
+        if problems:
+            return [f"{prefix}: {problem}" for problem in problems]
+        file_list_checks = {d.name for d in self._catalog.describe() if d.reads_file_list}
+        if end.check not in file_list_checks:
+            return [
+                f"{prefix}: this check reads file contents; ends_when needs a check that "
+                f"looks at file names only ({', '.join(sorted(file_list_checks)) or 'none'})"
+            ]
+        return []

@@ -335,6 +335,56 @@ def test_log_works_without_configured_author(tmp_path: Path) -> None:
     assert unconfigured.log(tmp_path) == ()
 
 
+SHA = "a" * 40
+
+
+def own_copy(tmp_path: Path, output: str = "") -> FakeCommandRunner:
+    def respond(args: list[str]) -> subprocess.CompletedProcess[str]:
+        if args[:2] == ["rev-parse", "--show-toplevel"]:
+            return ok(str(tmp_path))
+        return ok(output)
+
+    return FakeCommandRunner(respond)
+
+
+def test_first_parent_history_asks_git_for_the_main_line_oldest_first(tmp_path: Path) -> None:
+    runner = own_copy(tmp_path)
+
+    assert client(runner).first_parent_history(tmp_path) == ()
+
+    log = runner.commands[-1]
+    assert log[log.index("log") :][:4] == ["log", "-z", "--first-parent", "--reverse"]
+
+
+def test_tree_files_lists_a_commit_without_checking_it_out(tmp_path: Path) -> None:
+    runner = own_copy(tmp_path, "Api/Api.csproj\0Entities/User.cs\0")
+
+    files = client(runner).tree_files(tmp_path, SHA)
+
+    assert files == ("Api/Api.csproj", "Entities/User.cs")
+    assert runner.commands == [["ls-tree", "-r", "-z", "--name-only", SHA]]
+
+
+def test_check_out_detaches_at_the_commit_and_cleans(tmp_path: Path) -> None:
+    runner = own_copy(tmp_path)
+
+    client(runner).check_out(tmp_path, SHA)
+
+    assert ["checkout", "--quiet", "--force", "--detach", SHA] in runner.commands
+    assert runner.commands[-1] == ["clean", "-ffdxq"]
+
+
+@pytest.mark.parametrize("bad", ["HEAD~1", "--orphan", "abc123"])
+def test_tree_files_and_check_out_take_full_shas_only(tmp_path: Path, bad: str) -> None:
+    runner = own_copy(tmp_path)
+
+    with pytest.raises(RepoUnavailableError, match="not a full commit sha"):
+        client(runner).tree_files(tmp_path, bad)
+    with pytest.raises(RepoUnavailableError, match="not a full commit sha"):
+        client(runner).check_out(tmp_path, bad)
+    assert runner.commands == []
+
+
 def test_tracked_files_lists_tracked_and_gitignore_matched_paths(tmp_path: Path) -> None:
     def respond(args: list[str]) -> subprocess.CompletedProcess[str]:
         if args[:2] == ["rev-parse", "--show-toplevel"]:

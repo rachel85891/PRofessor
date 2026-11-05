@@ -69,6 +69,14 @@ class FixProposal(DomainModel):
     diff: str = ""
     verified: bool
     status: ProposalStatus = ProposalStatus.PENDING_REVIEW
+    branch_head_sha: Identifier | None = None
+    """The student's branch head when the repo was fetched, when it is newer than
+    `base_sha`; None when the head itself was checked."""
+
+    @property
+    def expected_head(self) -> str:
+        """The branch head publishing expects: the head at fetch time."""
+        return self.branch_head_sha or self.base_sha
 
     def moved_to(self, status: ProposalStatus) -> Self:
         """Return this proposal in `status`.

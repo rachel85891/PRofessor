@@ -27,10 +27,35 @@ taught_techniques:            # optional; what has been taught up to this assign
   - routing attributes
 lenient_notes:                # optional; things the checker must not be strict about
   - Do not require async/await at this stage
+ends_when:                    # optional; when the student has started the next task
+  check: project_count
+  params:
+    min: 2
 requirements:                 # the list of requirements (may be empty: [])
   - id: hw01-r1
     ...
 ```
+
+## Which commit is checked (`ends_when`)
+
+Students keep working in the same repo, so by the time a round runs, a repo may already hold the next task. There is no deadline: a student who finishes late is still checked. Instead, an assignment may say when the next task has started:
+
+```yaml
+ends_when:
+  check: project_count   # a structure check that looks at file names only
+  params:
+    min: 2               # the next task (layers) adds a second project
+```
+
+`ends_when` takes the same `check` and `params` as a `structure` requirement, but only a check that looks at file names (`file_exists`, `folder_exists`, `project_count`); a check that reads the files' contents is refused when a round starts. The condition holds on a commit when its check passes there.
+
+When a round checks a repo, it walks the default branch's main line (first parents) from the oldest commit, reading each commit's file list without checking it out:
+
+- The **checked commit** is the last one before the first commit where `ends_when` holds. The build, the run, every check and the fixer's branch use it, so the pull request is based on that older commit.
+- If `ends_when` never holds, the latest commit is checked, as without `ends_when`.
+- If it already holds at the first commit (for example, the repo had two projects from the start), the commits cannot tell the tasks apart: the latest commit is checked, and the report says so.
+
+The repo report and the approval gate show the checked commit, its date, the commit where the next task started and how many commits came after it. Publishing refuses a pull request only when the branch moved after the round, not because the checked commit is older than the head.
 
 ## Requirement fields
 
@@ -96,8 +121,9 @@ The available checks:
 | --- | --- | --- |
 | `file_exists` | `glob` (required), `min_count` (optional, default 1) | At least `min_count` files match `glob`. In `glob`, `**/` means "in any folder", `*` matches part of a name, and `?` one character. |
 | `folder_exists` | `path` (required), for example `Controllers` or `src/Models` | A folder with that path exists, at any depth (projects often sit in a subfolder). |
+| `project_count` | `min` (required, 1 or more) | At least `min` projects (`.csproj` files) exist, at any depth. |
 
-Both checks ignore upper and lower case (`controllers/` matches `Controllers`), skip `bin/`, `obj/` and `.git/`, and only read the files; nothing from the student's repo is run. `glob` and `path` are relative to the repository root, with forward slashes, and may not contain `..`.
+These checks ignore upper and lower case (`controllers/` matches `Controllers`), skip `bin/`, `obj/` and `.git/`, and only read the files; nothing from the student's repo is run. `glob` and `path` are relative to the repository root, with forward slashes, and may not contain `..`.
 
 **code**: reviewed by reading the code. Evidence is required for every finding.
 
@@ -206,6 +232,11 @@ If step 2 or 3 finds several fields (for example both `userId` and `roleId`), no
 - When no field has a key's name, the one field whose name contains it is used, ignoring case, `_`, `-` and digits: `password` matches `LogInPassword`, `l_password` or `logpassword`. When several fields contain it (`name` in `FirstName` and `LastName`), nothing is guessed.
 - Required fields the body does not mention get placeholder values; an e-mail field gets an e-mail address.
 - A failing probe whose body had a key that fits no field (or a value that could not be converted) is "not evaluated" (reason `body_mismatch`), with the details shown to the reviewer.
+- The model is looked up in every project of the solution, since a student may keep it in a separate project (for example `Entities`). When several projects declare the name, the one the controller's `using` lines point to is used (or a `global using`, the controller's own namespace, or a namespace written in the parameter's type); otherwise the model is ambiguous and the body is sent as written.
+
+**When a request fails.** For a failed request answered with a 4xx or 5xx status, the start of the response body (up to 1,000 characters, cut after a whole word or line) is kept with the finding: the reviewer sees it in the report, and the fixer sees it as data. For a validation error it names the failing field.
+
+**Windows paths.** A path such as `"..\data\users.txt"` works on Windows, but in the Linux container `\` is part of a file name, so the request answers 500. When a request fails with a 5xx and the app's run log shows a `FileNotFoundException` or `DirectoryNotFoundException` for a path containing `\`, the requirement is "not evaluated" (reason `windows_path`, with the path from the log), and so are the requirements that need it: probes left unsent for a value it should have returned, and requirements whose `depends_on` reaches it and that failed. The fixer may add one note about it, as the course rule `windows-paths` says.
 
 **build**: The project builds and starts without crashing. No other fields are needed.
 

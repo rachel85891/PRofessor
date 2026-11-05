@@ -51,6 +51,13 @@ class RequirementEntry(_FileModel):
     depends_on: list[str] = []
 
 
+class EndsWhenEntry(_FileModel):
+    """When the student has started the next task: a structure check and its params."""
+
+    check: str
+    params: dict[str, Any] = {}
+
+
 class AssignmentFile(_FileModel):
     """The whole requirements.yaml file of one assignment.
 
@@ -63,4 +70,5 @@ class AssignmentFile(_FileModel):
     title: str
     taught_techniques: list[str] = []
     lenient_notes: list[str] = []
+    ends_when: EndsWhenEntry | None = None
     requirements: list[Any] = []

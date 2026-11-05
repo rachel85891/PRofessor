@@ -49,6 +49,7 @@ class DeterministicCheckService:
         findings: list[Finding] = []
         not_evaluated: list[NotEvaluated] = []
         tracked = self._tracked_files(repo_dir)
+        paths = ", ".join(execution.windows_paths) if execution else ""
         for requirement in assignment.requirements:
             if requirement.kind not in DETERMINISTIC_KINDS:
                 continue
@@ -61,13 +62,20 @@ class DeterministicCheckService:
             )
             outcome = self._check(requirement, check_input)
             if isinstance(outcome, NotEvaluatedReason):
-                not_evaluated.append(NotEvaluated(requirement_id=requirement.id, reason=outcome))
+                detail = paths if outcome is NotEvaluatedReason.WINDOWS_PATH else ""
+                not_evaluated.append(
+                    NotEvaluated(requirement_id=requirement.id, reason=outcome, detail=detail)
+                )
             else:
                 findings.extend(outcome)
-        return AssignmentResult(
-            assignment_id=assignment.id,
-            findings=tuple(findings),
-            not_evaluated=tuple(not_evaluated),
+        return _windows_path_dependents(
+            assignment,
+            AssignmentResult(
+                assignment_id=assignment.id,
+                findings=tuple(findings),
+                not_evaluated=tuple(not_evaluated),
+            ),
+            paths,
         )
 
     def _tracked_files(self, repo_dir: Path) -> TrackedFiles | None:
@@ -99,3 +107,54 @@ class DeterministicCheckService:
                 extra={"requirement_id": requirement.id},
             )
             return NotEvaluatedReason.ENVIRONMENT_ISSUE
+
+
+def _windows_path_dependents(
+    assignment: Assignment, result: AssignmentResult, paths: str
+) -> AssignmentResult:
+    """A requirement that failed or was not evaluated while it depends (`depends_on`, also
+    through others) on a `windows_path` requirement is `windows_path` too: its failure is
+    likely the same container problem."""
+    reached = {
+        entry.requirement_id
+        for entry in result.not_evaluated
+        if entry.reason is NotEvaluatedReason.WINDOWS_PATH
+    }
+    depends = {
+        requirement.id: set(requirement.depends_on) for requirement in assignment.requirements
+    }
+    while True:
+        more = {item for item, needs in depends.items() if needs & reached} - reached
+        if not more:
+            break
+        reached |= more
+    failing = [finding.requirement_id for finding in result.findings]
+    failing += [entry.requirement_id for entry in result.not_evaluated]
+    moved = [
+        requirement_id
+        for requirement_id in dict.fromkeys(failing)
+        if requirement_id in reached and requirement_id not in _windows(result)
+    ]
+    if not moved:
+        return result
+    kept = [entry for entry in result.not_evaluated if entry.requirement_id not in moved]
+    added = [
+        NotEvaluated(
+            requirement_id=requirement_id, reason=NotEvaluatedReason.WINDOWS_PATH, detail=paths
+        )
+        for requirement_id in moved
+    ]
+    return result.model_copy(
+        update={
+            "findings": tuple(f for f in result.findings if f.requirement_id not in moved),
+            "not_evaluated": tuple(kept + added),
+        }
+    )
+
+
+def _windows(result: AssignmentResult) -> set[str]:
+    return {
+        entry.requirement_id
+        for entry in result.not_evaluated
+        if entry.reason is NotEvaluatedReason.WINDOWS_PATH
+    }
