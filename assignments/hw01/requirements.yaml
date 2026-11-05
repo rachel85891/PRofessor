@@ -3,7 +3,7 @@
 # Updated by the developer on 2026-10-26 (lecturer input): DELETE not required, PUT required, wrong login returns 204, content checks added.
 # Updated by the developer on 2026-10-28 (lecturer input): GET all not required, PUT returns Ok().
 # Updated by the developer on 2026-10-29: update-then-read-back and login-returns-user added (from the manual review).
-# Stage 14d: depends_on added (to be reviewed by the developer).
+# Stage 14d: depends_on added (approved by the developer on 2026-11-05).
 # taught_techniques: to be filled from the course slides.
 id: hw01
 order: 1
