@@ -7,11 +7,11 @@ repos:
     hooks:
       - id: trailing-whitespace
         # Golden prompts are compared byte for byte; a diff's context lines end in a space.
-        exclude: ^tests/unit/services/golden/hw01/
+        exclude: ^tests/unit/services/golden/
       - id: end-of-file-fixer
         # This fixture's bug is its data file's missing final newline (stage 14); golden
         # prompts are compared byte for byte.
-        exclude: ^(tests/fixtures/sample_webapi_no_final_newline/.*users\.txt|tests/unit/services/golden/hw01/.*)$
+        exclude: ^(tests/fixtures/sample_webapi_no_final_newline/.*users\.txt|tests/unit/services/golden/.*)$
       - id: check-yaml
       - id: check-added-large-files
       - id: mixed-line-ending

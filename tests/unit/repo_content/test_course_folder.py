@@ -26,11 +26,18 @@ MOVED = (
     "The assignment asks",
     "PropertyNameCaseInsensitive",
     "Why isn't it implemented",
+    # Stage 18: the client file types and the C#-only text left in 3f.
+    "<!--fix:",
+    "camelCase",
+    "onclick",
+    "C# conventions",
+    "{ get; set; }",
 )
-"""Policy moved to course/ and assignments/hw01/ in stage 3f."""
+"""Policy moved to course/ and assignments/hw01/ in stages 3f and 18."""
 DESCRIBING = {
     ("domain/course.py", "Hi! "),
     ("domain/course.py", "second-year"),
+    ("domain/course.py", "<!--fix:"),
 }
 """Docstrings that only describe the data format with an example of its value."""
 
