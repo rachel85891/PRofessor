@@ -258,6 +258,50 @@ ABSOLUTE_PATHS = MessageTemplate(
     ),
 )
 
+CLIENT_FILE_REFS = MessageTemplate(
+    name="CLIENT_FILE_REFS",
+    he="דפים מפנים לקבצים שלא קיימים, ולכן הדף לא יעבוד: {examples}. סך הכול: {count}.",
+    en="Pages refer to files that do not exist, so the page breaks: {examples}. Total: {count}.",
+)
+
+CLIENT_REF_MISSING = MessageTemplate(
+    name="CLIENT_REF_MISSING",
+    he="{ref} ({file}, שורה {line}): אין קובץ כזה",
+    en="{ref} ({file}, line {line}): no such file",
+)
+
+CLIENT_REF_CASE = MessageTemplate(
+    name="CLIENT_REF_CASE",
+    he=(
+        "{ref} ({file}, שורה {line}): שם הקובץ הוא {actual}; על שרת יש הבדל בין "
+        "אותיות גדולות לקטנות"
+    ),
+    en=(
+        "{ref} ({file}, line {line}): the file is named {actual}; a server tells upper "
+        "and lower case apart"
+    ),
+)
+
+CLIENT_ELEMENT_IDS = MessageTemplate(
+    name="CLIENT_ELEMENT_IDS",
+    he=(
+        "סקריפטים מחפשים אלמנט לפי id שאף דף שטוען אותם לא מגדיר, ולכן החיפוש מחזיר null: "
+        "{examples}. סך הכול: {count}."
+    ),
+    en=(
+        "Scripts look up an element id that no page loading them declares, so the lookup "
+        "returns null: {examples}. Total: {count}."
+    ),
+)
+
+CLIENT_FETCH_ROUTES = MessageTemplate(
+    name="CLIENT_FETCH_ROUTES",
+    he="בקשות בקוד הלקוח שלא מתאימות לאף נתיב שה-API מגדיר: {examples}. סך הכול: {count}.",
+    en="Requests in the client code that match no route the API declares: {examples}. "
+    "Total: {count}.",
+)
+
+
 SHAPE_NAMES: dict[str, Localized] = {
     "object": Localized(he="אובייקט", en="an object"),
     "array_of_objects": Localized(he="רשימה של אובייקטים", en="a list of objects"),
@@ -298,4 +342,9 @@ ALL_TEMPLATES: tuple[MessageTemplate, ...] = (
     GITIGNORE_NOT_COVERING,
     NOT_COMMITTED,
     ABSOLUTE_PATHS,
+    CLIENT_FILE_REFS,
+    CLIENT_REF_MISSING,
+    CLIENT_REF_CASE,
+    CLIENT_ELEMENT_IDS,
+    CLIENT_FETCH_ROUTES,
 )
