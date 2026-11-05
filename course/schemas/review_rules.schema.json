@@ -45,6 +45,14 @@
           "title": "Files",
           "type": "array"
         },
+        "when_found": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "When Found",
+          "type": "array"
+        },
         "until": {
           "anyOf": [
             {
@@ -215,6 +223,14 @@
             "type": "string"
           },
           "title": "Files",
+          "type": "array"
+        },
+        "when_found": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "When Found",
           "type": "array"
         },
         "until": {

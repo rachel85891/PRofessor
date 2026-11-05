@@ -113,8 +113,9 @@ def test_full_state_keys_are_unchanged(harness: Harness) -> None:
         FULL_STATE["feedback"],
         [NAMING_NOTE.model_dump(mode="json")],
     )
+    # Stage 18: the judge's rules depend on the findings (`when_found`), so its key has them.
     assert key_func(graph, "self_review")(FULL_STATE) == expected_key(
-        version, "self_review", REPO.repo_id, "ab" * 20, applied
+        version, "self_review", REPO.repo_id, "ab" * 20, applied, results
     )
     assert key_func(graph, "write_pr_text")(FULL_STATE) == expected_key(
         version,

@@ -191,6 +191,9 @@ class PolicyItem(DomainModel):
     """The file types this item is limited to: it is in a prompt only when the prompt shows
     a file of one of them, and its guardrails apply only to edits in them. Empty: every
     file type."""
+    when_found: tuple[Identifier, ...] = ()
+    """The requirements this item is about: it is in a prompt only when one of them has a
+    finding. Empty: always."""
     until: Identifier | None = None
     """The last assignment this item applies to; later assignments do not see it."""
     replaces: Identifier | None = None

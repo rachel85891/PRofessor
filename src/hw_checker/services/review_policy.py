@@ -102,16 +102,21 @@ def role_policy(
     assignments: Sequence[Assignment],
     role: ReviewRole,
     files: Collection[str] = (),
+    found: Collection[str] = (),
 ) -> RolePolicy:
     """The policy `role` sees when `assignment` is checked; `assignments` are the round's
-    (`_general` and 1..N), and `files` the paths the prompt shows (the edited ones, for the
-    writer). An item limited to file types is left out when no shown file is of them."""
+    (`_general` and 1..N), `files` the paths the prompt shows (the edited ones, for the
+    writer) and `found` the requirements with a finding. An item limited to file types is
+    left out when no shown file is of them, and one `when_found` when none of its
+    requirements has a finding."""
     earlier = sorted((a for a in assignments if a.order <= assignment.order), key=lambda a: a.order)
     passed = {a.id: a.order < assignment.order for a in assignments}
 
     def shown(item: PolicyItem) -> bool:
-        return role in item.applies_to and (
-            not item.files or any(item.covers(path) for path in files)
+        return (
+            role in item.applies_to
+            and (not item.files or any(item.covers(path) for path in files))
+            and (not item.when_found or any(item_id in found for item_id in item.when_found))
         )
 
     in_rules = in_effect([course.rules.rules, *(a.review_rules.rules for a in earlier)], passed)

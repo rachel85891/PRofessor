@@ -225,9 +225,21 @@ def _id_assignment(change: Change) -> Detected | None:
 
 
 def _stray_using(change: Change) -> Detected | None:
+    """`using` lines deleted, with the fix marker line where they were. A `using` commented
+    out instead of deleted is refused (the approved PRs removed it, or asked)."""
     removed = change.removed
     if change.added or not removed or not all(_STRAY_USING.match(line) for line in removed):
         return None
+    style = change.style
+    kept = {
+        comment.removeprefix(style.line).removesuffix(style.end).strip()
+        for comment in change.comments
+    }
+    if any(line in kept for line in removed):
+        return Detected(
+            f"a stray `using` is deleted, with its {style.fix_marker} line where it was; "
+            "never comment it out"
+        )
     return Detected()
 
 

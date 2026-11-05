@@ -240,7 +240,9 @@ class FixService:
         paths = self._files.list_files(root, frozenset(self._config.skip_dirs))
         selected = self._shown_paths(paths, assignments)
         shown = [{"path": path, "text": self._file_text(root, path)} for path in selected]
-        policy = role_policy(self._course, assignment, assignments, ReviewRole.FIXER, selected)
+        policy = role_policy(
+            self._course, assignment, assignments, ReviewRole.FIXER, selected, _failed(results)
+        )
         styles = self._styles(selected)
         values: dict[str, object] = policy.slots() | {
             "course": self._course.profile,
@@ -296,7 +298,9 @@ class FixService:
         paths = self._files.list_files(copy, frozenset(self._config.skip_dirs))
         files = {path: self._files.read_bytes(copy, path) for path in paths}
         selected = self._shown_paths(paths, assignments)
-        policy = role_policy(self._course, assignment, assignments, ReviewRole.FIXER, selected)
+        policy = role_policy(
+            self._course, assignment, assignments, ReviewRole.FIXER, selected, _failed(results)
+        )
         styles = self._styles(selected)
         rules = EditRules(
             max_edits=self._config.max_edits,
@@ -350,6 +354,7 @@ class FixService:
             assignments,
             ReviewRole.JUDGE,
             self._shown(workspace, assignments),
+            _failed(results),
         )
         prompt = self._templates.render(
             REVIEW_TEMPLATE,
@@ -390,6 +395,7 @@ class FixService:
             assignments,
             ReviewRole.JUDGE,
             self._shown(workspace, assignments),
+            _failed(results),
         )
         rules = numbered_rules(self._templates.render(RULES_TEMPLATE, policy.slots()))
         allowances = Allowances(
@@ -599,7 +605,9 @@ class FixService:
         }
         groups = _sections(application.applied)
         edited = [edit.file for edit in application.applied]
-        policy = role_policy(self._course, assignment, assignments, ReviewRole.WRITER, edited)
+        policy = role_policy(
+            self._course, assignment, assignments, ReviewRole.WRITER, edited, _failed(results)
+        )
         # The writer is told each item's language when the edits are in more than one.
         languages = {style.language for style in self._edited_styles(edited)}
         prompt = self._templates.render(
@@ -944,6 +952,11 @@ def _findings(results: Sequence[AssignmentResult]) -> list[dict[str, str]]:
                 }
             )
     return found
+
+
+def _failed(results: Sequence[AssignmentResult]) -> set[str]:
+    """The requirements with a finding."""
+    return {finding.requirement_id for result in results for finding in result.findings}
 
 
 def _finding_messages(results: Sequence[AssignmentResult]) -> dict[str, tuple[str, ...]]:

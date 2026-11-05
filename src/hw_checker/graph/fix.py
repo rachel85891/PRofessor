@@ -48,7 +48,7 @@ FixGraph = CompiledStateGraph["FixState", None, "FixInput", "FixOutput"]
 DRAWING = "drawing"
 """Stands for the missing inputs in the cache key of a partial state (graph drawing only)."""
 PLAN_KEY_INPUTS = ("repo", "workspace", "selected_assignment_ids", "assignment_results", "attempt")
-REVIEW_KEY_INPUTS = ("repo", "workspace", "application")
+REVIEW_KEY_INPUTS = ("repo", "workspace", "application", "assignment_results")
 TEXT_KEY_INPUTS = (
     "repo",
     "workspace",
@@ -382,12 +382,15 @@ def build_fix_graph(
     def review_key(state: FixState) -> str:
         if _partial(state, REVIEW_KEY_INPUTS):
             return _key(cache_version, "self_review", DRAWING)
+        # The judge's rules depend on the findings (a rule `when_found`).
+        results = sorted(state["assignment_results"], key=lambda r: r.assignment_id)
         return _key(
             cache_version,
             "self_review",
             state["repo"].repo_id,
             state["workspace"].base_sha,
             state["application"].model_dump(mode="json")["applied"],
+            [result.model_dump(mode="json") for result in results],
         )
 
     def text_key(state: FixState) -> str:

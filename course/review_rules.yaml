@@ -130,6 +130,24 @@ rules:
       quote: "docs/fix-pr-workflow.md §3, rule 8"
     status: approved
 
+  - id: repository-files
+    # Stage 18: the stage 17 pilot run showed these findings never reached the PR. In a
+    # prompt only when one of these requirements failed, so other prompts are unchanged.
+    applies_to: [fixer, writer]
+    kind: note_only
+    when_found: [gen-gitignore, gen-no-build-output]
+    text: >-
+      A failed repository requirement (no `.gitignore` that leaves out build and IDE files,
+      or build or IDE folders committed) becomes one item in `files_notes`, never an edit:
+      one item for both findings, in the approved PRs' wording ("The `bin/` and `obj/`
+      folders are in the repository. They are build output and should not be committed.
+      Add a `.gitignore` (in Visual Studio: Git > Settings, or `dotnet new gitignore`) and
+      remove them from the repository.").
+    origin:
+      source: developer
+      quote: "the approved PRs, one Files item (stage 17 pilot run, 2026-11-05)"
+    status: approved
+
   - id: student-level
     # Moved from code in stage 3f.
     applies_to: [fixer, judge]
