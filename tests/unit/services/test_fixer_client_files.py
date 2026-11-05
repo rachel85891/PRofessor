@@ -6,9 +6,12 @@ from pathlib import Path
 import pytest
 
 from hw_checker.domain import (
+    EditApplication,
     EditKind,
     FixExample,
+    NoteSection,
     PlannedEdit,
+    PullRequestText,
     ReviewedFiles,
     ReviewRole,
     ReviewRule,
@@ -19,9 +22,11 @@ from hw_checker.services.review_policy import role_policy
 from tests.unit.domain import builders
 from tests.unit.services.fixer_data import (
     ASSIGNMENT,
+    BREAK_FIX,
     COURSE,
     FILES,
     HW01_REVIEWED,
+    NAMING_NOTE,
     REPO,
     RESULTS,
     RUN_ID,
@@ -353,3 +358,76 @@ def test_a_prompt_without_cs_files_has_no_cs_condition(tmp_path: Path) -> None:
 
     assert "{ get; set; }" not in prompt
     assert "Only `.js`, `.html`, `.css` files are edited" in prompt
+
+
+# ---------------------------------------------------------------- §3: the PR text
+
+
+def _named(edit: PlannedEdit, file: str, section: NoteSection | None) -> PlannedEdit:
+    return edit.model_copy(update={"file": file, "note_section": section})
+
+
+JS_NAMING = _named(NAMING_NOTE, JS, NoteSection.NAMES)
+JS_FIX = _named(BREAK_FIX, JS, None)
+HTML_FIX = _named(BREAK_FIX, HTML, None)
+TEXT = PullRequestText(
+    opening="Hi! Your API builds, and the sign-up page works.",
+    fixed=("**A fix.** It was changed.", "**Another fix.** It was changed."),
+    for_you=(),
+    names=("**`New_Count`:** use camelCase.", "**`First_Name`:** use camelCase."),
+)
+
+
+def _body(tmp_path: Path, *edits: PlannedEdit) -> tuple[str, str]:
+    setup = FixerSetup(tmp_path, replies={"writer": [TEXT]})
+    application = EditApplication(applied=edits, changed_files=())
+
+    _, body, _ = setup.service.write_text(
+        RUN_ID, ASSIGNMENT, (ASSIGNMENT,), RESULTS, application, [], []
+    )
+
+    return body, setup.llm.calls[0].prompt
+
+
+@pytest.mark.parametrize(
+    ("edits", "fixed", "names"),
+    [
+        (
+            (BREAK_FIX, NAMING_NOTE),
+            "**Fixed in this PR (marked `//fix:` in the code):**",
+            "**Names (C# conventions):**",
+        ),
+        (
+            (JS_FIX, JS_NAMING),
+            "**Fixed in this PR (marked `//fix:` in the code):**",
+            "**Names (JavaScript conventions):**",
+        ),
+        (
+            (BREAK_FIX, JS_FIX, NAMING_NOTE, JS_NAMING),
+            "**Fixed in this PR (marked `//fix:` in the code):**",
+            "**Names (C# and JavaScript conventions):**",
+        ),
+        (
+            (BREAK_FIX, HTML_FIX, NAMING_NOTE, JS_NAMING),
+            "**Fixed in this PR (marked `//fix:` and `<!--fix: … -->` in the code):**",
+            "**Names (C# and JavaScript conventions):**",
+        ),
+    ],
+    ids=["cs", "js", "cs-and-js", "cs-and-html"],
+)
+def test_the_headings_name_the_languages_and_markers_of_their_edits(
+    tmp_path: Path, edits: tuple[PlannedEdit, ...], fixed: str, names: str
+) -> None:
+    body, _ = _body(tmp_path, *edits)
+
+    assert fixed in body
+    assert names in body
+
+
+def test_the_writer_is_told_each_items_language_when_there_are_two(tmp_path: Path) -> None:
+    _, one = _body(tmp_path / "one", BREAK_FIX, NAMING_NOTE)
+    _, two = _body(tmp_path / "two", BREAK_FIX, JS_NAMING)
+
+    assert "- In `UsersController.cs`: " in one
+    assert "- In `UsersController.cs` (C#): " in two
+    assert "- In `update.js` (JavaScript): " in two

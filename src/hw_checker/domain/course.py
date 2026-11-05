@@ -103,6 +103,10 @@ SHORT_NAME = "{short_name}"
 """In a title, commit message or rule: the assignment's short name (`HW1`)."""
 TAUGHT_SO_FAR = "{taught_so_far}"
 """In a rule: the course's `taught_so_far` phrase, or nothing when nothing is listed."""
+LANGUAGES = "{languages}"
+"""In a PR section's heading: the languages of the section's edited files (`C#`)."""
+FIX_MARKERS = "{fix_markers}"
+"""In a PR section's heading: the fix markers of the section's edited files (`` `//fix:` ``)."""
 RULE_REFERENCE = re.compile(r"\{rule:([^{}\s]+)\}")
 """In a rule's texts: `{rule:<id>}` becomes that rule's number in the role's list."""
 

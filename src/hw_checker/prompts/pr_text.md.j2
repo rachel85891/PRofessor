@@ -1,4 +1,4 @@
-{#- The PR text (role: writer). Version 5, stage 3f: a frame; the audience, the wording, the
+{#- The PR text (role: writer). Version 6, stage 18: a frame; the audience, the wording, the
     writer's rules and the PR format come from `course/` and the assignments' files
     (ADR 0023). -#}
 You write the description of a review pull request for {{ course.audience }}'s homework ({{ assignment.short_name }}: {{ assignment.title }}). The changes are already made; you only describe them. {{ course.student_wording }}
@@ -28,7 +28,7 @@ These are the only things you may say work. Do not say that anything else works.
 
 {% if edits %}
 {% for edit in edits %}
-- In `{{ edit.file_name }}`: {{ edit.reason }}{% if edit.comments %} Comments added: {{ edit.comments | join(" / ") }}{% endif %}
+- In `{{ edit.file_name }}`{% if edit.language %} ({{ edit.language }}){% endif %}: {{ edit.reason }}{% if edit.comments %} Comments added: {{ edit.comments | join(" / ") }}{% endif %}
 
 {% endfor %}
 {% else %}

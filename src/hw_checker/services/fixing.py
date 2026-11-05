@@ -43,7 +43,7 @@ from hw_checker.domain import (
     StepStatus,
     VerifyResult,
 )
-from hw_checker.domain.course import SHORT_NAME
+from hw_checker.domain.course import FIX_MARKERS, LANGUAGES, SHORT_NAME
 from hw_checker.domain.errors import FixError, LLMOutputError
 from hw_checker.ports import (
     Clock,
@@ -585,6 +585,8 @@ class FixService:
         groups = _sections(application.applied)
         edited = [edit.file for edit in application.applied]
         policy = role_policy(self._course, assignment, assignments, ReviewRole.WRITER, edited)
+        # The writer is told each item's language when the edits are in more than one.
+        languages = {style.language for style in self._edited_styles(edited)}
         prompt = self._templates.render(
             WRITER_TEMPLATE,
             {
@@ -593,7 +595,13 @@ class FixService:
                 "rules": list(policy.rules),
                 "passed": _passed_titles(assignments, results),
                 "sections": [
-                    (label, [_described(edit, self._course) for edit in groups[key]])
+                    (
+                        label,
+                        [
+                            _described(edit, self._course, len(languages) > 1)
+                            for edit in groups[key]
+                        ],
+                    )
                     for key, label in labels.items()
                 ],
                 "writer_sections": [
@@ -624,7 +632,12 @@ class FixService:
             {
                 "opening": opening,
                 "sections": [
-                    {"heading": section.heading, "items": items[section.id.value]}
+                    {
+                        "heading": self._heading(
+                            section.heading, groups.get(section.id.value, []), edited
+                        ),
+                        "items": items[section.id.value],
+                    }
                     for section in pr_format.sections
                 ],
             },
@@ -720,6 +733,28 @@ class FixService:
         reviewed = sorted(p for p in paths if any(files.matches(p) for files in globs))
         configs = [p for p in paths if self._matches(p, self._config.config_globs)]
         return list(dict.fromkeys(code + reviewed + configs + sorted(self._data_files(paths))))
+
+    def _heading(self, heading: str, edits: Sequence[PlannedEdit], edited: Sequence[str]) -> str:
+        """A section's heading with `{languages}` and `{fix_markers}` filled from the comment
+        styles of its edited files, in the course's order and without repeats; from all the
+        edited files' when the section's have none (a data file's newline), and from the
+        course's first style when no edited file has one."""
+        styles = (
+            self._edited_styles([edit.file for edit in edits])
+            or self._edited_styles(edited)
+            or list(self._course.profile.comment_style.values())[:1]
+        )
+        languages = joined(dict.fromkeys(style.language for style in styles))
+        markers = joined(dict.fromkeys(f"`{style.marker_shown}`" for style in styles))
+        return heading.replace(LANGUAGES, languages).replace(FIX_MARKERS, markers)
+
+    def _edited_styles(self, files: Sequence[str]) -> list[CommentStyle]:
+        """The comment styles of `files`, in the course's order."""
+        return [
+            style
+            for suffix, style in self._course.profile.comment_style.items()
+            if any(path.endswith(suffix) for path in files)
+        ]
 
     def _shown(self, workspace: FixWorkspace, assignments: Sequence[Assignment]) -> list[str]:
         """The files the fixer is shown in the fix working copy."""
@@ -926,10 +961,13 @@ def _sections(applied: Sequence[PlannedEdit]) -> dict[str, list[PlannedEdit]]:
     return groups
 
 
-def _described(edit: PlannedEdit, course: Course) -> dict[str, object]:
-    """An edit as the writer sees it: the file's name, never the edit kind or the full path."""
+def _described(edit: PlannedEdit, course: Course, with_language: bool) -> dict[str, object]:
+    """An edit as the writer sees it: the file's name (and its language, `with_language`),
+    never the edit kind or the full path."""
+    style = course.profile.style_for(edit.file)
     return {
         "file_name": PurePosixPath(edit.file).name,
+        "language": style.language if with_language and style is not None else "",
         "reason": edit.reason,
         "comments": _added_comments(edit, course),
     }

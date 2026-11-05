@@ -58,7 +58,8 @@ pr_format:
   # In the body's order. `label` and `intro` are what the writer is told about a section.
   sections:
     - id: fixed
-      heading: "Fixed in this PR (marked `//fix:` in the code)"
+      # {fix_markers}: the markers of the fixed files' types (`//fix:` for C# and JavaScript).
+      heading: "Fixed in this PR (marked {fix_markers} in the code)"
       label: Fixed
       intro: >-
         one item per edit listed under "Fixed", nothing else. Start each item with a short
@@ -72,7 +73,8 @@ pr_format:
         one item per edit listed under "For you to do", nothing else: what the student
         should do.
     - id: names
-      heading: "Names (C# conventions)"
+      # {languages}: the languages of the files with a naming note ("C#", "C# and JavaScript").
+      heading: "Names ({languages} conventions)"
       label: Names
       intro: one item per edit listed under "Names", nothing else.
     - id: files
