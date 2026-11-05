@@ -36,6 +36,8 @@ pytestmark = pytest.mark.integration
 STUDENT_URL = "https://github.com/test-student/webapi"
 REPO_ID = "test-student__webapi"
 
+STAGE_17 = ("gen-gitignore", "gen-no-build-output", "gen-no-absolute-paths", "hw01-client-")
+
 
 def test_round_graph_checks_the_sample_solution_end_to_end(
     docker_runner: DockerCodeRunner, tmp_path: Path
@@ -79,8 +81,11 @@ def test_round_graph_checks_the_sample_solution_end_to_end(
     assert repo_run.execution.build_status is StepStatus.SUCCEEDED
     assert [r.assignment_id for r in repo_run.assignment_results] == ["_general", "hw01"]
     for result in repo_run.assignment_results:
-        assert result.findings == (), result.findings
-        assert result.not_evaluated == (), result.not_evaluated
+        # The fixture is a correct API with no client folder, and no git clone (fake git).
+        findings = [f for f in result.findings if not f.requirement_id.startswith(STAGE_17)]
+        skipped = [n for n in result.not_evaluated if not n.requirement_id.startswith(STAGE_17)]
+        assert findings == [], findings
+        assert skipped == [], skipped
     assert run.status is RunStatus.COMPLETED
     assert output["summary"].repos[0].repo_id == REPO_ID
     assert (tmp_path / "runs" / "it-round" / "logs" / REPO_ID).is_dir()
@@ -90,7 +95,7 @@ def test_round_graph_checks_the_sample_solution_end_to_end(
     repo_report = (reports / f"{REPO_ID}.md").read_text(encoding="utf-8")
     assert "# Test Student: hw01" in repo_report
     assert STUDENT_URL in repo_report
-    assert "Nothing to report" in repo_report
+    assert "wwwroot has an HTML page" in repo_report  # the fixture has no client folder
     round_report = (reports / "round.md").read_text(encoding="utf-8")
     assert f"[report]({REPO_ID}.md)" in round_report
     assert "Test Student" in round_report

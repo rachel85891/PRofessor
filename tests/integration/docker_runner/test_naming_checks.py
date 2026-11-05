@@ -22,6 +22,8 @@ pytestmark = pytest.mark.integration
 
 NAMING_FIXTURE = FIXTURES / "sample_webapi_naming"
 
+REPOSITORY_CHECKS = ("gen-gitignore", "gen-no-build-output", "gen-no-absolute-paths")
+
 
 def test_naming_fixture_gives_exactly_the_four_expected_findings(
     docker_runner: DockerCodeRunner,
@@ -33,7 +35,10 @@ def test_naming_fixture_gives_exactly_the_four_expected_findings(
     catalog = AssignmentCatalogService(
         YamlAssignmentSource(REPO_ROOT / "assignments", REPO_ROOT / "course"), registry
     )
-    general = catalog.list_assignments()[0]
+    loaded = catalog.list_assignments()[0]
+    # Only the naming requirements and their build: the fixture is no git clone.
+    naming = tuple(r for r in loaded.requirements if not r.id.startswith(REPOSITORY_CHECKS))
+    general = loaded.model_copy(update={"requirements": naming})
     repo = sample_copy(source=NAMING_FIXTURE)
 
     result = docker_runner.execute(make_request(repo, tmp_path / "logs", probes=()))
