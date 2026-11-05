@@ -1,0 +1,177 @@
+# yaml-language-server: $schema=schemas/review_rules.schema.json
+# The course's review rules, for every assignment (ADR 0023, design §8.1). Format:
+# assignments/README.md, "Review rules". An assignment's own rules are in its folder.
+# Stage 3f moved these from the fixer's prompts (fixer_rules, fixer_examples and the
+# self-review's "never a violation" list) and from services/fix_review.py and
+# services/fix_edits.py; hw01's prompts must not change by one byte.
+rules:
+  - id: comments
+    # Moved from code in stage 3f.
+    applies_to: [fixer, judge]
+    kind: style
+    text: >-
+      Write every comment you add in English, short, right after `//` with no space. Mark
+      every code change with a `//fix: ...` line directly above the changed code, saying
+      what you changed and why (`//fix: Keep the id, otherwise the updated user is saved
+      without it`). Every other comment is a question or an instruction for the student
+      (`//Why isn't it implemented? It should read the file and return the user with this id
+      (or NotFound / NoContent)`).
+    forbidden_text:
+      - pattern: '[\u0590-\u05FF]'
+        message: added text must be English, never Hebrew
+    origin:
+      source: developer
+      quote: "docs/fix-pr-workflow.md §3, rule 1"
+    status: approved
+
+  - id: safe-fixes
+    # Moved from code in stage 3f.
+    applies_to: [fixer, judge]
+    kind: fix_allowed
+    text: >-
+      Fix only small, safe things: a missing `break` (a `switch` case that falls through, or
+      a loop that keeps reading after it found its item), an id lost on update, `readonly`
+      for a fixed path, a stray `using`, a controller class name without the `Controller`
+      suffix (the route does not change), a broken data file (for example a missing final
+      newline).
+    detectors:
+      - missing_break
+      - id_assignment
+      - readonly_field
+      - stray_using
+      - controller_suffix
+      - final_newline
+    never_a_violation: >-
+      The small safe fixes of rule {rule:safe-fixes}: a missing `break`, an id lost on
+      update restored with one assignment (for example `user.id = id;`), `readonly` for a
+      fixed path, a removed stray `using`, the `Controller` suffix added to a controller
+      class name, a data file's missing final newline.
+    origin:
+      source: developer
+      quote: "docs/fix-pr-workflow.md §3, rule 2"
+    status: approved
+
+  - id: no-core
+    # Moved from code in stage 3f.
+    applies_to: [fixer, judge]
+    kind: never_do
+    text: >-
+      Never implement the core of the assignment (for example an unimplemented GET by id).
+      Leave a question instead.
+    approved_notes:
+      - words: Why isn't it implemented
+        what: the GET-by-id question in the approved wording
+    never_a_violation: >-
+      The GET-by-id question in the approved wording (`//Why isn't it implemented? It should
+      read the file and return the user with this id (or NotFound / NoContent)`).
+    clarification: >-
+      Rule {rule:no-core} is about writing an action or logic the student did not write.
+      Restoring a lost id with one assignment is rule {rule:safe-fixes}, not rule
+      {rule:no-core}. A note that says what is expected is fine: the approved reviews do
+      exactly that.
+    origin:
+      source: developer
+      quote: "docs/fix-pr-workflow.md §3, rule 3"
+    status: approved
+
+  - id: naming
+    # Moved from code in stage 3f.
+    applies_to: [fixer, judge]
+    kind: note_only
+    text: >-
+      Naming (C# conventions) is in scope, as notes only: PascalCase types, properties and
+      methods; camelCase locals; files named after their type; uncommon file names; unclear
+      abbreviations. Never rename a stored model property: System.Text.Json is
+      case-sensitive, so the existing data file would stop loading. Add a note with the
+      `PropertyNameCaseInsensitive` tip instead.
+    approved_notes:
+      - words: PropertyNameCaseInsensitive
+        what: a naming note with the PropertyNameCaseInsensitive tip
+    never_a_violation: >-
+      A naming note with the `PropertyNameCaseInsensitive` tip for a stored model property.
+    origin:
+      source: developer
+      quote: "docs/fix-pr-workflow.md §3, rule 7"
+    status: approved
+
+  - id: leftover-files
+    # Moved from code in stage 3f.
+    applies_to: [fixer, judge]
+    kind: note_only
+    text: >-
+      Leftover or duplicate files go in `files_notes` (one short sentence each); never edit
+      or delete them.
+    origin:
+      source: developer
+      quote: "docs/fix-pr-workflow.md §3, rule 8"
+    status: approved
+
+  - id: student-level
+    # Moved from code in stage 3f.
+    applies_to: [fixer, judge]
+    kind: style
+    text: >-
+      Second-year level: no refactoring, and no techniques that have not been
+      taught{taught_so_far}.
+    origin:
+      source: developer
+      quote: "docs/fix-pr-workflow.md §3, rule 9"
+    status: approved
+
+  - id: no-false-bugs
+    # Moved from code in stage 3f.
+    applies_to: [fixer, judge]
+    kind: style
+    text: >-
+      Do not claim a bug that is not there. When unsure, ask a question in a note instead of
+      changing code.
+    origin:
+      source: developer
+      quote: "docs/fix-pr-workflow.md §3, rule 10"
+    status: approved
+
+  - id: assignment-wording
+    # Moved from code in stage 3f.
+    applies_to: [fixer, judge]
+    kind: style
+    text: >-
+      Speak to the student about the assignment: write "The assignment asks…", never mention
+      the lecturer.
+    forbidden_text:
+      - pattern: '\blecturer'
+        ignore_case: true
+        message: 'added text says "The assignment asks...", never mentions the lecturer'
+    origin:
+      source: developer
+      quote: "docs/fix-pr-workflow.md §3, rule 11"
+    status: approved
+
+examples:
+  - id: break-and-naming
+    # Moved from code in stage 3f.
+    applies_to: [fixer, judge]
+    situation: >-
+      `Controllers/ProductsController.cs` has a `switch` where `case 1:` falls through to
+      `case 2:`, and a local named `Total_Price`. Requirement `hw09-update` (major) fails
+      because updating changes the wrong field.
+    plan: |-
+      {"edits": [
+        {"file": "Controllers/ProductsController.cs",
+         "find": "                product.Price = value;\n            case 2:",
+         "replace": "                product.Price = value;\n                //fix: Added the missing break, so changing the price no longer changes the stock too\n                break;\n            case 2:",
+         "kind": "fix", "finding_ids": ["hw09-update"],
+         "reason": "case 1 falls through to case 2 and overwrites the stock.",
+         "fallback_note": "Does case 1 need a break? Right now it also runs case 2.",
+         "note_section": null},
+        {"file": "Controllers/ProductsController.cs",
+         "find": "        double Total_Price = 0;",
+         "replace": "        //In C#, local variables are written in camelCase: totalPrice.\n        double Total_Price = 0;",
+         "kind": "note", "finding_ids": [],
+         "reason": "Naming: locals are camelCase.", "fallback_note": null,
+         "note_section": "names"}
+       ],
+       "files_notes": ["Class1.cs looks like a leftover from the project template; is it still needed?"]}
+    origin:
+      source: developer
+      quote: "the approved PRs, as invented repos"
+    status: approved

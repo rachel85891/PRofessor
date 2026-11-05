@@ -270,3 +270,94 @@ If anything is wrong, the round does not start, and **all** problems are listed 
 | `must include expected_status` | Add `expected_status` to `allowed_statuses`. |
 | `String should match pattern '^/'` (field `path`) | The probe path must start with `/`. |
 | `Input should be 'minor', 'major' or 'critical'` and similar | The value must be one of the listed options. |
+
+## Course policy and review rules (ADR 0023)
+
+Requirements say *what is checked*. How the review is written, what the fixer may change and what it must never mention is also data, never code: the course profile in `course/` and a `review_rules.yaml` in `course/` and in any assignment folder. The fixer's prompts are fixed frames that these files fill. Until the authoring flow (stage 16) drafts them, you write them by hand; the commit is the approval.
+
+```
+course/
+├── course.yaml          the course profile (required)
+├── review_rules.yaml    rules for every assignment (optional)
+├── schemas/             JSON Schemas generated from the models; never edit by hand
+└── prompts/             optional: a course's own prompt frame, used instead of the package's
+assignments/hw01/
+├── requirements.yaml
+└── review_rules.yaml    rules for hw01 and later assignments (optional)
+```
+
+VS Code validates the files as you type when the YAML extension is installed: the first line of each file names its schema (`# yaml-language-server: $schema=...`). The same rules are checked when the catalog loads, and every problem is listed together, like requirement problems.
+
+### The course profile (`course/course.yaml`)
+
+| Field | Meaning |
+| --- | --- |
+| `audience` | Whose homework it is, as the prompts say it: `a second-year student`. |
+| `level` | The students' level: `second-year`. |
+| `stack` | The technology: `ASP.NET Core Web API`. |
+| `student_wording` | How every student-facing text is written (plain English, "The assignment asks…", never the lecturer). |
+| `taught_so_far` | What `{taught_so_far}` in a rule becomes when the assignment lists `taught_techniques`; `{techniques}` is the list. Nothing when no technique is listed. |
+| `comment_style` | By file suffix: `line` (what starts a comment, `//`), `fix_marker` (`//fix:`, starting with `line`) and an optional `end` (for example `-->`). Only these files are edited, besides a data file's final newline. |
+| `pr_format.opening` | How the PR body starts (`Hi! `); added when the writer's opening lacks it. `opening_intro` tells the writer what to put in it. |
+| `pr_format.sections` | The body's sections, in order: each of `fixed`, `for_you`, `names` and `files` exactly once, with its bold `heading`. The writer's three sections also need a `label` (their name in the writer's prompt) and an `intro` (what to write there). |
+| `pr_format.item_rule` | How the writer writes every item. |
+| `pr_format.title_rule` | `strong` and `normal` titles with `{short_name}` (`HW1`). The code chooses: `strong` when the verified fix branch clears a major or critical requirement that failed before. |
+| `pr_format.commit_message` | The review commit's message, with `{short_name}`. |
+
+### Review rules (`review_rules.yaml`)
+
+```yaml
+rules:
+  - id: put-returns-ok              # unique across the course and all assignments
+    applies_to: [fixer, judge]      # the roles whose prompts show it
+    kind: note_only
+    text: >-
+      PUT returns `Ok()`: the assignment asks for it. ...
+    after: no-file-exists           # optional: placed right after this earlier rule
+    approved_notes:                 # optional: a note in this wording is never a violation
+      - words: The assignment asks PUT to return Ok()
+        what: the PUT note in the approved wording
+    never_a_violation: >-           # optional: the judge's line for what this rule allows
+      The PUT note in the approved wording (...).
+    origin: {source: developer, quote: "the lecturer, 2026-10-28"}
+    status: approved
+examples:
+  - id: break-and-naming
+    applies_to: [fixer, judge]
+    situation: An invented repo, in one paragraph.
+    plan: |-
+      {"edits": [...], "files_notes": []}
+    origin: {source: developer, quote: "the approved PRs"}
+    status: approved
+```
+
+| Field | Meaning |
+| --- | --- |
+| `id` | Unique among the rules (or among the examples) of the course and every assignment. |
+| `applies_to` | One or more of `fixer` (plans the edits), `judge` (the self-review), `writer` (the PR text) and `reviewer` (the LLM review, later). Each prompt shows only its role's rules. |
+| `kind` | `fix_allowed` (may be changed), `note_only` (only a comment), `never_do` (never added or changed), `never_mention` (not even commented on), `style` (how text is written). |
+| `text` | The rule as the prompts number it. It may use `{short_name}`, `{taught_so_far}` and `{rule:<id>}` (that rule's number in the role's list); any other braces stay as written. |
+| `detectors` | `fix_allowed` only: the safe fixes the judge never reports. Registered detectors: `missing_break`, `id_assignment`, `readonly_field`, `stray_using`, `controller_suffix`, `final_newline`. A new kind of safe fix needs a detector in code; choosing which ones apply is data. |
+| `approved_notes` | `words` (compared ignoring case) and `what` (for the repo report): a note containing the words is never a violation. |
+| `forbidden_text` | Text an edit must never add: `text` (literal) or `pattern` (a regular expression), `message` (why; fed back to the fixer), optional `ignore_case`, and `new_only` (reject only an edit that adds an occurrence). |
+| `never_a_violation`, `clarification` | For the judge: one line in its "never a violation" list, and one paragraph on how to read the rule. |
+| `example` | Optional: one edit that follows the rule (`file`, `find`, `replace`), shown after the examples. |
+| `until` | An assignment id: the rule stops after that assignment. |
+| `replaces` | An earlier rule's id: this rule takes its place (and its number). |
+| `after` | An earlier rule's id: this rule is placed right after it. Without `after` or `replaces`, a rule follows the course's rules and the earlier assignments' rules. |
+| `origin` | `source` (`developer`, `task_text`, `intake` or `inferred`) and `quote`: where the rule comes from. |
+| `status` | `approved`, or `draft`: a round refuses to start while a rule or example of the course or of a checked assignment is a draft, and lists them. |
+
+An example (under `examples:`) has the same `id`, `applies_to`, `until`, `replaces`, `after`, `origin` and `status`, plus `situation` (the invented repo) and `plan` (the plan's JSON, shown exactly as written).
+
+**Inheritance.** Checking assignment N uses the course's rules, then the rules of assignments 1..N by `order`, the same way requirements regress. hw01's rules (no `File.Exists`, PUT returns `Ok()`, no GET all or `Models` folder) apply to hw02 too, unless hw02 has a rule that `replaces` one of them, or the hw01 rule has `until: hw01`.
+
+| Message | What to do |
+| --- | --- |
+| `the id is used again (first in …)` | Rule and example ids are unique across the course and every assignment; rename one. |
+| `field 'until': unknown assignment 'x'` | `until` names an assignment folder's id. |
+| `field 'replaces'` / `'after': no earlier rule 'x'` | Name a rule of the course, of an earlier assignment, or earlier in the same file. |
+| `{rule:x} names an unknown rule` | Fix the id inside the braces. |
+| `Input should be 'reviewer', 'fixer', 'judge' or 'writer'` and similar | `applies_to`, `kind`, `detectors`, `status` and section ids take only the listed values. |
+| `every section once: missing …` | `pr_format.sections` lists `fixed`, `for_you`, `names` and `files`, each once. |
+| `these items are drafts; approve them first` | Review each listed item and set `status: approved`. |

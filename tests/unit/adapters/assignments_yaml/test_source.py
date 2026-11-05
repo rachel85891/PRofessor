@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 
 from hw_checker.adapters.assignments_yaml import YamlAssignmentSource
+from hw_checker.config.settings import REPO_ROOT
 from hw_checker.domain import RequirementKind, Severity
 from hw_checker.domain.errors import InvalidAssignmentError
 from hw_checker.ports import AssignmentSource
@@ -73,6 +74,13 @@ requirements:
 
 
 def write_tree(root: Path, files: dict[str, str | bytes]) -> Path:
+    """The assignments folder with `files` (folder → requirements.yaml), next to a copy of
+    the real course folder."""
+    course = root / "course"
+    if not course.exists():
+        course.mkdir()
+        for name in ("course.yaml", "review_rules.yaml"):
+            (course / name).write_bytes((REPO_ROOT / "course" / name).read_bytes())
     directory = root / "assignments"
     directory.mkdir(exist_ok=True)
     for folder, content in files.items():
@@ -86,7 +94,11 @@ def write_tree(root: Path, files: dict[str, str | bytes]) -> Path:
 
 
 def load(root: Path, files: dict[str, str | bytes]) -> YamlAssignmentSource:
-    return YamlAssignmentSource(write_tree(root, files))
+    return source_for(write_tree(root, files))
+
+
+def source_for(directory: Path) -> YamlAssignmentSource:
+    return YamlAssignmentSource(directory, directory.parent / "course")
 
 
 def problems_of(source: YamlAssignmentSource) -> str:
@@ -96,7 +108,7 @@ def problems_of(source: YamlAssignmentSource) -> str:
 
 
 def test_source_satisfies_the_port(tmp_path: Path) -> None:
-    port: AssignmentSource = YamlAssignmentSource(tmp_path)
+    port: AssignmentSource = source_for(tmp_path)
     fake: AssignmentSource = FakeAssignmentSource()
 
     assert port is not None
@@ -295,7 +307,7 @@ def test_hidden_folders_and_folders_without_file_are_ignored_and_logged(
     (directory / "README.md").write_text("notes", encoding="utf-8")
 
     with caplog.at_level(logging.INFO, logger="hw_checker.adapters.assignments_yaml.source"):
-        assignments = YamlAssignmentSource(directory).load_all()
+        assignments = source_for(directory).load_all()
 
     assert [assignment.id for assignment in assignments] == ["_general"]
     ignored = [record.getMessage() for record in caplog.records if "Ignored" in record.getMessage()]
@@ -403,7 +415,7 @@ def test_file_that_is_not_a_mapping(tmp_path: Path) -> None:
 
 def test_missing_directory(tmp_path: Path) -> None:
     with pytest.raises(InvalidAssignmentError, match="Assignments folder not found"):
-        YamlAssignmentSource(tmp_path / "absent").load_all()
+        source_for(tmp_path / "absent").load_all()
 
 
 def test_domain_rule_violation_names_file_and_requirement(tmp_path: Path) -> None:
@@ -496,3 +508,113 @@ def test_depends_on_is_validated_when_loading(
 
     assert "assignments/hw01/requirements.yaml: requirement 'hw01-r2'" in message
     assert problem in message
+
+
+RULE = """\
+  - id: {id}
+    applies_to: [fixer, judge]
+    kind: note_only
+    text: A note-only rule.
+    origin: {{source: developer}}
+    status: approved
+"""
+
+
+def write_rules(directory: Path, folder: str, text: str) -> None:
+    (directory / folder / "review_rules.yaml").write_text(text, encoding="utf-8")
+
+
+def test_an_assignments_review_rules_are_loaded_with_it(tmp_path: Path) -> None:
+    directory = write_tree(tmp_path, {"_general": GENERAL, "hw01": HW01})
+    write_rules(
+        directory, "hw01", "rules:\n" + RULE.format(id="hw01-note") + "    after: no-core\n"
+    )
+
+    source = source_for(directory)
+    hw01 = next(a for a in source.load_all() if a.id == "hw01")
+
+    assert [rule.id for rule in hw01.review_rules.rules] == ["hw01-note"]
+    assert source.load_course().profile.pr_format.opening == "Hi! "
+    assert source.load_course().rules.rules[0].id == "comments"
+
+
+@pytest.mark.parametrize(
+    ("extra", "problem"),
+    [
+        ("    until: hw09\n", "rule 'r1', field 'until': unknown assignment 'hw09'"),
+        ("    replaces: nothing\n", "rule 'r1', field 'replaces': no earlier rule 'nothing'"),
+        ("    after: r2\n", "rule 'r1', field 'after': no earlier rule 'r2'"),
+    ],
+    ids=["until", "replaces", "after-a-later-rule"],
+)
+def test_rule_references_must_name_known_earlier_items(
+    tmp_path: Path, extra: str, problem: str
+) -> None:
+    directory = write_tree(tmp_path, {"_general": GENERAL, "hw01": HW01})
+    write_rules(directory, "hw01", "rules:\n" + RULE.format(id="r1") + extra + RULE.format(id="r2"))
+
+    assert problem in problems_of(source_for(directory))
+
+
+def test_invalid_rules_are_all_reported_together(tmp_path: Path) -> None:
+    directory = write_tree(tmp_path, {"_general": GENERAL, "hw01": HW01})
+    rules = (
+        "rules:\n"
+        + RULE.format(id="r2").replace("[fixer, judge]", "[fixer, teacher]")
+        + RULE.format(id="r3").replace("note_only", "fix_allowed")
+        + "    detectors: [rename_all]\n"
+        + RULE.format(id="r4").replace("A note-only rule.", "See {rule:missing}.")
+        + RULE.format(id="r5").replace("approved", "pending")
+        + "colour: red\n"
+    )
+    write_rules(directory, "hw01", rules)
+
+    message = problems_of(source_for(directory))
+
+    assert "rule 'r2', field 'applies_to.2'" in message
+    assert "rule 'r3', field 'detectors.1'" in message
+    assert "rule 'r5', field 'status'" in message
+    assert "assignments/hw01/review_rules.yaml, field 'colour': unknown key" in message
+
+
+def test_a_rule_reference_names_a_known_rule(tmp_path: Path) -> None:
+    directory = write_tree(tmp_path, {"_general": GENERAL, "hw01": HW01})
+    rule = RULE.format(id="r1").replace("A note-only rule.", "See rule {rule:missing}.")
+    write_rules(directory, "hw01", "rules:\n" + rule)
+
+    assert "rule 'r1': {rule:missing} names an unknown rule" in problems_of(source_for(directory))
+
+
+def test_course_profile_problems_are_reported(tmp_path: Path) -> None:
+    directory = write_tree(tmp_path, {"_general": GENERAL})
+    course = tmp_path / "course" / "course.yaml"
+    text = course.read_text(encoding="utf-8")
+    course.write_text(text.replace("    - id: files\n", "    - id: extras\n"), encoding="utf-8")
+
+    message = problems_of(source_for(directory))
+
+    assert "course/course.yaml, field 'pr_format.sections.4.id'" in message
+
+
+def test_a_missing_course_folder_is_reported(tmp_path: Path) -> None:
+    directory = write_tree(tmp_path, {"_general": GENERAL})
+
+    with pytest.raises(InvalidAssignmentError, match="Course folder not found"):
+        YamlAssignmentSource(directory, tmp_path / "absent").load_course()
+
+
+def test_a_missing_course_profile_is_reported(tmp_path: Path) -> None:
+    directory = write_tree(tmp_path, {"_general": GENERAL})
+    (tmp_path / "course" / "course.yaml").unlink()
+
+    assert "course/course.yaml: the file is missing." in problems_of(source_for(directory))
+
+
+def test_a_rule_id_is_unique_across_the_course_and_the_assignments(tmp_path: Path) -> None:
+    directory = write_tree(tmp_path, {"_general": GENERAL, "hw01": HW01})
+    write_rules(directory, "hw01", "rules:\n" + RULE.format(id="comments"))
+
+    assert (
+        "assignments/hw01/review_rules.yaml: rule 'comments': the id is used again "
+        "(first in course/review_rules.yaml)"
+    ) in problems_of(source_for(directory))

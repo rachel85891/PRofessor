@@ -44,7 +44,9 @@ def test_round_graph_checks_the_sample_solution_end_to_end(
     migrate(database_url)
     storage = SqlStorage(database_url)
     registry = CheckRegistry(builtin_checks())
-    catalog = AssignmentCatalogService(YamlAssignmentSource(REPO_ROOT / "assignments"), registry)
+    catalog = AssignmentCatalogService(
+        YamlAssignmentSource(REPO_ROOT / "assignments", REPO_ROOT / "course"), registry
+    )
     roster = FakeRosterReader(
         [RosterRow(row_number=2, name="Test Student", github_url=STUDENT_URL)]
     )

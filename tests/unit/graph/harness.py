@@ -234,7 +234,7 @@ class Harness:
     ) -> FixService | None:
         if self.fixer is None:
             return None
-        from tests.unit.services.fixer_data import config
+        from tests.unit.services.fixer_data import COURSE, config
 
         return FixService(
             self.fixer,
@@ -248,6 +248,7 @@ class Harness:
             checks,
             self.tmp_path / "runs",
             config(**self.fixer_overrides),
+            COURSE,
         )
 
     def _fixer_repo(self) -> Path:

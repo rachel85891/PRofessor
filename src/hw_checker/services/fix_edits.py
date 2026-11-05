@@ -4,7 +4,8 @@ The model only plans edits; these rules decide which are applied. Each edit is c
 its own, in plan order, against the files as the earlier edits left them, and a rejected
 edit keeps its reason for the next attempt. An applied edit replaces exactly one
 occurrence of its text, so nothing outside the edited lines changes; every file keeps its
-byte-order mark and line endings.
+byte-order mark and line endings. What may never be added, and how comments are written
+in each edited file type, is the course's data (ADR 0023).
 """
 
 import difflib
@@ -12,11 +13,16 @@ import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 
-from hw_checker.domain import EditApplication, EditKind, NoteSection, PlannedEdit, RejectedEdit
+from hw_checker.domain import (
+    CommentStyle,
+    EditApplication,
+    EditKind,
+    ForbiddenText,
+    NoteSection,
+    PlannedEdit,
+    RejectedEdit,
+)
 
-CODE_SUFFIX = ".cs"
-FORBIDDEN_TEXT = "File.Exists"
-BAD_REQUEST = "BadRequest("
 MIN_REASON_CHARS = 8
 """A shorter `reason` is a placeholder, not the one sentence the plan asks for."""
 PLACEHOLDER_REASONS = frozenset(
@@ -24,9 +30,6 @@ PLACEHOLDER_REASONS = frozenset(
 )
 """Longer reasons that still only fill the field (compared lowercased, without a final
 period)."""
-_HEBREW = re.compile(r"[\u0590-\u05FF]")
-_LECTURER = re.compile(r"\blecturer", re.IGNORECASE)
-_FIX_MARKER = re.compile(r"^//\s*fix:", re.IGNORECASE)
 _PROPERTY_DECLARATION = re.compile(r"\{\s*get;\s*(?:set|init);\s*\}")
 _DRIVE_LETTER = re.compile(r"^[A-Za-z]:")
 
@@ -39,8 +42,16 @@ class EditRules:
     """At most this many edits are applied per repo; later ones are rejected."""
     max_fix_lines: int
     """A `fix` changes at most this many code lines."""
+    styles: Mapping[str, CommentStyle]
+    """The comment style by file suffix; only these files are edited."""
+    forbidden: tuple[ForbiddenText, ...] = ()
+    """Text an edit must never add (the fixer's rules in effect)."""
     data_files: frozenset[str] = field(default_factory=frozenset)
     """The repo's data files, the only ones a `final_newline` edit may change."""
+
+    def style(self, path: str) -> CommentStyle | None:
+        """The comment style of the file at `path`; None when it is not edited."""
+        return next((style for suffix, style in self.styles.items() if path.endswith(suffix)), None)
 
 
 @dataclass(frozen=True)
@@ -80,9 +91,9 @@ def apply_edits(
     )
 
 
-def fallback_edit(fix: PlannedEdit) -> PlannedEdit | None:
+def fallback_edit(fix: PlannedEdit, style: CommentStyle) -> PlannedEdit | None:
     """The note that replaces a dropped `fix`: its fallback comment above the original text,
-    written `//Text` like the approved PRs.
+    in the file's comment `style` (`//Text` in C#, like the approved PRs).
 
     None when the fix has no fallback note.
     """
@@ -91,7 +102,7 @@ def fallback_edit(fix: PlannedEdit) -> PlannedEdit | None:
         return None
     first_line = fix.find.replace("\r\n", "\n").split("\n")[0]
     indent = first_line[: len(first_line) - len(first_line.lstrip())]
-    comment = note if note.startswith("//") else f"//{note}"
+    comment = note if note.startswith(style.line) else f"{style.line}{note}{style.end}"
     return PlannedEdit(
         file=fix.file,
         find=fix.find,
@@ -138,8 +149,9 @@ def _path_problem(
         return f"{path} does not exist; edits never add, delete or rename files"
     if kind is EditKind.FINAL_NEWLINE:
         return None if path in rules.data_files else f"{path} is not the data file"
-    if not path.endswith(CODE_SUFFIX):
-        return f"{path} is not a .cs file; only .cs files are edited"
+    if rules.style(path) is None:
+        suffixes = " or ".join(rules.styles)
+        return f"{path} is not a {suffixes} file; only {suffixes} files are edited"
     return None
 
 
@@ -166,40 +178,53 @@ def _replace(
     count = text.count(find.replace("\n", newline))
     if count != 1:
         return f"find occurs {count} times in {path}; it must occur exactly once"
-    problem = _content_problem(find, replace, edit.kind, rules)
+    style = rules.style(path)
+    if style is None:  # Refused by the path check.
+        return f"{path} is not edited"
+    problem = _content_problem(find, replace, edit.kind, rules, style)
     if problem:
         return problem
     texts[path] = text.replace(find.replace("\n", newline), replace.replace("\n", newline), 1)
     return None
 
 
-def _content_problem(find: str, replace: str, kind: EditKind, rules: EditRules) -> str | None:
+def _content_problem(
+    find: str, replace: str, kind: EditKind, rules: EditRules, style: CommentStyle
+) -> str | None:
     old, new = find.split("\n"), replace.split("\n")
     opcodes = difflib.SequenceMatcher(a=old, b=new, autojunk=False).get_opcodes()
     added = [line for tag, _, _, j1, j2 in opcodes if tag != "equal" for line in new[j1:j2]]
     removed = [line for tag, i1, i2, _, _ in opcodes if tag != "equal" for line in old[i1:i2]]
-    if any(FORBIDDEN_TEXT in line for line in added):
-        return "added text must never use File.Exists"
-    if replace.count(BAD_REQUEST) > find.count(BAD_REQUEST):
-        return "added text must never return a new BadRequest("
-    if any(_HEBREW.search(line) for line in added):
-        return "added text must be English, never Hebrew"
-    if any(_LECTURER.search(line) for line in added):
-        return 'added text says "The assignment asks...", never mentions the lecturer'
+    for forbidden in rules.forbidden:
+        if _adds(forbidden, find, replace, added):
+            return forbidden.message
     if kind is EditKind.NOTE:
-        return _note_problem(opcodes, added)
-    return _fix_problem(opcodes, new, added, removed, rules)
+        return _note_problem(opcodes, added, style)
+    return _fix_problem(opcodes, new, added, removed, rules, style)
+
+
+def _adds(forbidden: ForbiddenText, find: str, replace: str, added: list[str]) -> bool:
+    regex = forbidden.regex
+    if forbidden.new_only:
+        return len(regex.findall(replace)) > len(regex.findall(find))
+    return any(regex.search(line) for line in added)
 
 
 def _note_problem(
-    opcodes: Sequence[tuple[str, int, int, int, int]], added: list[str]
+    opcodes: Sequence[tuple[str, int, int, int, int]], added: list[str], style: CommentStyle
 ) -> str | None:
+    only_comments = (
+        f"a note may only add {style.line} comment lines and must leave the code unchanged"
+    )
     if any(tag not in {"equal", "insert"} for tag, *_ in opcodes):
-        return "a note may only add // comment lines and must leave the code unchanged"
-    if not all(_is_comment(line) for line in added if line.strip()):
-        return "a note may only add // comment lines and must leave the code unchanged"
-    if any(_FIX_MARKER.match(line.strip()) for line in added):
-        return "a note must not carry a //fix: line; //fix: marks a code change"
+        return only_comments
+    if not all(_is_comment(line, style) for line in added if line.strip()):
+        return only_comments
+    if any(style.marker_pattern.match(line.strip()) for line in added):
+        return (
+            f"a note must not carry a {style.fix_marker} line; {style.fix_marker} marks a "
+            "code change"
+        )
     return None
 
 
@@ -209,31 +234,32 @@ def _fix_problem(
     added: list[str],
     removed: list[str],
     rules: EditRules,
+    style: CommentStyle,
 ) -> str | None:
     if any(_PROPERTY_DECLARATION.search(line) for line in removed):
         return "a fix never changes a model's property declaration ({ get; set; })"
     changed = [line for line in removed if line.strip()]
-    changed += [line for line in added if line.strip() and not _is_comment(line)]
-    if not any(not _is_comment(line) for line in changed):
+    changed += [line for line in added if line.strip() and not _is_comment(line, style)]
+    if not any(not _is_comment(line, style) for line in changed):
         return "a fix must change code; a comment-only edit is a note"
     if len(changed) > rules.max_fix_lines:
         return f"a fix changes {len(changed)} code lines; at most {rules.max_fix_lines}"
     for tag, _, _, j1, j2 in opcodes:
-        if tag != "equal" and not _marked(new[j1:j2]):
-            return "a fix needs a //fix: ... line directly above the changed code"
+        if tag != "equal" and not _marked(new[j1:j2], style):
+            return f"a fix needs a {style.fix_marker} ... line directly above the changed code"
     return None
 
 
-def _marked(segment: list[str]) -> bool:
-    """Whether the changed lines start with a //fix: line before any code line."""
+def _marked(segment: list[str], style: CommentStyle) -> bool:
+    """Whether the changed lines start with a fix marker line before any code line."""
     for line in segment:
         stripped = line.strip()
-        if _FIX_MARKER.match(stripped):
+        if style.marker_pattern.match(stripped):
             return True
-        if stripped and not _is_comment(line):
+        if stripped and not _is_comment(line, style):
             return False
     return False
 
 
-def _is_comment(line: str) -> bool:
-    return line.strip().startswith("//")
+def _is_comment(line: str, style: CommentStyle) -> bool:
+    return line.strip().startswith(style.line)

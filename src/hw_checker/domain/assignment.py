@@ -17,6 +17,7 @@ from pydantic import (
 )
 
 from hw_checker.domain.base import DomainModel, HttpStatusCode, Identifier, NonBlankStr
+from hw_checker.domain.course import ReviewRuleSet
 
 
 class Severity(StrEnum):
@@ -241,6 +242,8 @@ class Assignment(DomainModel):
     requirements: tuple[Requirement, ...]
     taught_techniques: tuple[NonBlankStr, ...] = ()
     lenient_notes: tuple[NonBlankStr, ...] = ()
+    review_rules: ReviewRuleSet = ReviewRuleSet()
+    """The assignment's own review rules (its `review_rules.yaml`, ADR 0023)."""
     source_hash: str | None = Field(default=None, pattern=SHA256_HEX_PATTERN)
     """SHA-256 of the requirements file, so results show which version they were checked against."""
 

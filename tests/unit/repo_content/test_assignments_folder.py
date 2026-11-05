@@ -9,7 +9,7 @@ from hw_checker.services.assignments import AssignmentCatalogService
 
 
 def catalog() -> AssignmentCatalogService:
-    source = YamlAssignmentSource(REPO_ROOT / "assignments")
+    source = YamlAssignmentSource(REPO_ROOT / "assignments", REPO_ROOT / "course")
     return AssignmentCatalogService(source, CheckRegistry(builtin_checks()))
 
 

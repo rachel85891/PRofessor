@@ -10,12 +10,14 @@ from hw_checker.domain import (
     Finding,
     Requirement,
     RequirementKind,
+    ReviewRuleSet,
     Severity,
 )
 from hw_checker.domain.errors import InvalidAssignmentError, NotFoundError
 from hw_checker.services.assignments import AssignmentCatalogService
 from tests.fakes.assignments import FakeAssignmentSource
 from tests.fakes.checks import FakeCheckCatalog
+from tests.unit.domain import builders
 
 
 def structure(requirement_id: str, check_name: str, **params: Any) -> Requirement:
@@ -179,3 +181,29 @@ def test_works_with_a_real_registry() -> None:
         InvalidAssignmentError, match="hw02-r1', check 'folder_exists': param 'path'"
     ):
         real_service.select_for_round("hw02")
+
+
+def with_rules(base: Assignment, *rules: Any) -> Assignment:
+    return base.model_copy(update={"review_rules": ReviewRuleSet(rules=rules)})
+
+
+def test_a_round_refuses_to_start_while_a_selected_rule_is_a_draft() -> None:
+    draft = builders.review_rule(id="hw01-draft", status="draft")
+    course = builders.course(rules=(builders.review_rule(id="course-draft", status="draft"),))
+    tree = (GENERAL, with_rules(HW01, draft), HW02, HW03)
+    catalog = AssignmentCatalogService(FakeAssignmentSource(tree, course=course), KNOWN_CHECKS)
+
+    with pytest.raises(InvalidAssignmentError, match="drafts; approve them first") as raised:
+        catalog.select_for_round("hw02")
+
+    assert "- course: rule 'course-draft'" in str(raised.value)
+    assert "- hw01: rule 'hw01-draft'" in str(raised.value)
+
+
+def test_a_draft_of_a_later_assignment_does_not_block_the_round() -> None:
+    later = with_rules(HW03, builders.review_rule(id="hw03-draft", status="draft"))
+    catalog = AssignmentCatalogService(
+        FakeAssignmentSource((GENERAL, HW01, HW02, later)), KNOWN_CHECKS
+    )
+
+    assert [a.id for a in catalog.select_for_round("hw02")] == ["_general", "hw01", "hw02"]

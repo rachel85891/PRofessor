@@ -185,7 +185,14 @@ def build_fix_graph(
         return step(
             "apply_edits",
             state,
-            lambda: {"application": fixing.apply(state["workspace"], state["plan"].edits)},
+            lambda: {
+                "application": fixing.apply(
+                    state["workspace"],
+                    state["plan"].edits,
+                    by_id[state["assignment_id"]],
+                    selected(state),
+                )
+            },
         )
 
     def self_review(state: FixState) -> Update:
@@ -194,6 +201,7 @@ def build_fix_graph(
                 state["run_id"],
                 state["workspace"],
                 by_id[state["assignment_id"]],
+                selected(state),
                 state["application"],
             )
             if reviewed is None:
@@ -211,7 +219,11 @@ def build_fix_graph(
             state,
             lambda: {
                 "application": fixing.remove_violations(
-                    state["workspace"], by_id[state["assignment_id"]], state["application"], review
+                    state["workspace"],
+                    by_id[state["assignment_id"]],
+                    selected(state),
+                    state["application"],
+                    review,
                 )
             },
         )
@@ -254,7 +266,9 @@ def build_fix_graph(
                 raise FixError("No attempt passed the recheck.")
             return {
                 "plan": best.plan,
-                "application": fixing.restore(state["workspace"], best),
+                "application": fixing.restore(
+                    state["workspace"], by_id[state["assignment_id"]], selected(state), best
+                ),
                 "verification": best.verification,
             }
 
@@ -266,7 +280,11 @@ def build_fix_graph(
             state,
             lambda: {
                 "application": fixing.fall_back(
-                    state["workspace"], state["application"], state["verification"]
+                    state["workspace"],
+                    by_id[state["assignment_id"]],
+                    selected(state),
+                    state["application"],
+                    state["verification"],
                 ),
                 "fell_back": True,
             },

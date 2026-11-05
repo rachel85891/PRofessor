@@ -1,0 +1,191 @@
+{
+  "$defs": {
+    "CommentStyle": {
+      "additionalProperties": false,
+      "description": "How a comment is written in one file type: `//Text` and `//fix: Text` in C#.",
+      "properties": {
+        "line": {
+          "title": "Line",
+          "type": "string"
+        },
+        "fix_marker": {
+          "title": "Fix Marker",
+          "type": "string"
+        },
+        "end": {
+          "default": "",
+          "title": "End",
+          "type": "string"
+        }
+      },
+      "required": [
+        "line",
+        "fix_marker"
+      ],
+      "title": "CommentStyle",
+      "type": "object"
+    },
+    "PrFormat": {
+      "additionalProperties": false,
+      "description": "The review PR's text: its opening, sections, title and commit message.",
+      "properties": {
+        "opening": {
+          "title": "Opening",
+          "type": "string"
+        },
+        "opening_intro": {
+          "title": "Opening Intro",
+          "type": "string"
+        },
+        "item_rule": {
+          "title": "Item Rule",
+          "type": "string"
+        },
+        "sections": {
+          "items": {
+            "$ref": "#/$defs/PrSection"
+          },
+          "title": "Sections",
+          "type": "array"
+        },
+        "title_rule": {
+          "$ref": "#/$defs/TitleRule"
+        },
+        "commit_message": {
+          "title": "Commit Message",
+          "type": "string"
+        }
+      },
+      "required": [
+        "opening",
+        "opening_intro",
+        "item_rule",
+        "sections",
+        "title_rule",
+        "commit_message"
+      ],
+      "title": "PrFormat",
+      "type": "object"
+    },
+    "PrSection": {
+      "additionalProperties": false,
+      "description": "One section of the PR body, in the order the body shows it.",
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/PrSectionId"
+        },
+        "heading": {
+          "title": "Heading",
+          "type": "string"
+        },
+        "label": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Label"
+        },
+        "intro": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Intro"
+        }
+      },
+      "required": [
+        "id",
+        "heading"
+      ],
+      "title": "PrSection",
+      "type": "object"
+    },
+    "PrSectionId": {
+      "description": "The PR body's sections the code fills: the writer's three lists, and the plan's\nnotes on leftover files.",
+      "enum": [
+        "fixed",
+        "for_you",
+        "names",
+        "files"
+      ],
+      "title": "PrSectionId",
+      "type": "string"
+    },
+    "TitleRule": {
+      "additionalProperties": false,
+      "description": "The PR title. Code decides which applies: `strong` when the verified fix branch\nclears a major or critical requirement that failed before, `normal` otherwise.",
+      "properties": {
+        "strong": {
+          "title": "Strong",
+          "type": "string"
+        },
+        "normal": {
+          "title": "Normal",
+          "type": "string"
+        }
+      },
+      "required": [
+        "strong",
+        "normal"
+      ],
+      "title": "TitleRule",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "`course/course.yaml`: who the students are and how the review speaks to them.",
+  "properties": {
+    "audience": {
+      "title": "Audience",
+      "type": "string"
+    },
+    "level": {
+      "title": "Level",
+      "type": "string"
+    },
+    "stack": {
+      "title": "Stack",
+      "type": "string"
+    },
+    "student_wording": {
+      "title": "Student Wording",
+      "type": "string"
+    },
+    "taught_so_far": {
+      "default": "",
+      "title": "Taught So Far",
+      "type": "string"
+    },
+    "comment_style": {
+      "additionalProperties": {
+        "$ref": "#/$defs/CommentStyle"
+      },
+      "minProperties": 1,
+      "title": "Comment Style",
+      "type": "object"
+    },
+    "pr_format": {
+      "$ref": "#/$defs/PrFormat"
+    }
+  },
+  "required": [
+    "audience",
+    "level",
+    "stack",
+    "student_wording",
+    "comment_style",
+    "pr_format"
+  ],
+  "title": "CourseProfile",
+  "type": "object"
+}

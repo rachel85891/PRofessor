@@ -1,10 +1,11 @@
-"""JinjaTextTemplates: the TextTemplates port over the template files in `hw_checker/prompts/`."""
+"""JinjaTextTemplates: the TextTemplates port over the template files in `hw_checker/prompts/`,
+where a course may replace a frame with its own file in `course/prompts/` (ADR 0023)."""
 
 import hashlib
 from collections.abc import Mapping
 from pathlib import Path
 
-from jinja2 import Environment, FileSystemLoader, StrictUndefined, TemplateError
+from jinja2 import ChoiceLoader, Environment, FileSystemLoader, StrictUndefined, TemplateError
 
 from hw_checker.domain.errors import FixError
 
@@ -12,12 +13,17 @@ TEMPLATE_SUFFIX = ".j2"
 
 
 class JinjaTextTemplates:
-    """Renders plain-text templates (no HTML escaping); a missing value is an error."""
+    """Renders plain-text templates (no HTML escaping); a missing value is an error.
 
-    def __init__(self, templates_dir: Path) -> None:
-        self._dir = templates_dir
+    A template in `overrides_dir` (the course's `prompts/`, when it exists) is used instead
+    of the one with the same name in `templates_dir`; it changes only with the developer's
+    approval.
+    """
+
+    def __init__(self, templates_dir: Path, overrides_dir: Path | None = None) -> None:
+        self._dirs = [d for d in (overrides_dir, templates_dir) if d is not None]
         self._environment = Environment(
-            loader=FileSystemLoader(templates_dir),
+            loader=ChoiceLoader([FileSystemLoader(directory) for directory in self._dirs]),
             autoescape=False,  # prompts and Markdown, not HTML
             undefined=StrictUndefined,
             trim_blocks=True,
@@ -37,9 +43,11 @@ class JinjaTextTemplates:
             raise FixError(f"cannot render the template {name}: {error}") from error
 
     def version(self) -> str:
-        """SHA-256 over every template's name and bytes."""
+        """SHA-256 over every template's name and bytes, overrides included."""
         digest = hashlib.sha256()
-        for path in sorted(self._dir.rglob(f"*{TEMPLATE_SUFFIX}")):
-            digest.update(path.relative_to(self._dir).as_posix().encode())
-            digest.update(path.read_bytes())
+        for directory in self._dirs:
+            digest.update(directory.as_posix().encode())
+            for path in sorted(directory.rglob(f"*{TEMPLATE_SUFFIX}")):
+                digest.update(path.relative_to(directory).as_posix().encode())
+                digest.update(path.read_bytes())
         return digest.hexdigest()

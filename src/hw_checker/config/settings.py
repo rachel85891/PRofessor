@@ -358,6 +358,8 @@ class Settings(BaseSettings):
 
     workspace_dir: Path = Path("workspace")
     assignments_dir: Path = Path("assignments")
+    course_dir: Path = Path("course")
+    """The course profile and the course's review rules (ADR 0023)."""
     max_parallel_repos: int = Field(default=3, ge=1)
     logging: LoggingSettings = LoggingSettings()
     roster: RosterSettings = RosterSettings()

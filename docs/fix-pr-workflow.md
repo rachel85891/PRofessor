@@ -23,6 +23,9 @@ Written by the planner on 2026-10-29 from the manual pilot of 32 review PRs, whi
 7. **Record** the PR URL and the commit SHAs in storage, and in the reviewer report.
 
 ## 3. Review rules (from the developer's example PR and the lecturer, 2026-10-28)
+
+> **Since stage 3f (ADR 0023),** §3 and §4 describe hw01's *data*, not code: the rules are in `course/review_rules.yaml` (every assignment) and `assignments/hw01/review_rules.yaml` (hw01's own), and the PR's opening, sections, title and commit message in `course/course.yaml`. Change them there; the format is in `assignments/README.md`.
+
 - **English comments in the code:** `//fix: ...` on every change the reviewer made. Other `//` comments are questions or instructions for the student.
 - **Fix only small, safe things:** a missing `break`, a lost id on update, `readonly` for a fixed path, a stray `using`, a controller class name without the `Controller` suffix (the route doesn't change), a broken data file (for example a missing final newline).
 - **Never implement the core of the assignment** (for example an unimplemented GET by id). Leave a question instead.

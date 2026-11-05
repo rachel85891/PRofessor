@@ -2,31 +2,47 @@
 
 The self-review (role: judge) reports edits that break a review rule, citing the rule's
 number and quoting its words. A violation is acted on only when the quote is from that
-rule and the edit is not one the rules allow outright: the small safe fixes of rule 2 and
-the notes in the approved wording. On the pilots the self-review removed exactly the edits
-the approved PRs made (stage 14c), so these checks are in code, not only in the prompt.
+rule and the edit is not one the rules allow outright: a safe fix whose detector a
+`fix_allowed` rule names, or a note in a rule's approved wording (ADR 0023). On the pilots
+the self-review removed exactly the edits the approved PRs made (stage 14c), so these
+checks are in code, not only in the prompt; which edits they allow is the rules' data.
 """
 
 import difflib
 import re
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 
-from hw_checker.domain import EditKind, PlannedEdit, SelfReview
+from hw_checker.domain import (
+    ApprovedNote,
+    CommentStyle,
+    EditKind,
+    PlannedEdit,
+    SafeFix,
+    SelfReview,
+)
 
 MIN_QUOTE_CHARS = 10
 """A shorter quote cannot show which part of a rule the edit breaks."""
-APPROVED_NOTES = {
-    "why isn't it implemented": "the GET-by-id question in the approved wording",
-    "the assignment asks put to return ok()": "the PUT note in the approved wording",
-    "propertynamecaseinsensitive": "a naming note with the PropertyNameCaseInsensitive tip",
-}
-"""Words of the approved notes (lowercased) and what they are."""
 _RULE_LINE = re.compile(r"^(\d+)\.\s+(.+)$", re.MULTILINE)
 _ID_ASSIGNMENT = re.compile(r"^\w+(?:\.\w+)*\.[Ii]d\s*=\s*\w*[Ii]d\s*;$")
 _STRAY_USING = re.compile(r"^using\s+[\w.]+\s*;$")
 _CONTROLLER_CLASS = re.compile(r"\bclass\s+(\w+)Controller\b")
 _READONLY = "readonly "
+
+
+@dataclass(frozen=True)
+class Allowances:
+    """What the rules in effect allow outright: the safe fixes their `fix_allowed` rules
+    name, and their notes in the approved wording; `styles` tell comments from code."""
+
+    detectors: frozenset[SafeFix]
+    approved_notes: tuple[ApprovedNote, ...]
+    styles: Mapping[str, CommentStyle]
+
+    def style(self, path: str) -> CommentStyle | None:
+        """The comment style of the file at `path`."""
+        return next((style for suffix, style in self.styles.items() if path.endswith(suffix)), None)
 
 
 @dataclass(frozen=True)
@@ -43,7 +59,10 @@ def numbered_rules(text: str) -> dict[int, str]:
 
 
 def judge(
-    review: SelfReview, applied: Sequence[PlannedEdit], rules: Mapping[int, str]
+    review: SelfReview,
+    applied: Sequence[PlannedEdit],
+    rules: Mapping[int, str],
+    allowances: Allowances,
 ) -> ReviewOutcome:
     """Decide which of `review`'s violations to act on; the others are ignored with a reason.
 
@@ -58,7 +77,7 @@ def judge(
         edit = applied[violation.edit_index]
         cited = f"rule {violation.rule}: {violation.explanation}"
         problem = _quote_problem(violation.rule, violation.quote, rules)
-        allowed = never_a_violation(edit)
+        allowed = never_a_violation(edit, allowances)
         if problem is None and allowed is not None:
             problem = f"{allowed} is never a violation"
         if problem is not None:
@@ -71,10 +90,17 @@ def judge(
     return ReviewOutcome(broken=broken, ignored=tuple(ignored))
 
 
-def never_a_violation(edit: PlannedEdit) -> str | None:
+def never_a_violation(edit: PlannedEdit, allowances: Allowances) -> str | None:
     """What the edit is, when the rules allow it outright; None otherwise."""
     if edit.kind is EditKind.FINAL_NEWLINE:
-        return "a data file's final newline"
+        return (
+            _SAFE_FIXES[SafeFix.FINAL_NEWLINE]
+            if SafeFix.FINAL_NEWLINE in allowances.detectors
+            else None
+        )
+    style = allowances.style(edit.file)
+    if style is None:
+        return None
     old = edit.find.replace("\r\n", "\n").split("\n")
     new = edit.replace.replace("\r\n", "\n").split("\n")
     opcodes = difflib.SequenceMatcher(a=old, b=new, autojunk=False).get_opcodes()
@@ -82,31 +108,69 @@ def never_a_violation(edit: PlannedEdit) -> str | None:
     removed = [
         line.strip() for tag, i1, i2, _, _ in opcodes if tag != "equal" for line in old[i1:i2]
     ]
-    comments = [line for line in added if line.startswith("//")]
-    added_code = [line for line in added if line and not line.startswith("//")]
+    comments = [line for line in added if line.startswith(style.line)]
+    added_code = [line for line in added if line and not line.startswith(style.line)]
     removed_code = [line for line in removed if line]
     if edit.kind is EditKind.NOTE:
         text = " ".join(comments).lower()
-        return next((what for words, what in APPROVED_NOTES.items() if words in text), None)
-    return _safe_fix(added_code, removed_code)
+        return next(
+            (note.what for note in allowances.approved_notes if note.words.lower() in text), None
+        )
+    return next(
+        (
+            _SAFE_FIXES[detector]
+            for detector, detects in _DETECTORS.items()
+            if detector in allowances.detectors and detects(added_code, removed_code)
+        ),
+        None,
+    )
 
 
-def _safe_fix(added: list[str], removed: list[str]) -> str | None:
+def _missing_break(added: list[str], removed: list[str]) -> bool:
     # A break after a loop's match may need the `if` body wrapped in braces.
-    if not removed and [line for line in added if line not in ("{", "}")] == ["break;"]:
-        return "a missing break"
-    if not removed and len(added) == 1 and _ID_ASSIGNMENT.match(added[0]):
-        return "an id lost on update, restored with one assignment"
-    if not added and removed and all(_STRAY_USING.match(line) for line in removed):
-        return "a removed stray using"
-    if len(added) == 1 and len(removed) == 1:
-        before, after = removed[0], added[0]
-        if _READONLY in after and after.replace(_READONLY, "", 1) == before:
-            return "readonly for a fixed path"
-        match = _CONTROLLER_CLASS.search(after)
-        if match and after.replace(f"{match[1]}Controller", match[1], 1) == before:
-            return "the Controller suffix on a controller class"
-    return None
+    return not removed and [line for line in added if line not in ("{", "}")] == ["break;"]
+
+
+def _id_assignment(added: list[str], removed: list[str]) -> bool:
+    return not removed and len(added) == 1 and bool(_ID_ASSIGNMENT.match(added[0]))
+
+
+def _stray_using(added: list[str], removed: list[str]) -> bool:
+    return not added and bool(removed) and all(_STRAY_USING.match(line) for line in removed)
+
+
+def _readonly_field(added: list[str], removed: list[str]) -> bool:
+    if len(added) != 1 or len(removed) != 1:
+        return False
+    before, after = removed[0], added[0]
+    return _READONLY in after and after.replace(_READONLY, "", 1) == before
+
+
+def _controller_suffix(added: list[str], removed: list[str]) -> bool:
+    if len(added) != 1 or len(removed) != 1:
+        return False
+    before, after = removed[0], added[0]
+    match = _CONTROLLER_CLASS.search(after)
+    return match is not None and after.replace(f"{match[1]}Controller", match[1], 1) == before
+
+
+_DETECTORS: dict[SafeFix, Callable[[list[str], list[str]], bool]] = {
+    SafeFix.MISSING_BREAK: _missing_break,
+    SafeFix.ID_ASSIGNMENT: _id_assignment,
+    SafeFix.STRAY_USING: _stray_using,
+    SafeFix.READONLY_FIELD: _readonly_field,
+    SafeFix.CONTROLLER_SUFFIX: _controller_suffix,
+}
+"""Each code detector, in the order they are tried (a data file's newline is its own kind)."""
+_SAFE_FIXES = {
+    SafeFix.MISSING_BREAK: "a missing break",
+    SafeFix.ID_ASSIGNMENT: "an id lost on update, restored with one assignment",
+    SafeFix.STRAY_USING: "a removed stray using",
+    SafeFix.READONLY_FIELD: "readonly for a fixed path",
+    SafeFix.CONTROLLER_SUFFIX: "the Controller suffix on a controller class",
+    SafeFix.FINAL_NEWLINE: "a data file's final newline",
+}
+"""What each detector recognizes, for the repo report."""
 
 
 def _quote_problem(number: int, quote: str, rules: Mapping[int, str]) -> str | None:

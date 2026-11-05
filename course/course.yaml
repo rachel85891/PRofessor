@@ -1,0 +1,67 @@
+# yaml-language-server: $schema=schemas/course.schema.json
+# The course profile (ADR 0023, design §8.1): who the students are and how the review
+# speaks to them. Format: assignments/README.md, "The course profile".
+# Moved from code and prompt templates in stage 3f (fixer_plan, fixer_review and pr_text
+# prompts, pr_body template, services/fixing.py); hw01's PRs must not change by one byte.
+# Origin: the developer's example PR and the lecturer's rules (2026-10-28), approved PRs
+# (2026-10-31), docs/fix-pr-workflow.md §3–4.
+
+audience: a second-year student
+level: second-year
+stack: ASP.NET Core Web API
+
+# How the writer writes the PR text (pr_text prompt).
+student_wording: >-
+  Plain, friendly English, short sentences, no Hebrew, no headings. Speak about the
+  assignment ("The assignment asks…"); never mention the lecturer. Use **bold** for names
+  and `backticks` for code where it helps (`Ok()`, `NoContent()`, `readonly`).
+
+# What {taught_so_far} in a rule becomes when the assignment lists taught techniques.
+taught_so_far: " (taught so far: {techniques})"
+
+# Only files with these suffixes are edited (besides a data file's final newline).
+comment_style:
+  .cs:
+    line: "//"
+    fix_marker: "//fix:"
+
+pr_format:
+  opening: "Hi! "
+  opening_intro: >-
+    starts with "Hi! ", then one or two sentences on what works (only from the list above),
+    then optionally one sentence on what this PR does (for example: "Hi! Your API builds
+    and creating users works. This PR fixes a bug that made reading users crash, and leaves
+    you a few small things."). Never describe the assignment or what it asks you to build.
+  item_rule: >-
+    Write each edit in its own section only, never in two. Never list the changed files.
+    An item never names the kind of edit or a file's full path: start it with a short
+    **bold** statement about the code (for example "**PUT:** …" or "**`Users.txt` did not
+    end with a new line.**").
+  # In the body's order. `label` and `intro` are what the writer is told about a section.
+  sections:
+    - id: fixed
+      heading: "Fixed in this PR (marked `//fix:` in the code)"
+      label: Fixed
+      intro: >-
+        one item per edit listed under "Fixed", nothing else. Start each item with a short
+        **bold** statement of what was wrong, then what was changed (for example:
+        "**`Users.txt` did not end with a new line.** So the next user was written on the
+        same line, and reading the file failed. A new line was added at the end.").
+    - id: for_you
+      heading: For you to do (marked in the code)
+      label: For you to do
+      intro: >-
+        one item per edit listed under "For you to do", nothing else: what the student
+        should do.
+    - id: names
+      heading: "Names (C# conventions)"
+      label: Names
+      intro: one item per edit listed under "Names", nothing else.
+    - id: files
+      heading: Files
+  # `strong` when the verified fix branch clears a major or critical requirement that
+  # failed before (decided in code), `normal` otherwise.
+  title_rule:
+    strong: "{short_name} review: fixes and questions"
+    normal: "{short_name} review: small fixes and questions"
+  commit_message: "{short_name} review: fixes and questions"

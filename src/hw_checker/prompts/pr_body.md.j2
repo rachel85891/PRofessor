@@ -1,30 +1,12 @@
-{#- The review PR's body, in the approved PRs' shape (docs/fix-pr-workflow.md §4): the writer's reply, and the fixer's notes on leftover files. Empty sections are left out. -#}
+{#- The review PR's body (docs/fix-pr-workflow.md §4): the opening, then each section of the
+    course's PR format in its order, with its items; empty sections are left out (ADR 0023). -#}
 {{ opening }}
-{% if text.fixed %}
+{% for section in sections %}
+{% if section["items"] %}
 
-**Fixed in this PR (marked `//fix:` in the code):**
-{% for item in text.fixed %}
+**{{ section.heading }}:**
+{% for item in section["items"] %}
 - {{ item }}
 {% endfor %}
 {% endif %}
-{% if text.for_you %}
-
-**For you to do (marked in the code):**
-{% for item in text.for_you %}
-- {{ item }}
 {% endfor %}
-{% endif %}
-{% if text.names %}
-
-**Names (C# conventions):**
-{% for item in text.names %}
-- {{ item }}
-{% endfor %}
-{% endif %}
-{% if files_notes %}
-
-**Files:**
-{% for item in files_notes %}
-- {{ item }}
-{% endfor %}
-{% endif %}
