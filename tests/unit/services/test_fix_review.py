@@ -237,7 +237,9 @@ def test_a_violation_of_an_edit_that_does_not_exist_is_dropped() -> None:
 def test_a_safe_fix_no_rule_allows_is_not_allowed_outright() -> None:
     without = Allowances(
         detectors=tuple(
-            scoped for scoped in ALLOWANCES.detectors if scoped.item is not SafeFix.READONLY_FIELD
+            scoped
+            for scoped in ALLOWANCES.detectors
+            if scoped.item.detector is not SafeFix.READONLY_FIELD
         ),
         approved_notes=ALLOWANCES.approved_notes,
         styles=ALLOWANCES.styles,

@@ -75,6 +75,10 @@ class SafeFix(StrEnum):
     STRAY_USING = "stray_using"
     CONTROLLER_SUFFIX = "controller_suffix"
     FINAL_NEWLINE = "final_newline"
+    CLIENT_REFERENCE = "client_reference"
+    """One `src`, `href` or `id` value, or the id a script looks up, that a finding names."""
+    ASSIGNMENT_IN_CONDITION = "assignment_in_condition"
+    """`=` changed to `===` in an `if` condition, and nothing else on the line."""
 
 
 class RulePlace(StrEnum):
@@ -215,6 +219,9 @@ class ReviewRule(PolicyItem):
     example: RuleExample | None = None
     detectors: tuple[SafeFix, ...] = ()
     """For `fix_allowed`: the safe fixes this rule allows outright."""
+    named_by: tuple[Identifier, ...] = ()
+    """For a detector that changes a name (`client_reference`): the requirements whose
+    findings must name what the fix changes; without such a finding the fix is rejected."""
     approved_notes: tuple[ApprovedNote, ...] = ()
     forbidden_text: tuple[ForbiddenText, ...] = ()
     forbidden_change: tuple[ForbiddenText, ...] = ()
@@ -228,6 +235,8 @@ class ReviewRule(PolicyItem):
     def _detectors_only_allow_fixes(self) -> Self:
         if self.detectors and self.kind is not RuleKind.FIX_ALLOWED:
             raise ValueError("only a fix_allowed rule names detectors")
+        if self.named_by and not self.detectors:
+            raise ValueError("named_by goes with the detectors it limits")
         return self
 
     @model_validator(mode="after")

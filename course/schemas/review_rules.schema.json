@@ -297,6 +297,14 @@
           "title": "Detectors",
           "type": "array"
         },
+        "named_by": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "Named By",
+          "type": "array"
+        },
         "approved_notes": {
           "default": [],
           "items": {
@@ -436,7 +444,9 @@
         "readonly_field",
         "stray_using",
         "controller_suffix",
-        "final_newline"
+        "final_newline",
+        "client_reference",
+        "assignment_in_condition"
       ],
       "title": "SafeFix",
       "type": "string"

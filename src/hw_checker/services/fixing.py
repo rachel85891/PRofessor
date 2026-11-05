@@ -281,10 +281,11 @@ class FixService:
         edits: Sequence[PlannedEdit],
         assignment: Assignment,
         assignments: tuple[Assignment, ...],
+        results: Sequence[AssignmentResult] = (),
     ) -> EditApplication:
         """Apply `edits` to the fix working copy from the checked commit, keeping only the
-        ones that pass every guardrail (with the forbidden texts of the fixer's rules in
-        effect for `assignment`).
+        ones that pass every guardrail (with the forbidden texts and safe fixes of the
+        fixer's rules in effect for `assignment`; the safe fixes read the round's `results`).
 
         Raises:
             GitOperationError: the working copy cannot be reset.
@@ -296,14 +297,21 @@ class FixService:
         files = {path: self._files.read_bytes(copy, path) for path in paths}
         selected = self._shown_paths(paths, assignments)
         policy = role_policy(self._course, assignment, assignments, ReviewRole.FIXER, selected)
+        styles = self._styles(selected)
         rules = EditRules(
             max_edits=self._config.max_edits,
             max_fix_lines=self._config.max_fix_lines,
-            styles=self._styles(selected),
+            styles=styles,
             editable=frozenset(selected),
             forbidden=policy.forbidden,
             forbidden_changes=policy.forbidden_changes,
             data_files=frozenset(self._data_files(paths)),
+            allowances=Allowances(
+                detectors=policy.detectors,
+                approved_notes=policy.approved_notes,
+                styles=styles,
+                findings=_finding_messages(results),
+            ),
         )
         result = apply_edits(files, edits, rules)
         for path, data in result.files.items():
@@ -321,6 +329,7 @@ class FixService:
         assignment: Assignment,
         assignments: tuple[Assignment, ...],
         application: EditApplication,
+        results: Sequence[AssignmentResult] = (),
     ) -> tuple[SelfReview, LlmUsage] | None:
         """Ask the `judge` role which applied edits break the rules. It changes no file, so
         its reply can be cached; `remove_violations` acts on it.
@@ -362,6 +371,7 @@ class FixService:
         assignments: tuple[Assignment, ...],
         application: EditApplication,
         review: SelfReview,
+        results: Sequence[AssignmentResult] = (),
     ) -> EditApplication:
         """Remove the edits the self-review found breaking a rule (kept as rejected, with the
         reason), applying the others again from the checked commit. A violation that does
@@ -386,6 +396,7 @@ class FixService:
             detectors=policy.detectors,
             approved_notes=policy.approved_notes,
             styles=self._course.profile.comment_style,
+            findings=_finding_messages(results),
         )
         outcome = judge(review, applied, rules, allowances)
         broken = outcome.broken
@@ -398,7 +409,7 @@ class FixService:
         if not broken:
             return application.model_copy(update={"ignored_review": outcome.ignored})
         kept = [edit for index, edit in enumerate(applied) if index not in broken]
-        reapplied = self.apply(workspace, kept, assignment, assignments)
+        reapplied = self.apply(workspace, kept, assignment, assignments, results)
         removed = tuple(
             RejectedEdit(edit=applied[index], reason=reason) for index, reason in broken.items()
         )
@@ -489,6 +500,7 @@ class FixService:
         assignments: tuple[Assignment, ...],
         application: EditApplication,
         verification: VerifyResult,
+        results: Sequence[AssignmentResult] = (),
     ) -> EditApplication:
         """Replace each blamed `fix` with its fallback note (or drop it without one) and apply
         the edits again from the checked commit.
@@ -512,7 +524,7 @@ class FixService:
                 "kept as its fallback note" if note else "dropped (no fallback note)"
             )
             dropped.append(RejectedEdit(edit=edit, reason=reason))
-        reapplied = self.apply(workspace, edits, assignment, assignments)
+        reapplied = self.apply(workspace, edits, assignment, assignments, results)
         return reapplied.model_copy(
             update={
                 "rejected": application.rejected + reapplied.rejected + tuple(dropped),
@@ -526,6 +538,7 @@ class FixService:
         assignment: Assignment,
         assignments: tuple[Assignment, ...],
         attempt: FixAttempt,
+        results: Sequence[AssignmentResult] = (),
     ) -> EditApplication:
         """Apply an earlier attempt's kept edits again from the checked commit, so the working
         copy holds what that attempt's recheck passed.
@@ -534,7 +547,9 @@ class FixService:
             GitOperationError: the working copy cannot be reset.
             FixError: a file cannot be read or written, or the edits no longer apply the same.
         """
-        reapplied = self.apply(workspace, attempt.application.applied, assignment, assignments)
+        reapplied = self.apply(
+            workspace, attempt.application.applied, assignment, assignments, results
+        )
         if reapplied.applied != attempt.application.applied:
             raise FixError(f"Attempt {attempt.number}'s edits no longer apply the same way.")
         return attempt.application
@@ -929,6 +944,18 @@ def _findings(results: Sequence[AssignmentResult]) -> list[dict[str, str]]:
                 }
             )
     return found
+
+
+def _finding_messages(results: Sequence[AssignmentResult]) -> dict[str, tuple[str, ...]]:
+    """The findings' messages by requirement id: what the checks named."""
+    messages: dict[str, tuple[str, ...]] = {}
+    for result in results:
+        for finding in result.findings:
+            messages[finding.requirement_id] = (
+                *messages.get(finding.requirement_id, ()),
+                finding.message_en,
+            )
+    return messages
 
 
 def _responses(results: Sequence[AssignmentResult]) -> list[dict[str, str]]:

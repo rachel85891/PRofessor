@@ -191,6 +191,7 @@ def build_fix_graph(
                     state["plan"].edits,
                     by_id[state["assignment_id"]],
                     selected(state),
+                    state["assignment_results"],
                 )
             },
         )
@@ -203,6 +204,7 @@ def build_fix_graph(
                 by_id[state["assignment_id"]],
                 selected(state),
                 state["application"],
+                state["assignment_results"],
             )
             if reviewed is None:
                 return {"review": None}
@@ -224,6 +226,7 @@ def build_fix_graph(
                     selected(state),
                     state["application"],
                     review,
+                    state["assignment_results"],
                 )
             },
         )
@@ -267,7 +270,11 @@ def build_fix_graph(
             return {
                 "plan": best.plan,
                 "application": fixing.restore(
-                    state["workspace"], by_id[state["assignment_id"]], selected(state), best
+                    state["workspace"],
+                    by_id[state["assignment_id"]],
+                    selected(state),
+                    best,
+                    state["assignment_results"],
                 ),
                 "verification": best.verification,
             }
@@ -285,6 +292,7 @@ def build_fix_graph(
                     selected(state),
                     state["application"],
                     state["verification"],
+                    state["assignment_results"],
                 ),
                 "fell_back": True,
             },

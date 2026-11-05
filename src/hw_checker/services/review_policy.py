@@ -48,6 +48,15 @@ class Scoped[ItemT]:
 
 
 @dataclass(frozen=True)
+class DetectorGrant:
+    """A safe fix a rule allows, and the requirements whose findings must name what it
+    changes (its rule's `named_by`)."""
+
+    detector: SafeFix
+    named_by: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
 class ShownExample:
     """An example as a prompt shows it: an invented situation, or the number of the rule
     whose own example it is, and the plan's JSON."""
@@ -67,7 +76,7 @@ class RolePolicy:
     """For the judge: what is never a violation, one line each."""
     clarifications: tuple[str, ...]
     examples: tuple[ShownExample, ...]
-    detectors: tuple[Scoped[SafeFix], ...]
+    detectors: tuple[Scoped[DetectorGrant], ...]
     approved_notes: tuple[Scoped[ApprovedNote], ...]
     forbidden: tuple[Scoped[ForbiddenText], ...]
     """Text an edit must never add."""
@@ -140,7 +149,9 @@ def role_policy(
         clarifications=tuple(fill(rule.clarification) for rule in rules if rule.clarification),
         examples=tuple(shown_examples),
         detectors=tuple(
-            Scoped(detector, rule.files) for rule in guarded for detector in rule.detectors
+            Scoped(DetectorGrant(detector, rule.named_by), rule.files)
+            for rule in guarded
+            for detector in rule.detectors
         ),
         approved_notes=tuple(
             Scoped(note, rule.files) for rule in guarded for note in rule.approved_notes

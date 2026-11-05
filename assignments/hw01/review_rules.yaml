@@ -57,6 +57,108 @@ rules:
       quote: "docs/fix-pr-workflow.md §3, rule 6 (the lecturer, 2026-10-28)"
     status: approved
 
+  # Stage 18: the client files in wwwroot (hw01 client task, part C). Each rule is limited
+  # to the client file types, so a prompt without them is unchanged.
+  - id: client-reference-fix
+    applies_to: [fixer, judge]
+    kind: fix_allowed
+    files: [.html, .js]
+    text: >-
+      In the client files, fix a `<script src>`, a `<link href>`, an element id, or the id a
+      `getElementById` / `querySelector` looks up, only when a check's finding names it (for
+      example `update.js` looks for `#firstname`, but `update.html` has the id `name`).
+      Change only that reference.
+    detectors: [client_reference]
+    named_by: [hw01-client-file-refs, hw01-client-element-ids]
+    never_a_violation: >-
+      A file name or element id that a check's finding names, changed in one `<script src>`,
+      `<link href>`, `id` or `getElementById` / `querySelector` and nothing else (rule
+      {rule:client-reference-fix}).
+    origin:
+      source: developer
+      quote: "developer decision 2026-11-05 (hw01 client task)"
+    status: approved
+
+  - id: client-condition-fix
+    applies_to: [fixer, judge]
+    kind: fix_allowed
+    files: [.html, .js]
+    text: >-
+      In the client files, fix `=` used instead of `===` inside an `if (…)` condition (`if
+      (res.status = 200)`): change only that `=` to `===`, nothing else on the line.
+    detectors: [assignment_in_condition]
+    never_a_violation: >-
+      An `=` changed to `===` inside an `if` condition, with nothing else on the line (rule
+      {rule:client-condition-fix}).
+    origin:
+      source: developer
+      quote: "developer decision 2026-11-05 (hw01 client task)"
+    status: approved
+
+  - id: client-questions
+    applies_to: [fixer, judge]
+    kind: note_only
+    files: [.html, .js]
+    text: >-
+      In the client files, ask or point out in a note (in the file's comment syntax), never
+      change: an input element used instead of its `.value`; a variable that is never
+      defined; `response.json()` or `.text()` not awaited; a `fetch` URL that does not match
+      the API (when a check found it, for example after the controller was renamed: the
+      `fetch` URLs have to change too); a misspelled or inconsistent file name (`Uptate.js`,
+      `UserDetailes.html`), with "change the `<script src>` too".
+    origin:
+      source: developer
+      quote: "developer decision 2026-11-05 (hw01 client task)"
+    status: approved
+
+  - id: client-leftover-files
+    applies_to: [fixer, judge]
+    kind: note_only
+    files: [.html, .js]
+    text: >-
+      An empty leftover client file (an empty `appSetting.js`) goes in `files_notes`: "delete
+      it if it isn't needed".
+    origin:
+      source: developer
+      quote: "developer decision 2026-11-05 (hw01 client task)"
+    status: approved
+
+  - id: client-naming
+    applies_to: [fixer, judge]
+    kind: note_only
+    files: [.html, .js]
+    text: >-
+      JavaScript names that are not camelCase get a naming note (`note_section`: `names`),
+      never a change.
+    origin:
+      source: developer
+      quote: "developer decision 2026-11-05 (hw01 client task)"
+    status: approved
+
+  - id: client-never-mention
+    applies_to: [fixer, judge]
+    kind: never_mention
+    files: [.html, .js]
+    text: >-
+      In the client files, never mention `onclick=` in HTML, `alert`, `console.log`, `var` or
+      `let` style, formatting, frameworks or modules, or anything the course has not taught.
+    origin:
+      source: developer
+      quote: "developer decision 2026-11-05 (hw01 client task)"
+    status: approved
+
+  - id: client-css
+    applies_to: [fixer, judge]
+    kind: never_mention
+    files: [.css]
+    text: >-
+      Never comment on CSS style. Mention CSS only when it really breaks the page, for
+      example a rule that hides a form the page needs.
+    origin:
+      source: developer
+      quote: "developer decision 2026-11-05 (hw01 client task): CSS only when it really breaks the page"
+    status: approved
+
 examples:
   - id: get-by-id-put-break-newline
     # Moved from code in stage 3f.
@@ -94,4 +196,41 @@ examples:
     origin:
       source: developer
       quote: "the approved PRs, as invented repos"
+    status: approved
+
+  - id: client-id-condition-await
+    # Stage 18 (hw01 client task): the approved PRs' client items, as an invented repo.
+    applies_to: [fixer, judge]
+    files: [.html, .js]
+    situation: >-
+      `wwwroot/update.js` looks up `#firstname`, but `wwwroot/update.html` has the id `name`
+      (finding `hw01-client-element-ids`). The script also checks `if (res.status = 200)`,
+      and reads the reply with `const user = res.json();`.
+    plan: |-
+      {"edits": [
+        {"file": "wwwroot/update.html",
+         "find": "    <input type=\"text\" id=\"name\">",
+         "replace": "    <!--fix: update.js looks for the id firstname-->\n    <input type=\"text\" id=\"firstname\">",
+         "kind": "fix", "finding_ids": ["hw01-client-element-ids"],
+         "reason": "update.js looks up firstname, which no element of update.html has, so the lookup returns null.",
+         "fallback_note": "update.js looks for the id firstname, but this input's id is name: which one is right?",
+         "note_section": null},
+        {"file": "wwwroot/update.js",
+         "find": "    if (res.status = 200) {",
+         "replace": "    //fix: = sets the status to 200; === compares it\n    if (res.status === 200) {",
+         "kind": "fix", "finding_ids": [],
+         "reason": "The condition sets the status to 200 instead of comparing it, so it is always true.",
+         "fallback_note": "Should this be ===? = sets the status to 200, so the condition is always true.",
+         "note_section": null},
+        {"file": "wwwroot/update.js",
+         "find": "        const user = res.json();",
+         "replace": "        //res.json() returns a Promise: add await, otherwise user is the Promise and not the user\n        const user = res.json();",
+         "kind": "note", "finding_ids": [],
+         "reason": "res.json() is not awaited.", "fallback_note": null,
+         "note_section": "for_you"}
+       ],
+       "files_notes": []}
+    origin:
+      source: developer
+      quote: "developer decision 2026-11-05 (hw01 client task); the approved PRs, as an invented repo"
     status: approved

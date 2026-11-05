@@ -39,7 +39,7 @@ def test_the_course_loads_and_every_item_is_approved_with_its_origin() -> None:
     sets = [SOURCE.load_course().rules] + [a.review_rules for a in SOURCE.load_all()]
     items = [item for rules in sets for item in (*rules.rules, *rules.examples)]
 
-    assert len(items) == 15
+    assert len(items) == 23
     assert all(item.status is ItemStatus.APPROVED and item.origin.quote for item in items)
 
 

@@ -22,6 +22,7 @@ from hw_checker.domain import (
     PlannedEdit,
     RejectedEdit,
 )
+from hw_checker.services.fix_review import Allowances, detector_problem
 from hw_checker.services.review_policy import Scoped
 
 MIN_REASON_CHARS = 8
@@ -53,6 +54,9 @@ class EditRules:
     """Text a fix must never remove or change, by the file types its rule is limited to."""
     data_files: frozenset[str] = field(default_factory=frozenset)
     """The repo's data files, the only ones a `final_newline` edit may change."""
+    allowances: Allowances | None = None
+    """The safe fixes in effect: a `fix` of a safe fix's shape that its detector still
+    refuses is rejected with the detector's reason."""
 
     def style(self, path: str) -> CommentStyle | None:
         """The comment style of the file at `path`; None when it is not edited."""
@@ -189,6 +193,8 @@ def _replace(
     if style is None:  # Refused by the path check.
         return f"{path} is not edited"
     problem = _content_problem(path, find, replace, edit.kind, rules, style)
+    if problem is None and rules.allowances is not None:
+        problem = detector_problem(edit, rules.allowances)
     if problem:
         return problem
     texts[path] = text.replace(find.replace("\n", newline), replace.replace("\n", newline), 1)
