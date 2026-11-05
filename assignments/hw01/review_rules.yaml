@@ -1,0 +1,97 @@
+# yaml-language-server: $schema=../../course/schemas/review_rules.schema.json
+# hw01's own review rules: the lecturer's decisions for this assignment (2026-10-28).
+# They follow the course's rules (course/review_rules.yaml) and apply to later
+# assignments too, unless a rule there replaces them or `until` ends them.
+# Stage 3f moved these from the fixer's prompts and from services/fix_review.py and
+# services/fix_edits.py; hw01's prompts must not change by one byte.
+rules:
+  - id: no-file-exists
+    # Moved from code in stage 3f.
+    applies_to: [fixer, judge]
+    kind: never_do
+    text: >-
+      Never add `File.Exists` checks returning `BadRequest`, and do not comment on them: the
+      path is not user input.
+    after: no-core
+    forbidden_text:
+      - text: File.Exists
+        message: added text must never use File.Exists
+      - text: BadRequest(
+        new_only: true
+        message: added text must never return a new BadRequest(
+    origin:
+      source: developer
+      quote: "docs/fix-pr-workflow.md §3, rule 4 (the lecturer, 2026-10-28)"
+    status: approved
+
+  - id: put-returns-ok
+    # Moved from code in stage 3f.
+    applies_to: [fixer, judge]
+    kind: note_only
+    text: >-
+      PUT returns `Ok()`: the assignment asks for it. If PUT is `void`, add a note for the
+      student (`//The assignment asks PUT to return Ok(): change void to IActionResult and
+      return Ok() at the end`); do not change it.
+    after: no-file-exists
+    approved_notes:
+      - words: The assignment asks PUT to return Ok()
+        what: the PUT note in the approved wording
+    never_a_violation: >-
+      The PUT note in the approved wording (`//The assignment asks PUT to return Ok():
+      change void to IActionResult and return Ok() at the end`).
+    origin:
+      source: developer
+      quote: "docs/fix-pr-workflow.md §3, rule 5 (the lecturer, 2026-10-28)"
+    status: approved
+
+  - id: not-yet-taught
+    # Moved from code in stage 3f.
+    applies_to: [fixer, judge]
+    kind: never_mention
+    text: >-
+      Do not mention GET all (not required in HW1), layers, or a `Models` folder (taught
+      later).
+    after: put-returns-ok
+    origin:
+      source: developer
+      quote: "docs/fix-pr-workflow.md §3, rule 6 (the lecturer, 2026-10-28)"
+    status: approved
+
+examples:
+  - id: get-by-id-put-break-newline
+    # Moved from code in stage 3f.
+    applies_to: [fixer, judge]
+    situation: >-
+      `Controllers/OrdersController.cs` has `GET api/orders/{id}` returning `null` for every
+      id (not implemented), and `Put` declared `void`, whose loop keeps reading the file
+      after it found the order. The data file `orders.txt` has no final newline.
+    plan: |-
+      {"edits": [
+        {"file": "Controllers/OrdersController.cs",
+         "find": "            return null;",
+         "replace": "            //Why isn't it implemented? It should read the file and return the order with this id (or NotFound / NoContent)\n            return null;",
+         "kind": "note", "finding_ids": ["hw09-get-by-id"],
+         "reason": "GET by id is part of the assignment; the student should write it.", "fallback_note": null,
+         "note_section": "for_you"},
+        {"file": "Controllers/OrdersController.cs",
+         "find": "        public void Put(int id, [FromBody] Order order)",
+         "replace": "        //The assignment asks PUT to return Ok(): change void to IActionResult and return Ok() at the end\n        public void Put(int id, [FromBody] Order order)",
+         "kind": "note", "finding_ids": [],
+         "reason": "The assignment asks PUT to return Ok().", "fallback_note": null,
+         "note_section": "for_you"},
+        {"file": "Controllers/OrdersController.cs",
+         "find": "                    if (order.Id == id)\n                        orderToReplace = currentOrderLine;",
+         "replace": "                    if (order.Id == id)\n                    {\n                        orderToReplace = currentOrderLine;\n                        //fix: Found- break\n                        break;\n                    }",
+         "kind": "fix", "finding_ids": [],
+         "reason": "Once the order is found, the loop keeps reading the rest of the file.",
+         "fallback_note": "Once the order is found, does the loop need to keep reading the file?",
+         "note_section": null},
+        {"file": "orders.txt", "find": "", "replace": "", "kind": "final_newline",
+         "finding_ids": [], "reason": "The last line has no newline, so the next append joins it.",
+         "fallback_note": null, "note_section": null}
+       ],
+       "files_notes": []}
+    origin:
+      source: developer
+      quote: "the approved PRs, as invented repos"
+    status: approved

@@ -153,7 +153,7 @@ def build_graph_services(settings: Settings, fixer_llm: LLMClient | None = None)
             )
         ),
         assignments=AssignmentCatalogService(
-            YamlAssignmentSource(settings.assignments_dir), registry
+            YamlAssignmentSource(settings.assignments_dir, settings.course_dir), registry
         ),
         fetch=RepoFetchService(git_client, workspace / CLONES_FOLDER),
         execution=execution,

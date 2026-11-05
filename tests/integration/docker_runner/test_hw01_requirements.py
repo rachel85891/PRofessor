@@ -56,7 +56,9 @@ def run_round(
 ) -> tuple[ExecutionResult, list[Finding], list[NotEvaluated]]:
     """Run every probe of the hw01 round, then evaluate _general and hw01 for real."""
     registry = CheckRegistry(builtin_checks())
-    catalog = AssignmentCatalogService(YamlAssignmentSource(REPO_ROOT / "assignments"), registry)
+    catalog = AssignmentCatalogService(
+        YamlAssignmentSource(REPO_ROOT / "assignments", REPO_ROOT / "course"), registry
+    )
     assignments: tuple[Assignment, ...] = catalog.select_for_round("hw01")
     probes = tuple(
         probe

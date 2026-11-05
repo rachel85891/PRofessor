@@ -104,7 +104,9 @@ def test_the_fixer_proposes_a_verified_review_branch_that_fixes_the_data_file(
         pytest.skip("HW_CHECKER_LLM__API_KEY is not set")
     copy, sha = checked_copy(tmp_path)
     registry = CheckRegistry(builtin_checks())
-    catalog = AssignmentCatalogService(YamlAssignmentSource(REPO_ROOT / "assignments"), registry)
+    catalog = AssignmentCatalogService(
+        YamlAssignmentSource(REPO_ROOT / "assignments", REPO_ROOT / "course"), registry
+    )
     assignments = catalog.select_for_round("hw01")
     execution_service = ExecutionService(runner, tmp_path / "runs", Path("logs"))
     checks = DeterministicCheckService(DeterministicRequirementChecker(registry))

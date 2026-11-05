@@ -9,6 +9,10 @@ workspace_dir: workspace
 # Directory holding one folder per assignment with its requirements.yaml (see its README.md).
 assignments_dir: assignments
 
+# Directory holding the course profile (course.yaml) and the course's review_rules.yaml
+# (see assignments/README.md).
+course_dir: course
+
 # Maximum number of repos checked in parallel (at least 1).
 max_parallel_repos: 3
 

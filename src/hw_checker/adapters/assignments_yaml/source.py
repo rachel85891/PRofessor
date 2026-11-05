@@ -1,4 +1,5 @@
-"""YamlAssignmentSource: loads assignments from <assignments_dir>/<id>/requirements.yaml."""
+"""YamlAssignmentSource: loads the course profile from <course_dir> and the assignments from
+<assignments_dir>/<id>/, each with its review rules (ADR 0023)."""
 
 import hashlib
 import json
@@ -13,12 +14,21 @@ import yaml
 from pydantic import ValidationError
 from pydantic_core import ErrorDetails
 
+from hw_checker.adapters.assignments_yaml.rules import (
+    COURSE_FILE,
+    RULES_FILE,
+    RuleLayer,
+    layer_problems,
+    load_profile,
+    load_rule_set,
+    yaml_location,
+)
 from hw_checker.adapters.assignments_yaml.schema import (
     AssignmentFile,
     ProbeEntry,
     RequirementEntry,
 )
-from hw_checker.domain import Assignment, Requirement
+from hw_checker.domain import Assignment, Course, Requirement
 from hw_checker.domain.errors import InvalidAssignmentError
 
 logger = logging.getLogger(__name__)
@@ -27,6 +37,8 @@ REQUIREMENTS_FILE = "requirements.yaml"
 GENERAL_ID = "_general"
 GENERAL_ORDER = 0
 README_HINT = "See assignments/README.md for the file format."
+COURSE_ORDER = -1
+"""The course's rules come before every assignment's."""
 
 # Domain field names that differ from the key names used in the file.
 _FILE_KEY_FOR_FIELD = {"http_probes": "probes"}
@@ -36,38 +48,30 @@ _FILE_KEY_FOR_FIELD = {"http_probes": "probes"}
 class _LoadedFile:
     label: str
     assignment: Assignment
+    rules_label: str
 
 
 class YamlAssignmentSource:
-    """Loads `_general` and every assignment folder, validating all files together.
+    """Loads the course profile, `_general` and every assignment folder, validating all
+    files together: the course's and the assignments' rules refer to each other.
 
     Any problem in any file raises `InvalidAssignmentError` listing every problem found;
     a partial result is never returned.
     """
 
-    def __init__(self, assignments_dir: Path) -> None:
+    def __init__(self, assignments_dir: Path, course_dir: Path) -> None:
         self._dir = assignments_dir
+        self._course_dir = course_dir
 
     def load_all(self) -> tuple[Assignment, ...]:
-        """Return every assignment, including `_general`, ordered by `order`.
+        """Return every assignment, including `_general`, ordered by `order`, each with its
+        review rules.
 
         Raises:
-            InvalidAssignmentError: the directory is missing, or assignment data is invalid.
+            InvalidAssignmentError: a folder is missing, or the course or assignment data is
+                invalid.
         """
-        problems: list[str] = []
-        loaded = [
-            result
-            for folder in self._assignment_folders()
-            if (result := self._load_file(folder, problems)) is not None
-        ]
-        problems.extend(_cross_file_problems(loaded))
-        if problems:
-            count = f"{len(problems)} problem{'' if len(problems) == 1 else 's'}"
-            raise InvalidAssignmentError(
-                f"Invalid assignment data in {self._dir} ({count}). {README_HINT}\n"
-                + "\n".join(f"- {problem}" for problem in problems)
-            )
-        assignments = tuple(sorted((item.assignment for item in loaded), key=lambda a: a.order))
+        _, assignments = self._load()
         logger.info(
             "Loaded %d assignments from %s: %s",
             len(assignments),
@@ -75,6 +79,48 @@ class YamlAssignmentSource:
             ", ".join(assignment.id for assignment in assignments),
         )
         return assignments
+
+    def load_course(self) -> Course:
+        """Return the course profile and the course's own review rules.
+
+        Raises:
+            InvalidAssignmentError: a folder is missing, or the course or assignment data is
+                invalid.
+        """
+        course, _ = self._load()
+        return course
+
+    def _load(self) -> tuple[Course, tuple[Assignment, ...]]:
+        problems: list[str] = []
+        folders = self._assignment_folders()
+        if not self._course_dir.is_dir():
+            raise InvalidAssignmentError(f"Course folder not found: {self._course_dir}")
+        course_label = self._course_dir.name
+        profile = load_profile(
+            self._course_dir / COURSE_FILE, f"{course_label}/{COURSE_FILE}", problems
+        )
+        course_rules_label = f"{course_label}/{RULES_FILE}"
+        course_rules = load_rule_set(self._course_dir / RULES_FILE, course_rules_label, problems)
+        loaded = [
+            result
+            for folder in folders
+            if (result := self._load_file(folder, problems)) is not None
+        ]
+        problems.extend(_cross_file_problems(loaded))
+        if course_rules is not None:
+            layers = [RuleLayer(course_rules_label, COURSE_ORDER, course_rules)] + [
+                RuleLayer(item.rules_label, item.assignment.order, item.assignment.review_rules)
+                for item in loaded
+            ]
+            problems.extend(layer_problems(layers, [item.assignment for item in loaded]))
+        if problems or profile is None or course_rules is None:
+            count = f"{len(problems)} problem{'' if len(problems) == 1 else 's'}"
+            raise InvalidAssignmentError(
+                f"Invalid assignment data in {self._dir} ({count}). {README_HINT}\n"
+                + "\n".join(f"- {problem}" for problem in problems)
+            )
+        assignments = tuple(sorted((item.assignment for item in loaded), key=lambda a: a.order))
+        return Course(profile=profile, rules=course_rules), assignments
 
     def _assignment_folders(self) -> list[Path]:
         if not self._dir.is_dir():
@@ -120,10 +166,18 @@ class YamlAssignmentSource:
                 f"{label}: id '{parsed.id}' does not match the folder name '{folder.name}'. "
                 "Rename the folder or change the id so they match."
             )
+        rules_label = f"{self._dir.name}/{folder.name}/{RULES_FILE}"
+        rules = load_rule_set(folder / RULES_FILE, rules_label, problems)
         assignment = _build_assignment(
             parsed, requirements, label, hashlib.sha256(raw).hexdigest(), problems
         )
-        return None if assignment is None else _LoadedFile(label=label, assignment=assignment)
+        if assignment is None or rules is None:
+            return None
+        return _LoadedFile(
+            label=label,
+            assignment=assignment.model_copy(update={"review_rules": rules}),
+            rules_label=rules_label,
+        )
 
 
 def _variables_are_captured_first(
@@ -157,20 +211,12 @@ def _parse_yaml(raw: bytes, label: str, problems: list[str]) -> dict[str, Any] |
     try:
         data = yaml.safe_load(text)
     except yaml.YAMLError as error:
-        problems.append(f"{label}: not valid YAML ({_yaml_location(error)}).")
+        problems.append(f"{label}: not valid YAML ({yaml_location(error)}).")
         return None
     if not isinstance(data, dict):
         problems.append(f"{label}: the file must contain keys such as id, order and title.")
         return None
     return data
-
-
-def _yaml_location(error: yaml.YAMLError) -> str:
-    mark = getattr(error, "problem_mark", None)
-    problem = getattr(error, "problem", None) or str(error)
-    if mark is None:
-        return str(problem)
-    return f"line {mark.line + 1}, column {mark.column + 1}: {problem}"
 
 
 def _validate_top_level(

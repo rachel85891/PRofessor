@@ -3,6 +3,8 @@
 from typing import Any
 
 from hw_checker.domain import (
+    Course,
+    CourseProfile,
     Evidence,
     Finding,
     FindingSource,
@@ -11,6 +13,8 @@ from hw_checker.domain import (
     RepoTarget,
     Requirement,
     RequirementKind,
+    ReviewRule,
+    ReviewRuleSet,
     Severity,
     Student,
 )
@@ -77,3 +81,44 @@ def finding(**overrides: Any) -> Finding:
         "confidence": 0.8,
     }
     return Finding.model_validate(values | overrides)
+
+
+def review_rule(**overrides: Any) -> ReviewRule:
+    values: dict[str, Any] = {
+        "id": "no-core",
+        "applies_to": ["fixer", "judge"],
+        "kind": "never_do",
+        "text": "Never implement the core of the assignment.",
+        "origin": {"source": "developer"},
+        "status": "approved",
+    }
+    return ReviewRule.model_validate(values | overrides)
+
+
+def course_profile(**overrides: Any) -> CourseProfile:
+    values: dict[str, Any] = {
+        "audience": "a first-year student",
+        "level": "first-year",
+        "stack": "Web API",
+        "student_wording": "Plain English.",
+        "taught_so_far": " (taught so far: {techniques})",
+        "comment_style": {".cs": {"line": "//", "fix_marker": "//fix:"}},
+        "pr_format": {
+            "opening": "Hello! ",
+            "opening_intro": "starts with the greeting.",
+            "item_rule": "One item per edit.",
+            "sections": [
+                {"id": "fixed", "heading": "Fixed", "label": "Fixed", "intro": "the fixes."},
+                {"id": "for_you", "heading": "To do", "label": "To do", "intro": "the notes."},
+                {"id": "names", "heading": "Names", "label": "Names", "intro": "the names."},
+                {"id": "files", "heading": "Files"},
+            ],
+            "title_rule": {"strong": "{short_name}: fixes", "normal": "{short_name}: notes"},
+            "commit_message": "{short_name} review",
+        },
+    }
+    return CourseProfile.model_validate(values | overrides)
+
+
+def course(rules: tuple[ReviewRule, ...] = (), **overrides: Any) -> Course:
+    return Course(profile=course_profile(**overrides), rules=ReviewRuleSet(rules=rules))

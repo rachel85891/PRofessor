@@ -30,7 +30,9 @@ def test_naming_fixture_gives_exactly_the_four_expected_findings(
     tmp_path: Path,
 ) -> None:
     registry = CheckRegistry(builtin_checks())
-    catalog = AssignmentCatalogService(YamlAssignmentSource(REPO_ROOT / "assignments"), registry)
+    catalog = AssignmentCatalogService(
+        YamlAssignmentSource(REPO_ROOT / "assignments", REPO_ROOT / "course"), registry
+    )
     general = catalog.list_assignments()[0]
     repo = sample_copy(source=NAMING_FIXTURE)
 
