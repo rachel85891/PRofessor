@@ -27,6 +27,9 @@ def test_committed_assignments_folder_loads_general_and_hw01() -> None:
         ("gen-naming-locals", "minor"),
         ("gen-file-names", "minor"),
         ("gen-controller-suffix", "minor"),
+        ("gen-gitignore", "minor"),
+        ("gen-no-build-output", "minor"),
+        ("gen-no-absolute-paths", "major"),
     ]
     assert [(r.id, r.severity.value) for r in hw01.requirements] == [
         ("hw01-get-missing", "major"),
@@ -38,13 +41,25 @@ def test_committed_assignments_folder_loads_general_and_hw01() -> None:
         ("hw01-login-wrong-204", "minor"),
         ("hw01-update", "major"),
         ("hw01-update-read-back", "major"),
+        ("hw01-client-pages", "major"),
+        ("hw01-client-scripts", "major"),
+        ("hw01-client-file-refs", "major"),
+        ("hw01-client-element-ids", "major"),
+        ("hw01-client-fetch-routes", "major"),
     ]
-    assert all(r.kind is RequirementKind.HTTP for r in hw01.requirements)
+    client = [r for r in hw01.requirements if r.id.startswith("hw01-client")]
+    assert all(r.kind is RequirementKind.HTTP for r in hw01.requirements if r not in client)
+    assert {r.check for r in client} == {
+        "file_exists",
+        "client_file_refs",
+        "client_element_ids",
+        "client_fetch_routes",
+    }
 
 
 def test_hw01_content_checks_and_wrong_login_statuses() -> None:
     _, hw01 = catalog().list_assignments()
-    probes = {r.id: r.http_probes[0] for r in hw01.requirements}
+    probes = {r.id: r.http_probes[0] for r in hw01.requirements if r.http_probes}
 
     assert probes["hw01-create"].expect_json is ExpectedJson.OBJECT
     assert probes["hw01-read-back"].expect_json is ExpectedJson.OBJECT

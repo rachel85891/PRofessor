@@ -15,7 +15,12 @@ from hw_checker.domain.assignment import (
     Severity,
     TaskEnd,
 )
-from hw_checker.domain.checks import CheckDescription, CheckInput, CheckParamDescription
+from hw_checker.domain.checks import (
+    CheckDescription,
+    CheckInput,
+    CheckParamDescription,
+    TrackedFiles,
+)
 from hw_checker.domain.course import (
     ApprovedNote,
     CommentStyle,
@@ -242,6 +247,7 @@ __all__ = [
     "Student",
     "TaskEnd",
     "TitleRule",
+    "TrackedFiles",
     "TypeFact",
     "TypeKind",
     "UnsupportedRouting",

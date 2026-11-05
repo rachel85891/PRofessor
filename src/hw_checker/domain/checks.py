@@ -10,6 +10,24 @@ from hw_checker.domain.base import DomainModel, Identifier, NonBlankStr
 from hw_checker.domain.execution import ExecutionResult
 
 
+class TrackedFiles(DomainModel):
+    """What git tracks in a working copy, read from its index (the checked commit).
+
+    `paths` are repo-relative with forward slashes. `ignored` are the tracked paths that the
+    repo's own `.gitignore` files match (git decides, not text matching): files committed
+    before `.gitignore` listed them.
+    """
+
+    paths: tuple[str, ...] = ()
+    ignored: tuple[str, ...] = ()
+
+    @model_validator(mode="after")
+    def _ignored_are_tracked(self) -> Self:
+        if not set(self.ignored) <= set(self.paths):
+            raise ValueError("every ignored path must be a tracked path")
+        return self
+
+
 class CheckInput(DomainModel):
     """What evaluating one requirement receives.
 
@@ -17,7 +35,8 @@ class CheckInput(DomainModel):
     without an execution result, so `execution` is optional. `files`, when set, lists the
     repo's files at another commit (repo-relative POSIX paths); checks that only look at
     file names read it instead of the working copy. The requirement is one of the
-    assignment's, or its `ends_when` condition.
+    assignment's, or its `ends_when` condition. `tracked` is
+    None when git's state could not be read; checks that need it are then not evaluated.
     """
 
     repo_dir: Path
@@ -25,6 +44,7 @@ class CheckInput(DomainModel):
     requirement: Requirement
     execution: ExecutionResult | None = None
     files: tuple[str, ...] | None = None
+    tracked: TrackedFiles | None = None
 
     @model_validator(mode="after")
     def _requirement_belongs_to_assignment(self) -> Self:

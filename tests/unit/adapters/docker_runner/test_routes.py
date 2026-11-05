@@ -11,7 +11,6 @@ from hw_checker.adapters.docker_runner.routes import (
     extract_route_table,
     resolve_probe_path,
     routes_in_source,
-    template_matches,
 )
 from hw_checker.domain import (
     DeclaredRoute,
@@ -21,6 +20,7 @@ from hw_checker.domain import (
     RouteTable,
     UnsupportedRouting,
 )
+from hw_checker.domain.routing import template_matches
 
 GET, POST, PUT, DELETE, PATCH = (
     HttpMethod.GET,

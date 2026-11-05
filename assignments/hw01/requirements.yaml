@@ -190,3 +190,45 @@ requirements:
         expected_status: 200
         expect_json: object
         expect_values: ["probe.updated@example.com", "{user_id}"]
+
+  # Stage 17, approved by the developer on 2026-11-05: the client files in wwwroot.
+  # A finding means the page really breaks; what cannot be told from the files is skipped.
+  - id: hw01-client-pages
+    kind: structure
+    title: wwwroot has an HTML page
+    severity: major
+    check: file_exists
+    params:
+      glob: "**/wwwroot/**/*.html"
+
+  - id: hw01-client-scripts
+    kind: structure
+    title: wwwroot has a JavaScript file
+    severity: major
+    check: file_exists
+    params:
+      glob: "**/wwwroot/**/*.js"
+
+  - id: hw01-client-file-refs
+    kind: custom
+    title: Every script, stylesheet and image a page refers to exists, with the same letter case
+    severity: major
+    check: client_file_refs
+    params:
+      root: wwwroot
+
+  - id: hw01-client-element-ids
+    kind: custom
+    title: Every element id a script looks up exists in a page that loads the script
+    severity: major
+    check: client_element_ids
+    params:
+      root: wwwroot
+
+  - id: hw01-client-fetch-routes
+    kind: custom
+    title: Every fetch URL in the scripts matches a route the API declares
+    severity: major
+    check: client_fetch_routes
+    params:
+      root: wwwroot

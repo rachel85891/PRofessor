@@ -15,7 +15,7 @@ from pydantic import SecretStr
 from hw_checker.adapters.git_local.log_format import LOG_FORMAT, parse_log_output
 from hw_checker.adapters.git_local.network_errors import transient_failure
 from hw_checker.adapters.git_local.runner import CommandRunner, GitRunner, run_subprocess
-from hw_checker.domain import CommitInfo
+from hw_checker.domain import CommitInfo, TrackedFiles
 from hw_checker.domain.errors import (
     GitOperationError,
     HwCheckerError,
@@ -355,6 +355,32 @@ class LocalGitClient:
             secret_env={PUSH_TOKEN_VARIABLE: self._push_token.get_secret_value()},
         )
 
+    def tracked_files(self, repo_dir: Path) -> TrackedFiles:
+        """Return the tracked files (`git ls-files`) and those the repo's `.gitignore` files
+        match (`git ls-files --ignored`, the same matcher as `git check-ignore`).
+
+        Only `.gitignore` files at any depth count (`--exclude-per-directory`), never
+        `.git/info/exclude` or the machine's `core.excludesFile`, so the answer depends on
+        the repo alone. Letter case is ignored, as on the students' Windows machines. Each
+        list comes from one call, with no path list on the command line.
+
+        Raises:
+            RepoUnavailableError: `repo_dir` is not a readable Git working copy.
+            ExecutionEnvironmentError: the git executable is not available.
+        """
+        self._require_own_working_copy(repo_dir)
+        listing = [
+            *("-c", "core.quotePath=false", "-c", "core.ignoreCase=true"),
+            *("ls-files", "-z", "--cached"),
+        ]
+        paths = self._git.run(listing, repo_dir, RepoUnavailableError)
+        ignored = self._git.run(
+            [*listing, "--ignored", "--exclude-per-directory=.gitignore"],
+            repo_dir,
+            RepoUnavailableError,
+        )
+        return TrackedFiles(paths=_nul_separated(paths), ignored=_nul_separated(ignored))
+
     def _validate_branch_name(
         self, repo_dir: Path, branch_name: str, error: type[HwCheckerError]
     ) -> None:
@@ -471,6 +497,10 @@ class LocalGitClient:
 def _reject_option_like(value: str, what: str, error: type[HwCheckerError]) -> None:
     if not value.strip() or value.startswith("-"):
         raise error(f"invalid {what}: {value!r}")
+
+
+def _nul_separated(output: str) -> tuple[str, ...]:
+    return tuple(sorted({item for item in output.split("\0") if item}))
 
 
 def _same_path(first: Path, second: Path) -> bool:

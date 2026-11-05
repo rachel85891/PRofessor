@@ -13,9 +13,10 @@ from hw_checker.domain import (
     NotEvaluatedReason,
     Requirement,
     RequirementKind,
+    TrackedFiles,
 )
-from hw_checker.domain.errors import InvalidAssignmentError
-from hw_checker.ports import RequirementChecker
+from hw_checker.domain.errors import HwCheckerError, InvalidAssignmentError
+from hw_checker.ports import GitClient, RequirementChecker
 
 logger = logging.getLogger(__name__)
 
@@ -28,11 +29,14 @@ class DeterministicCheckService:
     """Turns an assignment's structure, custom, build and http requirements into findings.
 
     `code` requirements are left to the LLM reviewer. A requirement that cannot be checked
-    is listed as not evaluated, with its reason, instead of becoming a finding.
+    is listed as not evaluated, with its reason, instead of becoming a finding. With a
+    `git` client, the working copy's tracked files are read once per evaluation for the
+    checks that look at git's state; without one, those checks are not evaluated.
     """
 
-    def __init__(self, checker: RequirementChecker) -> None:
+    def __init__(self, checker: RequirementChecker, git: GitClient | None = None) -> None:
         self._checker = checker
+        self._git = git
 
     def evaluate(
         self, assignment: Assignment, repo_dir: Path, execution: ExecutionResult | None
@@ -44,6 +48,7 @@ class DeterministicCheckService:
         """
         findings: list[Finding] = []
         not_evaluated: list[NotEvaluated] = []
+        tracked = self._tracked_files(repo_dir)
         paths = ", ".join(execution.windows_paths) if execution else ""
         for requirement in assignment.requirements:
             if requirement.kind not in DETERMINISTIC_KINDS:
@@ -53,6 +58,7 @@ class DeterministicCheckService:
                 assignment=assignment,
                 requirement=requirement,
                 execution=execution,
+                tracked=tracked,
             )
             outcome = self._check(requirement, check_input)
             if isinstance(outcome, NotEvaluatedReason):
@@ -71,6 +77,18 @@ class DeterministicCheckService:
             ),
             paths,
         )
+
+    def _tracked_files(self, repo_dir: Path) -> TrackedFiles | None:
+        if self._git is None:
+            return None
+        try:
+            return self._git.tracked_files(repo_dir)
+        except HwCheckerError as error:
+            logger.warning(
+                "Could not read the tracked files (%s); the git-state checks are not evaluated",
+                type(error).__name__,
+            )
+            return None
 
     def _check(
         self, requirement: Requirement, check_input: CheckInput

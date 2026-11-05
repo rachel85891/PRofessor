@@ -125,7 +125,7 @@ def build_graph_services(settings: Settings, fixer_llm: LLMClient | None = None)
         settings.runner.logs_root,
     )
     checker = DeterministicRequirementChecker(registry)
-    checks = DeterministicCheckService(checker)
+    checks = DeterministicCheckService(checker, git_client)
     assignment_source = YamlAssignmentSource(settings.assignments_dir, settings.course_dir)
     fixing = (
         FixService(

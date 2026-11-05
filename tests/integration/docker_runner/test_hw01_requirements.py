@@ -39,6 +39,7 @@ CORRECT_SOLUTIONS = {
     "sample_webapi_user_id": FIXTURES / "sample_webapi_user_id",
 }
 CONTROLLER = PROJECT / "Controllers" / "UsersController.cs"
+STAGE_17 = ("gen-gitignore", "gen-no-build-output", "gen-no-absolute-paths", "hw01-client-")
 
 
 def describe(result: ExecutionResult) -> str:
@@ -59,7 +60,7 @@ def run_round(
     catalog = AssignmentCatalogService(
         YamlAssignmentSource(REPO_ROOT / "assignments", REPO_ROOT / "course"), registry
     )
-    assignments: tuple[Assignment, ...] = catalog.select_for_round("hw01")
+    assignments = tuple(without_stage_17(a) for a in catalog.select_for_round("hw01"))
     probes = tuple(
         probe
         for assignment in assignments
@@ -75,6 +76,13 @@ def run_round(
         findings += checked.findings
         not_evaluated += checked.not_evaluated
     return result, findings, not_evaluated
+
+
+def without_stage_17(assignment: Assignment) -> Assignment:
+    """The repository and client-file requirements have their own unit fixtures; these
+    fixtures are no git clones and have no client folder."""
+    kept = tuple(r for r in assignment.requirements if not r.id.startswith(STAGE_17))
+    return assignment.model_copy(update={"requirements": kept})
 
 
 @pytest.mark.parametrize("fixture", sorted(CORRECT_SOLUTIONS))

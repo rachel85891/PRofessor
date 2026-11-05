@@ -1,10 +1,39 @@
 """The built-in registered checks, for bootstrap to put in the `CheckRegistry`."""
 
+from hw_checker.checks.deterministic.client import (
+    client_element_ids,
+    client_fetch_routes,
+    client_file_refs,
+)
 from hw_checker.checks.deterministic.naming import NAMING_CHECKS
-from hw_checker.checks.deterministic.structure import file_exists, folder_exists, project_count
+from hw_checker.checks.deterministic.repository import (
+    gitignore_covers,
+    no_absolute_paths,
+    not_committed,
+)
+from hw_checker.checks.deterministic.structure import (
+    file_exists,
+    folder_exists,
+    project_count,
+)
 from hw_checker.checks.registry import CheckFunction
+
+REPOSITORY_CHECKS: tuple[CheckFunction, ...] = (gitignore_covers, not_committed, no_absolute_paths)
+CLIENT_CHECKS: tuple[CheckFunction, ...] = (
+    client_file_refs,
+    client_element_ids,
+    client_fetch_routes,
+)
 
 
 def builtin_checks() -> tuple[CheckFunction, ...]:
-    """Every built-in registered check: the structure checks and the six naming checks."""
-    return (file_exists, folder_exists, project_count, *NAMING_CHECKS)
+    """Every built-in registered check: the structure checks, the six naming checks, the
+    repository checks and the client-file checks."""
+    return (
+        file_exists,
+        folder_exists,
+        project_count,
+        *NAMING_CHECKS,
+        *REPOSITORY_CHECKS,
+        *CLIENT_CHECKS,
+    )
