@@ -52,3 +52,26 @@ requirements:
     title: Controller class names end with Controller
     severity: minor
     check: controller_suffix
+  # Stage 17, approved by the developer on 2026-11-05.
+  - id: gen-gitignore
+    kind: structure
+    title: The repository has a .gitignore that leaves out build and IDE files
+    severity: minor
+    check: gitignore_covers
+    params:
+      patterns: [bin/, obj/, .vs/, "*.user"]
+      how_to_add: "in Visual Studio: Git > Settings, or `dotnet new gitignore`"
+  - id: gen-no-build-output
+    kind: structure
+    title: No build or IDE files (bin/, obj/, .vs/, *.user) are committed
+    severity: minor
+    check: not_committed
+    params:
+      patterns: [bin/, obj/, .vs/, "*.user"]
+  - id: gen-no-absolute-paths
+    kind: custom
+    title: The code uses no full path on a disk, so the project runs on another computer
+    severity: major
+    check: no_absolute_paths
+    params:
+      suffixes: [.cs, .js]
