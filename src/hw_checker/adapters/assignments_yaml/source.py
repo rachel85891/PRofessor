@@ -272,6 +272,9 @@ def _build_assignment(
                 "requirements": requirements,
                 "taught_techniques": parsed.taught_techniques,
                 "lenient_notes": parsed.lenient_notes,
+                "ends_when": None
+                if parsed.ends_when is None
+                else {"check": parsed.ends_when.check, "params": parsed.ends_when.params},
                 "source_hash": source_hash,
             }
         )

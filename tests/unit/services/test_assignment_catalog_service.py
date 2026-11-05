@@ -3,6 +3,7 @@ from typing import Any
 import pytest
 from pydantic import BaseModel, ConfigDict
 
+from hw_checker.checks.deterministic.builtin import builtin_checks
 from hw_checker.checks.registry import CheckRegistry, check
 from hw_checker.domain import (
     Assignment,
@@ -12,6 +13,7 @@ from hw_checker.domain import (
     RequirementKind,
     ReviewRuleSet,
     Severity,
+    TaskEnd,
 )
 from hw_checker.domain.errors import InvalidAssignmentError, NotFoundError
 from hw_checker.services.assignments import AssignmentCatalogService
@@ -207,3 +209,24 @@ def test_a_draft_of_a_later_assignment_does_not_block_the_round() -> None:
     )
 
     assert [a.id for a in catalog.select_for_round("hw02")] == ["_general", "hw01", "hw02"]
+
+
+def with_end(base: Assignment, check_name: str, **params: Any) -> Assignment:
+    return base.model_copy(update={"ends_when": TaskEnd(check=check_name, params=params)})
+
+
+def test_ends_when_must_name_a_known_file_list_check_with_valid_params() -> None:
+    registry = CheckRegistry(builtin_checks())
+    valid = with_end(HW01, "project_count", min=2)
+    tree = (GENERAL, valid)
+
+    assert AssignmentCatalogService(FakeAssignmentSource(tree), registry).validate_all() == ()
+    for broken, expected in [
+        (with_end(HW01, "no_such_check"), "hw01: ends_when, check 'no_such_check': unknown"),
+        (with_end(HW01, "project_count"), "param 'min': this required param is missing"),
+        (with_end(HW01, "controller_suffix"), "this check reads file contents"),
+    ]:
+        catalog = AssignmentCatalogService(FakeAssignmentSource((GENERAL, broken)), registry)
+        problems = catalog.validate_all()
+        assert len(problems) == 1
+        assert expected in problems[0]

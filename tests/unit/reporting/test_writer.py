@@ -6,16 +6,27 @@ from pathlib import Path
 import pytest
 
 from hw_checker.domain import (
+    CheckedCommit,
+    CommitChoice,
     FailureKind,
     FixOutcome,
+    HttpMethod,
+    NotEvaluated,
     NotEvaluatedReason,
     PublishOutcome,
     PublishRecord,
+    ResponseEvidence,
 )
 from hw_checker.domain.errors import StorageError
-from hw_checker.reporting.wording import FAILURE_KINDS, NOT_EVALUATED_REASONS
+from hw_checker.reporting.wording import (
+    FAILURE_KINDS,
+    NOT_EVALUATED_REASONS,
+    TEMPLATE_WORDED_REASONS,
+    describe_checked_commit,
+)
 from hw_checker.reporting.writer import (
     COUNTS_COLUMNS,
+    TEMPLATES_DIR,
     MarkdownReportWriter,
     code_fence,
     table_cell,
@@ -278,6 +289,12 @@ def test_counts_file_keeps_hebrew_names(tmp_path: Path) -> None:
 
 @pytest.mark.parametrize("reason", list(NotEvaluatedReason))
 def test_every_not_evaluated_reason_has_a_sentence(reason: NotEvaluatedReason) -> None:
+    if reason in TEMPLATE_WORDED_REASONS:
+        assert reason not in NOT_EVALUATED_REASONS
+        assert f'item.reason_id == "{reason.value}"' in (
+            Path(TEMPLATES_DIR, "repo_report.md.j2").read_text(encoding="utf-8")
+        )
+        return
     sentence = NOT_EVALUATED_REASONS[reason]
     assert sentence[0].isupper() and sentence.endswith(".")
 
@@ -303,3 +320,96 @@ def test_table_cells_stay_on_one_line_and_escape_pipes() -> None:
 def test_code_fence_is_longer_than_any_backticks_inside() -> None:
     assert code_fence("plain") == "```"
     assert code_fence("a ```` b") == "`````"
+
+
+def test_the_repo_report_says_which_commit_was_checked_and_why(tmp_path: Path) -> None:
+    checked = CheckedCommit(
+        sha="a" * 40,
+        authored_at=datetime(2026, 11, 1, 10, 0, tzinfo=UTC),
+        choice=CommitChoice.BEFORE_NEXT_TASK,
+        next_task_sha="b" * 40,
+        later_commits=4,
+        latest_sha="c" * 40,
+    )
+    report = data.full_report()
+    repo_run = report.repo_run.model_copy(update={"checked_commit": checked})
+
+    path = MarkdownReportWriter(tmp_path).write_repo_report(
+        report.model_copy(update={"repo_run": repo_run})
+    )
+
+    assert (
+        "- Checked commit: `aaaaaaa` (2026-11-01), the last before the next task started at "
+        "`bbbbbbb`. The repo has 4 later commits; the pull request is based on this older "
+        "commit.\n"
+    ) in path.read_text(encoding="utf-8")
+
+
+@pytest.mark.parametrize(
+    ("choice", "expected"),
+    [
+        (CommitChoice.NEXT_TASK_NOT_STARTED, "the latest; the next task has not started."),
+        (CommitChoice.NEXT_TASK_AT_FIRST_COMMIT, "already looks like the next task"),
+    ],
+)
+def test_the_checked_commit_line_says_why_the_latest_was_checked(
+    choice: CommitChoice, expected: str
+) -> None:
+    checked = CheckedCommit(
+        sha="a" * 40,
+        authored_at=datetime(2026, 11, 1, tzinfo=UTC),
+        choice=choice,
+        next_task_sha=None if choice is CommitChoice.NEXT_TASK_NOT_STARTED else "a" * 40,
+        latest_sha="a" * 40,
+    )
+
+    assert expected in describe_checked_commit(checked)
+
+
+def test_the_repo_report_shows_the_apps_answer_to_a_failed_request(tmp_path: Path) -> None:
+    report = data.full_report()
+    [first, *rest] = report.repo_run.assignment_results
+    answer = ResponseEvidence(
+        method=HttpMethod.POST,
+        path="/api/users",
+        status=400,
+        body='{"errors":{"Name":["The Name field is required."]}}',
+    )
+    empty = ResponseEvidence(method=HttpMethod.GET, path="/api/users/1", status=500)
+    finding = first.findings[0].model_copy(update={"responses": (answer, empty)})
+    result = first.model_copy(update={"findings": (finding, *first.findings[1:])})
+    repo_run = report.repo_run.model_copy(update={"assignment_results": (result, *rest)})
+
+    path = MarkdownReportWriter(tmp_path).write_repo_report(
+        report.model_copy(update={"repo_run": repo_run})
+    )
+
+    text = path.read_text(encoding="utf-8")
+    assert (
+        "  The app answered POST /api/users with 400 (the start of the response, the app's "
+        "output):\n\n  ```\n"
+        '  {"errors":{"Name":["The Name field is required."]}}\n  ```\n'
+    ) in text
+    assert "  The app answered GET /api/users/1 with 500 and an empty body.\n" in text
+
+
+def test_the_repo_report_words_a_windows_path_with_the_path(tmp_path: Path) -> None:
+    report = data.full_report()
+    [first, *rest] = report.repo_run.assignment_results
+    skipped = NotEvaluated(
+        requirement_id="hw01-r9",
+        reason=NotEvaluatedReason.WINDOWS_PATH,
+        detail="/app/..\\data\\users.txt",
+    )
+    result = first.model_copy(update={"not_evaluated": (*first.not_evaluated, skipped)})
+    repo_run = report.repo_run.model_copy(update={"assignment_results": (result, *rest)})
+
+    path = MarkdownReportWriter(tmp_path).write_repo_report(
+        report.model_copy(update={"repo_run": repo_run})
+    )
+
+    text = path.read_text(encoding="utf-8")
+    assert (
+        "A request it needs answered with a server error after the app could not open "
+        "`/app/..\\data\\users.txt`: a path written with `\\` as the folder separator"
+    ) in text

@@ -154,6 +154,9 @@ class FixWorkspace(DomainModel):
     base_sha: Identifier
     branch_name: NonBlankStr
     """The review branch, created when there is something to commit."""
+    branch_head_sha: Identifier | None = None
+    """The student's branch head when the repo was fetched, when it is newer than
+    `base_sha` (an assignment's `ends_when` chose an earlier commit)."""
 
 
 class FixOutcome(DomainModel):

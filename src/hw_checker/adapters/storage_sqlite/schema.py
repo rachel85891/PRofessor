@@ -77,6 +77,7 @@ class RepoRunRow(Base):
     repo_id: Mapped[str] = mapped_column(ID_TYPE, index=True)
     repo: Mapped[dict[str, Any]] = mapped_column(JSON)
     commit_sha: Mapped[str | None] = mapped_column(ID_TYPE, nullable=True)
+    checked_commit: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
     status: Mapped[str] = mapped_column(String(32), index=True)
     execution: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
     assignment_ids: Mapped[list[str]] = mapped_column(JSON)
@@ -97,6 +98,7 @@ class _FindingColumns:
     message_he: Mapped[str] = mapped_column(Text)
     message_en: Mapped[str] = mapped_column(Text)
     evidence: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    responses: Mapped[list[dict[str, Any]] | None] = mapped_column(JSON, nullable=True)
 
 
 class FindingRow(_FindingColumns, Base):
@@ -124,6 +126,7 @@ class NotEvaluatedRow(Base):
     position: Mapped[int] = mapped_column(Integer)
     requirement_id: Mapped[str] = mapped_column(ID_TYPE)
     reason: Mapped[str] = mapped_column(String(32), index=True)
+    detail: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
 class JudgedFindingRow(_FindingColumns, Base):
@@ -159,6 +162,7 @@ class ProposalRow(Base):
     diff: Mapped[str] = mapped_column(Text)
     verified: Mapped[bool] = mapped_column(Boolean)
     status: Mapped[str] = mapped_column(String(32), index=True)
+    branch_head_sha: Mapped[str | None] = mapped_column(ID_TYPE, nullable=True)
 
 
 class ReviewDecisionRow(Base):

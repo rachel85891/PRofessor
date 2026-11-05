@@ -230,6 +230,33 @@ class Requirement(DomainModel):
         return self
 
 
+TASK_END_SUFFIX = "-ends-when"
+"""Appended to the assignment id to name its `ends_when` condition as a requirement."""
+
+
+class TaskEnd(DomainModel):
+    """When a student has moved on to the next task: a structure check (with its params)
+    that becomes true on the first commit of the next task (ADR 0023: policy as data).
+
+    The round checks the last commit before that one, so later work does not change the
+    result of this assignment.
+    """
+
+    check: Identifier
+    params: CheckParams = Field(default_factory=lambda: MappingProxyType({}))
+
+    def as_requirement(self, assignment_id: str) -> Requirement:
+        """The condition as a structure requirement, so the registered checks can run it."""
+        return Requirement(
+            id=f"{assignment_id}{TASK_END_SUFFIX}",
+            title="The next task has started",
+            severity=Severity.MINOR,
+            kind=RequirementKind.STRUCTURE,
+            check=self.check,
+            params=self.params,
+        )
+
+
 _NUMBERED_ID = re.compile(r"^([A-Za-z]+)0*(\d+)$")
 
 
@@ -244,6 +271,8 @@ class Assignment(DomainModel):
     lenient_notes: tuple[NonBlankStr, ...] = ()
     review_rules: ReviewRuleSet = ReviewRuleSet()
     """The assignment's own review rules (its `review_rules.yaml`, ADR 0023)."""
+    ends_when: TaskEnd | None = None
+    """When the student has started the next task; the round checks the commit before it."""
     source_hash: str | None = Field(default=None, pattern=SHA256_HEX_PATTERN)
     """SHA-256 of the requirements file, so results show which version they were checked against."""
 
@@ -254,6 +283,11 @@ class Assignment(DomainModel):
         if match is None:
             return self.id.strip("_").upper()
         return f"{match.group(1).upper()}{int(match.group(2))}"
+
+    @property
+    def end_requirement(self) -> Requirement | None:
+        """`ends_when` as a structure requirement; None when the assignment has none."""
+        return None if self.ends_when is None else self.ends_when.as_requirement(self.id)
 
     @model_validator(mode="after")
     def _requirement_ids_are_unique(self) -> Self:

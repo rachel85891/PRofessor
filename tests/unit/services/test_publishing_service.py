@@ -316,3 +316,25 @@ def test_publish_approved_needs_a_proposal() -> None:
 
     with pytest.raises(ReviewError, match="no proposal for run-1/avi__api to publish"):
         setup.service.publish_approved((setup.repo_run_id,))
+
+
+def test_a_proposal_on_an_earlier_commit_publishes_while_the_head_has_not_moved() -> None:
+    setup = Setup(head=MOVED)
+    proposal = setup.save(ProposalStatus.APPROVED)
+    on_earlier_commit = proposal.model_copy(update={"branch_head_sha": MOVED})
+    setup.storage.proposals.save(on_earlier_commit)
+
+    record = setup.service.publish(on_earlier_commit)
+
+    assert record.outcome is PublishOutcome.PUBLISHED
+    assert setup.stored().branch_head_sha == MOVED
+
+
+def test_a_proposal_on_an_earlier_commit_is_stale_when_the_head_moved_again() -> None:
+    setup = Setup(head="8" * 40)
+    proposal = setup.save(ProposalStatus.APPROVED).model_copy(update={"branch_head_sha": MOVED})
+
+    record = setup.service.publish(proposal)
+
+    assert record.outcome is PublishOutcome.STALE
+    assert record.message.startswith("avi/api moved from 9999999 to 8888888")

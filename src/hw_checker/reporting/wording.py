@@ -1,6 +1,14 @@
 """Plain-English wording for the reviewer's reports, kept in one place."""
 
-from hw_checker.domain import FailureKind, NotEvaluatedReason, Severity
+from hw_checker.domain import (
+    CheckedCommit,
+    CommitChoice,
+    FailureKind,
+    NotEvaluatedReason,
+    Severity,
+)
+
+SHORT_SHA = 7
 
 NOT_EVALUATED_REASONS: dict[NotEvaluatedReason, str] = {
     NotEvaluatedReason.NO_EXECUTION: "The repo was not built or run, so this was not checked.",
@@ -27,7 +35,11 @@ NOT_EVALUATED_REASONS: dict[NotEvaluatedReason, str] = {
         "not return, so it was not sent."
     ),
 }
-"""One sentence per reason a requirement was not checked."""
+"""One sentence per reason a requirement was not checked; the reasons in
+`TEMPLATE_WORDED_REASONS` are worded in the report template instead."""
+
+TEMPLATE_WORDED_REASONS = frozenset({NotEvaluatedReason.WINDOWS_PATH})
+"""Reasons whose sentence names a detail (such as a path), so the template words them."""
 
 FAILURE_KINDS: dict[FailureKind, str] = {
     FailureKind.BUILD_FAILED: "The project does not build.",
@@ -48,3 +60,25 @@ FAILURE_KINDS: dict[FailureKind, str] = {
 
 SEVERITY_ORDER: tuple[Severity, ...] = (Severity.CRITICAL, Severity.MAJOR, Severity.MINOR)
 """The order of the findings' sections in a repo report: most serious first."""
+
+
+def describe_checked_commit(checked: CheckedCommit) -> str:
+    """One line on which commit was checked and why, for the report and the approval gate."""
+    sha = f"`{checked.sha[:SHORT_SHA]}` ({checked.authored_at:%Y-%m-%d})"
+    next_task = f"`{(checked.next_task_sha or '')[:SHORT_SHA]}`"
+    match checked.choice:
+        case CommitChoice.BEFORE_NEXT_TASK:
+            later = "commit" if checked.later_commits == 1 else "commits"
+            return (
+                f"{sha}, the last before the next task started at {next_task}. The repo has "
+                f"{checked.later_commits} later {later}; the pull request is based on this "
+                "older commit."
+            )
+        case CommitChoice.NEXT_TASK_NOT_STARTED:
+            return f"{sha}, the latest; the next task has not started."
+        case CommitChoice.NEXT_TASK_AT_FIRST_COMMIT:
+            return (
+                f"{sha}, the latest: the repo's first commit ({next_task}) already looks like "
+                "the next task, so the commit before it cannot be found. Check by hand which "
+                "task this code is for."
+            )

@@ -31,6 +31,7 @@ from hw_checker.adapters.docker_runner.classification import RunnerStep, StepOut
 from hw_checker.adapters.docker_runner.code_facts import extract_code_facts
 from hw_checker.adapters.docker_runner.discovery import (
     DiscoveryFailure,
+    ProjectFolder,
     WebProject,
     discover_web_project,
     is_older_framework,
@@ -65,6 +66,7 @@ from hw_checker.adapters.docker_runner.runner_config import (
     DockerRunnerConfig,
     FrameworkImages,
 )
+from hw_checker.adapters.docker_runner.windows_paths import windows_paths_in_log
 from hw_checker.config.logging_setup import log_context
 from hw_checker.domain import (
     BodyAdaptation,
@@ -314,7 +316,9 @@ class _Execution:
         code_facts = extract_code_facts(self.request.working_copy, discovery.folder)
         self.controllers = choose_primary_controller(self.request.probes, self.routes)
         self.project_sources = ProjectSources.read(
-            self.request.working_copy, discovery.folder, discovery.nullable
+            self.request.working_copy,
+            ProjectFolder(discovery.folder, discovery.nullable),
+            discovery.other_projects,
         )
         result = self._prepare_build_run(discovery, plan)
         # Every result after this point records the detected paths, the route table and the
@@ -506,6 +510,7 @@ class _Execution:
             logs_excerpt=excerpt_log(log),
             logs_path=self.request.logs_dir,
             probe_results=probe_results,
+            windows_paths=windows_paths_in_log(log),
         )
 
     def _wait_until_ready(self, app: str, sidecar: str, base_url: str) -> StepOutcome:

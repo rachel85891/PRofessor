@@ -8,8 +8,15 @@ status, headers and body.
 import re
 from dataclasses import dataclass, field
 
-EXCERPT_CHARS = 500
+from hw_checker.domain.execution import MAX_RESPONSE_EXCERPT_CHARS
+
+EXCERPT_CHARS = MAX_RESPONSE_EXCERPT_CHARS
 """The most of a response body kept for the reviewer."""
+CUT_MARKER = " [...]"
+"""Ends an excerpt that was cut."""
+CLEAN_CUT_SHARE = 0.8
+"""A cut moves back to the last line break or space only within this last share of the
+limit; with none there, it cuts at the limit."""
 
 _STATUS_LINE = re.compile(r"^HTTP/\S+\s+(?P<status>\d{3})")
 _BLANK_LINE = re.compile(r"\r?\n\r?\n")
@@ -56,9 +63,20 @@ def parse_response(raw: str, limit: int | None = None) -> HttpResponse | None:
 
 
 def excerpt(body: str, limit: int = EXCERPT_CHARS) -> str:
-    """The start of a response body, without surrounding whitespace, at most `limit` long."""
+    """The start of a response body, without surrounding whitespace, at most `limit` long.
+
+    A longer body is cut cleanly: after the last line break or space near the limit (never
+    inside a word when one is close), and marked with `CUT_MARKER`.
+    """
     trimmed = body.strip()
-    return trimmed if len(trimmed) <= limit else trimmed[: limit - 3] + "..."
+    if len(trimmed) <= limit:
+        return trimmed
+    room = limit - len(CUT_MARKER)
+    head = trimmed[:room]
+    boundary = max(head.rfind("\n"), head.rfind(" "))
+    if boundary >= room * CLEAN_CUT_SHARE:
+        head = head[:boundary]
+    return head.rstrip() + CUT_MARKER
 
 
 def _headers(head: str) -> dict[str, str]:

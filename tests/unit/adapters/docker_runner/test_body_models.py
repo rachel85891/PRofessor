@@ -9,6 +9,7 @@ from hw_checker.adapters.docker_runner.body_models import (
     ProjectSources,
 )
 from hw_checker.adapters.docker_runner.csharp_source import mask_source
+from hw_checker.adapters.docker_runner.discovery import ProjectFolder
 from hw_checker.adapters.docker_runner.routes import routes_in_source
 from hw_checker.domain import DeclaredRoute
 
@@ -180,7 +181,7 @@ def test_attributes_on_other_parameters_are_respected() -> None:
         ),
         (
             "[HttpPost] public IActionResult P([FromBody] Order o) => Ok();",
-            "class Order not found in the project",
+            "class Order not found in the solution",
         ),
         (
             "[HttpPost] public IActionResult P(User a, LoginDto b) => Ok();",
@@ -215,7 +216,7 @@ def test_two_classes_with_the_same_name_are_unsupported() -> None:
 
     model = project.body_model(route)
 
-    assert model == ModelUnavailable("several classes named User")
+    assert model == ModelUnavailable("several classes named User (Models/Models.cs, Other/User.cs)")
 
 
 def test_comments_and_strings_do_not_add_properties() -> None:
@@ -260,6 +261,146 @@ def test_reading_the_project_folder_skips_bin_and_obj(tmp_path: Path) -> None:
         "public class User { public int Copy { get; set; } }", encoding="utf-8"
     )
 
-    read = ProjectSources.read(tmp_path / "repo", "Api", nullable=True)
+    read = ProjectSources.read(tmp_path / "repo", ProjectFolder("Api", nullable=True))
 
     assert read.model("User") == BodyModel("User", (BodyProperty("Id", "int", False, False),))
+
+
+# ---------------------------------------------------------------- models in other projects
+
+USERS_CONTROLLER = (
+    "using Entities;\nusing Microsoft.AspNetCore.Mvc;\n\nnamespace Api.Controllers;\n\n"
+    '[ApiController]\n[Route("api/[controller]")]\n'
+    "public class UsersController : ControllerBase\n{\n"
+    "    [HttpPost]\n    public IActionResult Post([FromBody] User user) => Ok(user);\n}\n"
+)
+ENTITY_USER = (
+    "using System.ComponentModel.DataAnnotations;\n\nnamespace Entities;\n\n"
+    "public class User\n{\n    public int Id { get; set; }\n"
+    "    [Required]\n    public string Name { get; set; }\n"
+    "    public string? Email { get; set; }\n}\n"
+)
+
+
+def write(root: Path, files: dict[str, str]) -> None:
+    for relative, text in files.items():
+        path = root / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text, encoding="utf-8")
+
+
+def post_route() -> DeclaredRoute:
+    routes, _ = routes_in_source(USERS_CONTROLLER, "Api/Controllers/UsersController.cs")
+    return routes[0]
+
+
+def test_a_model_in_another_project_of_the_solution_is_found(tmp_path: Path) -> None:
+    write(
+        tmp_path,
+        {
+            "Api/Controllers/UsersController.cs": USERS_CONTROLLER,
+            "Entities/User.cs": ENTITY_USER,
+        },
+    )
+
+    read = ProjectSources.read(
+        tmp_path, ProjectFolder("Api", nullable=False), (ProjectFolder("Entities", True),)
+    )
+
+    # Nullable comes from the model's own project: non-nullable Name is required there.
+    assert read.body_model(post_route()) == BodyModel(
+        "User",
+        (
+            BodyProperty("Id", "int", False, False),
+            BodyProperty("Name", "string", False, True),
+            BodyProperty("Email", "string", True, False),
+        ),
+    )
+
+
+def test_the_controllers_using_line_picks_the_model_among_projects(tmp_path: Path) -> None:
+    write(
+        tmp_path,
+        {
+            "Api/Controllers/UsersController.cs": USERS_CONTROLLER,
+            "Api/Models/User.cs": (
+                "namespace Api.Models;\npublic class User { public int Old { get; set; } }\n"
+            ),
+            "Entities/User.cs": ENTITY_USER,
+        },
+    )
+
+    read = ProjectSources.read(
+        tmp_path, ProjectFolder("Api", nullable=False), (ProjectFolder("Entities", False),)
+    )
+
+    model = read.body_model(post_route())
+    assert isinstance(model, BodyModel)
+    assert [prop.name for prop in model.properties] == ["Id", "Name", "Email"]
+
+
+def test_a_model_no_using_line_singles_out_is_ambiguous(tmp_path: Path) -> None:
+    controller = USERS_CONTROLLER.replace("using Entities;\n", "")
+    write(
+        tmp_path,
+        {
+            "Api/Controllers/UsersController.cs": controller,
+            "Data/User.cs": "namespace Data;\npublic class User { public int A { get; set; } }\n",
+            "Entities/User.cs": ENTITY_USER,
+        },
+    )
+    routes, _ = routes_in_source(controller, "Api/Controllers/UsersController.cs")
+
+    read = ProjectSources.read(
+        tmp_path,
+        ProjectFolder("Api", nullable=False),
+        (ProjectFolder("Data", False), ProjectFolder("Entities", False)),
+    )
+
+    assert read.body_model(routes[0]) == ModelUnavailable(
+        "several classes named User (Data/User.cs, Entities/User.cs)"
+    )
+
+
+def test_a_global_using_or_a_qualified_name_also_picks_the_model(tmp_path: Path) -> None:
+    controller = USERS_CONTROLLER.replace("using Entities;\n", "")
+    write(
+        tmp_path,
+        {
+            "Api/GlobalUsings.cs": "global using Entities;\n",
+            "Api/Controllers/UsersController.cs": controller,
+            "Data/User.cs": "namespace Data;\npublic class User { public int A { get; set; } }\n",
+            "Entities/User.cs": ENTITY_USER,
+        },
+    )
+    routes, _ = routes_in_source(controller, "Api/Controllers/UsersController.cs")
+    read = ProjectSources.read(
+        tmp_path,
+        ProjectFolder("Api", nullable=False),
+        (ProjectFolder("Data", False), ProjectFolder("Entities", False)),
+    )
+
+    by_global = read.body_model(routes[0])
+    qualified = read.model("Data.User", "Api/Controllers/UsersController.cs")
+
+    assert isinstance(by_global, BodyModel) and by_global.properties[0].name == "Id"
+    assert qualified == BodyModel("User", (BodyProperty("A", "int", False, False),))
+
+
+def test_a_project_nested_in_the_web_projects_folder_is_read_once(tmp_path: Path) -> None:
+    write(
+        tmp_path,
+        {
+            "Controllers/UsersController.cs": USERS_CONTROLLER,
+            "Entities/User.cs": ENTITY_USER,
+        },
+    )
+    routes, _ = routes_in_source(USERS_CONTROLLER, "Controllers/UsersController.cs")
+
+    read = ProjectSources.read(
+        tmp_path, ProjectFolder("", nullable=False), (ProjectFolder("Entities", True),)
+    )
+
+    model = read.body_model(routes[0])
+    assert isinstance(model, BodyModel)
+    assert model.properties[1] == BodyProperty("Name", "string", False, True)

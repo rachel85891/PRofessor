@@ -7,7 +7,7 @@ from alembic import command
 from alembic.autogenerate import compare_metadata
 from alembic.config import Config
 from alembic.migration import MigrationContext
-from sqlalchemy import delete, inspect, select, text
+from sqlalchemy import delete, insert, inspect, select, text
 
 from hw_checker.adapters.storage_sqlite import SqlStorage, mapping, migrate
 from hw_checker.adapters.storage_sqlite.database import Database, sqlite_file
@@ -27,6 +27,8 @@ TABLES = {
     "publish_log",
 }
 PUBLISHING_COLUMNS = {"base_sha", "head_sha", "local_repo_dir", "pr_title", "pr_body"}
+REPO_RUN_COLUMNS_SINCE_0004 = {"checked_commit"}
+FINDING_COLUMNS_SINCE_0005 = {"id", "responses"}
 
 
 def url_for(path: Path) -> str:
@@ -65,7 +67,7 @@ def test_migrate_is_idempotent(tmp_path: Path) -> None:
     try:
         with db.engine.connect() as connection:
             versions = connection.execute(text("SELECT version_num FROM alembic_version")).all()
-        assert versions == [("0003",)]
+        assert versions == [("0006",)]
     finally:
         db.dispose()
 
@@ -97,9 +99,20 @@ def test_migrate_upgrades_a_0001_database_and_keeps_its_rows(tmp_path: Path) -> 
             session.flush()
             repo_record = RepoRunRow(repo_run_id=old_repo_run.repo_run_id, run_id=run.run_id)
             mapping.fill_repo_run_row(repo_record, old_repo_run)
-            session.add(repo_record)
-            session.flush()
-            session.add_all(mapping.finding_rows(old_repo_run))
+            # Only the columns revision 0001 has.
+            values = {
+                column.name: getattr(repo_record, column.key)
+                for column in RepoRunRow.__table__.columns
+                if column.name not in REPO_RUN_COLUMNS_SINCE_0004 and column.name != "id"
+            }
+            session.execute(insert(RepoRunRow).values(**values))
+            for row in mapping.finding_rows(old_repo_run):
+                columns = {c.name: getattr(row, c.key) for c in FindingRow.__table__.columns}
+                session.execute(
+                    insert(FindingRow).values(
+                        **{k: v for k, v in columns.items() if k not in FINDING_COLUMNS_SINCE_0005}
+                    )
+                )
     finally:
         db.dispose()
 
@@ -132,8 +145,8 @@ def test_downgrade_to_0001_drops_only_the_not_evaluated_table(tmp_path: Path) ->
         tables = set(inspect(db.engine).get_table_names())
         assert not tables & {"not_evaluated", "publish_log"}
         assert tables >= TABLES - {"not_evaluated", "publish_log"}
-        with db.session("count") as session:
-            assert len(session.scalars(select(RepoRunRow)).all()) == 3
+        with db.engine.connect() as connection:
+            assert connection.execute(text("SELECT COUNT(*) FROM repo_runs")).scalar_one() == 3
     finally:
         db.dispose()
     migrate(url)
@@ -141,12 +154,14 @@ def test_downgrade_to_0001_drops_only_the_not_evaluated_table(tmp_path: Path) ->
 
 def test_migrate_upgrades_a_0002_database_and_keeps_its_proposals(tmp_path: Path) -> None:
     url = url_for(tmp_path / "hw.db")
-    run_alembic(url, "upgrade", "0002")
+    # Repo runs are saved with today's schema, then the database goes back to 0002.
+    migrate(url)
     storage = SqlStorage(url)
     try:
         storage.runs.save(builders.full_run())
     finally:
         storage.close()
+    run_alembic(url, "downgrade", "0002")
     repo_run_id = builders.full_run().repo_runs[2].repo_run_id
     db = Database(url)
     try:
@@ -194,8 +209,8 @@ def test_downgrade_to_0002_drops_the_publishing_data_only(tmp_path: Path) -> Non
         assert "publish_log" not in inspector.get_table_names()
         columns = {column["name"] for column in inspector.get_columns("proposals")}
         assert not columns & PUBLISHING_COLUMNS
-        with db.session("count") as session:
-            assert len(session.scalars(select(RepoRunRow)).all()) == 3
+        with db.engine.connect() as connection:
+            assert connection.execute(text("SELECT COUNT(*) FROM repo_runs")).scalar_one() == 3
     finally:
         db.dispose()
     migrate(url)
@@ -312,3 +327,48 @@ def test_migrate_error_is_a_storage_error(tmp_path: Path) -> None:
 )
 def test_sqlite_file_is_found_only_for_file_databases(url: str, expected: Path | None) -> None:
     assert sqlite_file(url) == expected
+
+
+def test_migrate_upgrades_a_0003_database_with_empty_checked_commits(tmp_path: Path) -> None:
+    url = url_for(tmp_path / "hw.db")
+    run_alembic(url, "upgrade", "0003")
+
+    migrate(url)
+
+    db = Database(url)
+    try:
+        inspector = inspect(db.engine)
+        assert "checked_commit" in {c["name"] for c in inspector.get_columns("repo_runs")}
+        assert "branch_head_sha" in {c["name"] for c in inspector.get_columns("proposals")}
+    finally:
+        db.dispose()
+    storage = SqlStorage(url)
+    try:
+        run = builders.full_run()
+        storage.runs.save(run)
+        assert storage.runs.get(run.run_id).repo_runs[0].checked_commit is None
+    finally:
+        storage.close()
+
+
+def test_downgrade_to_0003_drops_only_the_checked_commit_columns(tmp_path: Path) -> None:
+    url = url_for(tmp_path / "hw.db")
+    migrate(url)
+    storage = SqlStorage(url)
+    try:
+        storage.runs.save(builders.full_run())
+    finally:
+        storage.close()
+
+    run_alembic(url, "downgrade", "0003")
+
+    db = Database(url)
+    try:
+        inspector = inspect(db.engine)
+        assert "checked_commit" not in {c["name"] for c in inspector.get_columns("repo_runs")}
+        assert "branch_head_sha" not in {c["name"] for c in inspector.get_columns("proposals")}
+        with db.engine.connect() as connection:
+            assert connection.execute(text("SELECT COUNT(*) FROM repo_runs")).scalar_one() == 3
+    finally:
+        db.dispose()
+    migrate(url)

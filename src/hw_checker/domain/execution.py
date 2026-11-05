@@ -3,7 +3,7 @@
 import re
 from enum import StrEnum
 from pathlib import Path
-from typing import Self
+from typing import Annotated, Self
 
 from pydantic import Field, model_validator
 
@@ -16,8 +16,9 @@ MAX_LOGS_EXCERPT_CHARS = 8000
 MAX_PROBE_ERROR_CHARS = 500
 """Upper bound for the short error text of a single probe."""
 
-MAX_RESPONSE_EXCERPT_CHARS = 500
-"""Upper bound for the start of a probe's response body kept for the reviewer."""
+MAX_RESPONSE_EXCERPT_CHARS = 1000
+"""Upper bound for the start of a probe's response body kept for the reviewer and shown
+with a failed request (for a validation error, it names the failing field)."""
 
 MAX_CAPTURED_CHARS = 500
 """Upper bound for a value captured from a response."""
@@ -437,6 +438,9 @@ class ExecutionResult(DomainModel):
     serving_controllers: tuple[str, ...] = ()
     """Every controller that could serve at least one probe, sorted by name."""
     code_facts: CodeFacts | None = None
+    windows_paths: tuple[Annotated[str, Field(max_length=MAX_PATH_TEXT_CHARS)], ...] = ()
+    """Paths with a Windows folder separator that the app's run log names in a file or
+    directory exception; a 5xx answer may then be the Linux container's fault."""
     """Names declared in the student's code, for the naming checks; None when not read."""
 
     @property

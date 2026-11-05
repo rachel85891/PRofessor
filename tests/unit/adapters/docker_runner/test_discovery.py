@@ -4,6 +4,7 @@ import pytest
 
 from hw_checker.adapters.docker_runner.discovery import (
     DiscoveryFailure,
+    ProjectFolder,
     WebProject,
     discover_web_project,
     framework_version,
@@ -14,6 +15,7 @@ SUPPORTED = ("net8.0", "net9.0", "net10.0")
 
 WEB = '<Project Sdk="Microsoft.NET.Sdk.Web"><PropertyGroup>{props}</PropertyGroup></Project>'
 LIBRARY = '<Project Sdk="Microsoft.NET.Sdk"><PropertyGroup /></Project>'
+NULLABLE = "<PropertyGroup><Nullable>enable</Nullable></PropertyGroup>"
 
 
 def write(root: Path, relative: str, content: str) -> None:
@@ -34,9 +36,11 @@ def test_single_web_project(tmp_path: Path) -> None:
 
 def test_web_project_next_to_a_class_library(tmp_path: Path) -> None:
     write(tmp_path, "Api/Api.csproj", web())
-    write(tmp_path, "Core/Core.csproj", LIBRARY)
+    write(tmp_path, "Core/Core.csproj", LIBRARY.replace("<PropertyGroup />", NULLABLE))
 
-    assert discover_web_project(tmp_path) == WebProject("Api/Api.csproj", "Api")
+    assert discover_web_project(tmp_path) == WebProject(
+        "Api/Api.csproj", "Api", other_projects=(ProjectFolder("Core", nullable=True),)
+    )
 
 
 def test_web_project_in_a_nested_folder(tmp_path: Path) -> None:

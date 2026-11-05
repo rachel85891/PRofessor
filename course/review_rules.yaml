@@ -146,6 +146,30 @@ rules:
       quote: "docs/fix-pr-workflow.md §3, rule 11"
     status: approved
 
+  - id: windows-paths
+    # Stage 15: a path written with Windows folder separators is not held against the student.
+    applies_to: [fixer, judge]
+    kind: note_only
+    text: >-
+      A requirement not checked because the app could not open a path written with `\` as
+      the folder separator (`windows_path`) is not the student's fault: never change that
+      path. You may add one note right above the line that writes it, in the wording of
+      this rule's example.
+    example:
+      file: Data/Store.cs
+      find: '    private readonly string path = "..\\data\\users.txt";'
+      replace: "    //On Linux and macOS \"\\\\\" isn't a folder separator: Path.Combine(\"..\", \"data\", \"users.txt\") works everywhere\n    private readonly string path = \"..\\\\data\\\\users.txt\";"
+    approved_notes:
+      - words: isn't a folder separator
+        what: the note about a path written with Windows folder separators
+    never_a_violation: >-
+      The note of rule {rule:windows-paths} about a path written with `\` as the folder
+      separator.
+    origin:
+      source: developer
+      quote: "developer decision 2026-11-05"
+    status: approved
+
 examples:
   - id: break-and-naming
     # Moved from code in stage 3f.

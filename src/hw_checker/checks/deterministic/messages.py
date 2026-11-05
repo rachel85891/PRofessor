@@ -55,6 +55,12 @@ FOLDER_MISSING = MessageTemplate(
     en="No folder named {path} was found in the repository.",
 )
 
+PROJECT_TOO_FEW = MessageTemplate(
+    name="PROJECT_TOO_FEW",
+    he="נדרשו לפחות {min_count} פרויקטים (קבצי csproj.), ונמצאו {found}.",
+    en="At least {min_count} projects (.csproj files) were expected; {found} found.",
+)
+
 BUILD_FAILED = MessageTemplate(
     name="BUILD_FAILED",
     he="הפרויקט לא עובר בנייה. שגיאת הקומפילציה הראשונה: {error}",
@@ -217,6 +223,7 @@ ALL_TEMPLATES: tuple[MessageTemplate, ...] = (
     FILE_MISSING,
     FILE_TOO_FEW,
     FOLDER_MISSING,
+    PROJECT_TOO_FEW,
     BUILD_FAILED,
     BUILD_FAILED_NO_DETAIL,
     STARTUP_CRASHED,

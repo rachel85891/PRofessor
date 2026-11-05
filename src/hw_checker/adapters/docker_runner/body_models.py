@@ -5,7 +5,10 @@ fields, so a fixed probe body is often rejected with 400 although the code works
 is adapted to the model found here (see `body_adapter`). Only plain classes with public
 auto-properties are read; records with a primary constructor, models that inherit from
 another model, and `dynamic` or JSON-document parameters are unsupported, and the probe body
-is then sent as written. Student code is never compiled or executed.
+is then sent as written. Models are looked up in every project of the solution, since a
+student may keep them in a separate project (for example `Entities`); when several projects
+declare the name, the one the controller's `using` lines point to is used. Student code is
+never compiled or executed.
 """
 
 import re
@@ -13,6 +16,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from hw_checker.adapters.docker_runner.csharp_source import MaskedSource, mask_source, source_files
+from hw_checker.adapters.docker_runner.discovery import ProjectFolder
 from hw_checker.domain import DeclaredRoute
 
 SIMPLE_TYPES = frozenset(
@@ -68,6 +72,10 @@ _PARAMETER = re.compile(
     re.DOTALL,
 )
 _ATTRIBUTE_NAME = re.compile(r"\[\s*(?:[\w.]*\.)?(?P<name>\w+?)(?:Attribute)?\s*[(\]]")
+_NAMESPACE = re.compile(r"\bnamespace\s+(?P<name>[A-Za-z_][\w.]*)")
+_USING = re.compile(
+    r"^\s*(?P<global>global\s+)?using\s+(?!static\b)(?P<name>[A-Za-z_][\w.]*)\s*;", re.MULTILINE
+)
 _INTERFACE_NAME = re.compile(r"^I[A-Z]")
 
 
@@ -107,30 +115,65 @@ class _ClassDeclaration:
     header: str
     body: str
     primary_constructor: bool
+    namespace: str = ""
 
 
 class ProjectSources:
-    """The Web project's `.cs` files, read once and masked, for model lookups."""
+    """The solution's `.cs` files, read once and masked, for model lookups.
 
-    def __init__(self, sources: dict[str, MaskedSource], nullable: bool) -> None:
+    `nullable` says, per file, whether its project has `<Nullable>enable`; a file missing
+    from it uses the Web project's setting. `web_files` are the Web project's files, whose
+    `global using` lines apply to every controller.
+    """
+
+    def __init__(
+        self,
+        sources: dict[str, MaskedSource],
+        nullable: bool,
+        file_nullable: dict[str, bool] | None = None,
+        web_files: frozenset[str] | None = None,
+    ) -> None:
         self.sources = sources
         self.nullable = nullable
+        self._file_nullable = file_nullable or {}
+        web = sources.keys() if web_files is None else web_files
+        self._global_usings = frozenset(
+            match["name"]
+            for path in web
+            if path in sources
+            for match in _USING.finditer(sources[path].text)
+            if match["global"]
+        )
         self._classes: dict[str, list[_ClassDeclaration]] = {}
         for file_path, masked in sources.items():
             for declaration in _class_declarations(masked.text, file_path):
                 self._classes.setdefault(declaration.name, []).append(declaration)
 
     @classmethod
-    def read(cls, working_copy: Path, project_folder: str, nullable: bool) -> "ProjectSources":
-        """Read the `.cs` files of the project folder (`bin/` and `obj/` skipped)."""
+    def read(
+        cls, working_copy: Path, web: ProjectFolder, others: tuple[ProjectFolder, ...] = ()
+    ) -> "ProjectSources":
+        """Read the `.cs` files of the Web project and of the solution's other projects
+        (`bin/` and `obj/` skipped). A file belongs to the innermost project folder that
+        holds it."""
+        projects = sorted((web, *others), key=lambda project: -len(project.folder))
         sources: dict[str, MaskedSource] = {}
-        for source in source_files(working_copy / project_folder):
-            try:
-                text = source.read_bytes().decode("utf-8")
-            except UnicodeDecodeError:
-                continue
-            sources[source.relative_to(working_copy).as_posix()] = mask_source(text)
-        return cls(sources, nullable)
+        file_nullable: dict[str, bool] = {}
+        web_files: set[str] = set()
+        for project in projects:
+            for source in source_files(working_copy / project.folder):
+                relative = source.relative_to(working_copy).as_posix()
+                if relative in sources:
+                    continue  # already read with an inner project
+                try:
+                    text = source.read_bytes().decode("utf-8")
+                except UnicodeDecodeError:
+                    continue
+                sources[relative] = mask_source(text)
+                file_nullable[relative] = project.nullable
+                if project == web:
+                    web_files.add(relative)
+        return cls(sources, web.nullable, file_nullable, frozenset(web_files))
 
     def body_model(self, route: DeclaredRoute) -> BodyModel | ModelUnavailable:
         """The body model of the action that declares `route`."""
@@ -143,27 +186,55 @@ class ProjectSources:
         body_type = _body_parameter_type(parameters)
         if isinstance(body_type, ModelUnavailable):
             return body_type
-        return self.model(body_type)
+        return self.model(body_type, route.file_path)
 
-    def model(self, type_name: str) -> BodyModel | ModelUnavailable:
-        """The model class named `type_name`, read from the project's sources."""
-        bare = type_name.removesuffix("?").rsplit(".", 1)[-1]
+    def model(self, type_name: str, used_from: str | None = None) -> BodyModel | ModelUnavailable:
+        """The model class named `type_name`, read from the solution's sources.
+
+        When several files declare the name, the declaration in a namespace that the file
+        `used_from` sees (its `using` lines, the Web project's `global using` lines, its own
+        namespace and the ones around it, or the namespace written in `type_name`) is used;
+        if that does not single one out, the model is ambiguous.
+        """
+        written = type_name.removesuffix("?")
+        bare = written.rsplit(".", 1)[-1]
         if bare in UNSUPPORTED_BODY_TYPES:
             return ModelUnavailable(f"body parameter of type {bare}")
         if "<" in bare or bare.endswith("[]"):
             return ModelUnavailable(f"body parameter of type {bare} (a collection or generic)")
         declarations = self._classes.get(bare, [])
         if not declarations:
-            return ModelUnavailable(f"class {bare} not found in the project")
+            return ModelUnavailable(f"class {bare} not found in the solution")
         if len(declarations) > 1:
-            return ModelUnavailable(f"several classes named {bare}")
+            declarations = self._visible(declarations, written, used_from)
+            if len(declarations) != 1:
+                places = ", ".join(sorted({d.file_path for d in self._classes[bare]}))
+                return ModelUnavailable(f"several classes named {bare} ({places})")
         (declaration,) = declarations
         if declaration.primary_constructor:
             return ModelUnavailable(f"{bare} is declared with a primary constructor")
         base = _base_class(declaration.header)
         if base is not None:
             return ModelUnavailable(f"{bare} inherits from {base}")
-        return BodyModel(bare, tuple(_properties(declaration.body, self.nullable)))
+        nullable = self._file_nullable.get(declaration.file_path, self.nullable)
+        return BodyModel(bare, tuple(_properties(declaration.body, nullable)))
+
+    def _visible(
+        self, declarations: list[_ClassDeclaration], written: str, used_from: str | None
+    ) -> list[_ClassDeclaration]:
+        """The declarations whose namespace the file `used_from` can see."""
+        qualifier = written.rpartition(".")[0]
+        if qualifier:
+            return [d for d in declarations if _ends_with_namespace(d.namespace, qualifier)]
+        masked = None if used_from is None else self.sources.get(used_from)
+        if masked is None:
+            return declarations
+        seen = set(self._global_usings)
+        seen.update(match["name"] for match in _USING.finditer(masked.text))
+        own = _namespace_at(masked.text, len(masked.text))
+        parts = own.split(".") if own else []
+        seen.update(".".join(parts[:end]) for end in range(1, len(parts) + 1))
+        return [d for d in declarations if d.namespace in seen]
 
 
 def _class_declarations(text: str, file_path: str) -> list[_ClassDeclaration]:
@@ -174,16 +245,36 @@ def _class_declarations(text: str, file_path: str) -> list[_ClassDeclaration]:
         primary = match["parameters"] is not None
         if opening < 0 or (0 <= semicolon < opening):
             if primary:  # record User(int Id, string Name);
-                declarations.append(_ClassDeclaration(match["name"], file_path, "", "", True))
+                namespace = _namespace_at(text, match.start())
+                declarations.append(
+                    _ClassDeclaration(match["name"], file_path, "", "", True, namespace)
+                )
             continue
         closing = _matching(text, opening, "{", "}")
         header = text[match.end() : opening]
         declarations.append(
             _ClassDeclaration(
-                match["name"], file_path, header, text[opening + 1 : closing], primary
+                match["name"],
+                file_path,
+                header,
+                text[opening + 1 : closing],
+                primary,
+                _namespace_at(text, match.start()),
             )
         )
     return declarations
+
+
+def _namespace_at(text: str, position: int) -> str:
+    """The namespace declared last before `position` ("" when there is none)."""
+    found = ""
+    for match in _NAMESPACE.finditer(text, 0, position):
+        found = match["name"]
+    return found
+
+
+def _ends_with_namespace(namespace: str, qualifier: str) -> bool:
+    return namespace == qualifier or namespace.endswith(f".{qualifier}")
 
 
 def _matching(text: str, opening: int, open_char: str, close_char: str) -> int:

@@ -18,6 +18,15 @@ _SAFE_ASSEMBLY_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 
 
 @dataclass(frozen=True)
+class ProjectFolder:
+    """A project of the solution: its folder relative to the working copy ("" at the root),
+    and whether `<Nullable>` is `enable` in it."""
+
+    folder: str
+    nullable: bool
+
+
+@dataclass(frozen=True)
 class WebProject:
     """The Web project to build: its path relative to the working copy, and its assembly.
 
@@ -31,6 +40,9 @@ class WebProject:
     unreadable: tuple[str, ...] = ()
     target_framework: str | None = None
     nullable: bool = False
+    other_projects: tuple[ProjectFolder, ...] = ()
+    """The solution's other projects (class libraries such as entities), where request
+    body models may live."""
 
     @property
     def folder(self) -> str:
@@ -108,6 +120,11 @@ def discover_web_project(working_copy: Path) -> WebProject | DiscoveryFailure:
             tuple(unreadable),
             web[0].target_framework,
             web[0].nullable,
+            tuple(
+                ProjectFolder(project.path.rpartition("/")[0], project.nullable)
+                for project in parsed
+                if not project.is_web
+            ),
         )
     return DiscoveryFailure(
         message=_failure_message(web, others, unreadable),

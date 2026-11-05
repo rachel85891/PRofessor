@@ -20,7 +20,8 @@ class DeterministicRequirementChecker:
         """Evaluate one structure, custom, build or http requirement.
 
         Raises:
-            InvalidAssignmentError: a code requirement, an unknown check, or invalid params.
+            InvalidAssignmentError: a code requirement, an unknown check, invalid params, or
+                a file list (`check_input.files`) given to a check that reads file contents.
         """
         requirement = check_input.requirement
         match requirement.kind:
@@ -49,4 +50,9 @@ class DeterministicRequirementChecker:
                 f"requirement {requirement.id!r}: invalid params for check "
                 f"{requirement.check!r} ({error.error_count()} problems)"
             ) from error
+        if check_input.files is not None and not registered.spec.reads_file_list:
+            raise InvalidAssignmentError(
+                f"requirement {requirement.id!r}: check {requirement.check!r} reads file "
+                "contents, so it cannot run on a commit's file list"
+            )
         return registered.function(check_input, params)

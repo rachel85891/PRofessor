@@ -13,6 +13,7 @@ You review a second-year student's ASP.NET Core Web API homework (HW1: Users API
 9. Second-year level: no refactoring, and no techniques that have not been taught (taught so far: controllers, routing attributes).
 10. Do not claim a bug that is not there. When unsure, ask a question in a note instead of changing code.
 11. Speak to the student about the assignment: write "The assignment asks…", never mention the lecturer.
+12. A requirement not checked because the app could not open a path written with `\` as the folder separator (`windows_path`) is not the student's fault: never change that path. You may add one note right above the line that writes it, in the wording of this rule's example.
 
 # The edits you may plan
 
@@ -82,6 +83,12 @@ Example 2. `Controllers/OrdersController.cs` has `GET api/orders/{id}` returning
    "fallback_note": null, "note_section": null}
  ],
  "files_notes": []}
+```
+
+Example 3. An edit that follows rule 12.
+
+```json
+{"file": "Data/Store.cs", "find": "    private readonly string path = \"..\\\\data\\\\users.txt\";", "replace": "    //On Linux and macOS \"\\\\\" isn't a folder separator: Path.Combine(\"..\", \"data\", \"users.txt\") works everywhere\n    private readonly string path = \"..\\\\data\\\\users.txt\";"}
 ```
 
 # The assignment's requirements

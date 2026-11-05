@@ -20,7 +20,12 @@ from hw_checker.domain import (
 )
 from hw_checker.domain.errors import StorageError
 from hw_checker.ports.reporting import RepoReport, RoundReport, RoundReportFiles
-from hw_checker.reporting.wording import FAILURE_KINDS, NOT_EVALUATED_REASONS, SEVERITY_ORDER
+from hw_checker.reporting.wording import (
+    FAILURE_KINDS,
+    NOT_EVALUATED_REASONS,
+    SEVERITY_ORDER,
+    describe_checked_commit,
+)
 
 TEMPLATES_DIR = Path(__file__).parent / "templates"
 REPORTS_FOLDER = "reports"
@@ -62,6 +67,8 @@ class _NotEvaluatedItem:
     requirement_id: str
     title: str
     reason: str
+    reason_id: str
+    detail: str
 
 
 @dataclass(frozen=True)
@@ -109,6 +116,11 @@ class MarkdownReportWriter:
             repo=repo_run.repo,
             execution=repo_run.execution,
             short_sha=(repo_run.commit_sha or "")[:SHORT_SHA_LENGTH],
+            checked_commit=(
+                None
+                if repo_run.checked_commit is None
+                else describe_checked_commit(repo_run.checked_commit)
+            ),
             failure=_failure(repo_run),
             sections=_sections(report),
             not_evaluated=_not_evaluated(report),
@@ -206,7 +218,9 @@ def _not_evaluated(report: RepoReport) -> list[_NotEvaluatedItem]:
         _NotEvaluatedItem(
             entry.requirement_id,
             _title(report, entry.requirement_id),
-            NOT_EVALUATED_REASONS[entry.reason],
+            NOT_EVALUATED_REASONS.get(entry.reason, ""),
+            entry.reason.value,
+            entry.detail,
         )
         for result in report.repo_run.assignment_results
         for entry in result.not_evaluated
