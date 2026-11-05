@@ -77,6 +77,7 @@ class RepoRunRow(Base):
     repo_id: Mapped[str] = mapped_column(ID_TYPE, index=True)
     repo: Mapped[dict[str, Any]] = mapped_column(JSON)
     commit_sha: Mapped[str | None] = mapped_column(ID_TYPE, nullable=True)
+    checked_commit: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
     status: Mapped[str] = mapped_column(String(32), index=True)
     execution: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
     assignment_ids: Mapped[list[str]] = mapped_column(JSON)
@@ -159,6 +160,7 @@ class ProposalRow(Base):
     diff: Mapped[str] = mapped_column(Text)
     verified: Mapped[bool] = mapped_column(Boolean)
     status: Mapped[str] = mapped_column(String(32), index=True)
+    branch_head_sha: Mapped[str | None] = mapped_column(ID_TYPE, nullable=True)
 
 
 class ReviewDecisionRow(Base):

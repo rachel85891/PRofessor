@@ -36,6 +36,34 @@ class GitClient(Protocol):
         """
         ...
 
+    def first_parent_history(self, repo_dir: Path) -> tuple[CommitInfo, ...]:
+        """Return the checked-out branch's first-parent history, oldest first.
+
+        Raises:
+            RepoUnavailableError: `repo_dir` is not a readable Git working copy.
+            ExecutionEnvironmentError: the git executable is not available.
+        """
+        ...
+
+    def tree_files(self, repo_dir: Path, sha: str) -> tuple[str, ...]:
+        """Return the repo-relative POSIX paths of every file in the commit `sha`, without
+        checking it out.
+
+        Raises:
+            RepoUnavailableError: `sha` is not a commit of the repo, or the tree cannot be read.
+            ExecutionEnvironmentError: the git executable is not available.
+        """
+        ...
+
+    def check_out(self, repo_dir: Path, sha: str) -> None:
+        """Check out the commit `sha` (detached), dropping any local change.
+
+        Raises:
+            RepoUnavailableError: `sha` is not a commit of the repo, or the checkout failed.
+            ExecutionEnvironmentError: the git executable is not available.
+        """
+        ...
+
     def create_branch(self, repo_dir: Path, branch_name: str, start_point: str) -> None:
         """Create and check out `branch_name` at the commit `start_point`.
 

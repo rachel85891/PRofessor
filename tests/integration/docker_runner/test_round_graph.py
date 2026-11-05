@@ -55,7 +55,7 @@ def test_round_graph_checks_the_sample_solution_end_to_end(
     services = GraphServices(
         roster=RosterService(roster),
         assignments=catalog,
-        fetch=RepoFetchService(git, tmp_path / "clones"),
+        fetch=RepoFetchService(git, tmp_path / "clones", DeterministicRequirementChecker(registry)),
         execution=ExecutionService(docker_runner, tmp_path / "runs", Path("logs")),
         checks=DeterministicCheckService(DeterministicRequirementChecker(registry)),
         run_records=RunRecordService(storage.runs, FakeClock()),

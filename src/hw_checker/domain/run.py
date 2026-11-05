@@ -16,6 +16,7 @@ from hw_checker.domain.findings import Finding, JudgedFinding
 from hw_checker.domain.fixes import FixOutcome, LlmUsage
 from hw_checker.domain.publishing import PublishRecord
 from hw_checker.domain.roster import RepoTarget
+from hw_checker.domain.vcs import CheckedCommit
 
 RUN_ID_SUFFIX_LENGTH = 6
 
@@ -87,6 +88,8 @@ class RepoRunResult(DomainModel):
     repo_run_id: Identifier
     repo: RepoTarget
     commit_sha: Identifier | None = None
+    checked_commit: CheckedCommit | None = None
+    """How `commit_sha` was chosen, for an assignment with `ends_when`."""
     status: RepoRunStatus
     execution: ExecutionResult | None = None
     assignment_results: tuple[AssignmentResult, ...] = ()
@@ -168,6 +171,8 @@ class RepoSummary(DomainModel):
     """The repo's reviewer report; None when it was not written."""
     publication: PublishRecord | None = None
     """The repo's last publish attempt in this round; None when it was not published."""
+    checked_commit: CheckedCommit | None = None
+    """How the checked commit was chosen, for an assignment with `ends_when`."""
 
     @classmethod
     def from_repo_run(cls, repo_run: RepoRunResult, report_path: Path | None = None) -> Self:
@@ -192,6 +197,7 @@ class RepoSummary(DomainModel):
             ),
             errors=repo_run.errors,
             report_path=report_path,
+            checked_commit=repo_run.checked_commit,
         )
 
 

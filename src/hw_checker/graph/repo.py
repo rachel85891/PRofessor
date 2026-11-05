@@ -37,7 +37,9 @@ def build_repo_graph(
             "fetch_repo",
             state["run_id"],
             state["repo"].repo_id,
-            lambda: {"fetched": services.fetch.fetch(state["repo"])},
+            lambda: {
+                "fetched": services.fetch.fetch(state["repo"], by_id.get(state["assignment_id"]))
+            },
         )
 
     def build_and_run(state: RepoState) -> Update:
@@ -163,6 +165,7 @@ def repo_run_result(state: RepoState) -> RepoRunResult:
         repo_run_id=f"{state['run_id']}/{state['repo'].repo_id}",
         repo=state["repo"],
         commit_sha=fetched.commit_sha if fetched else None,
+        checked_commit=fetched.checked if fetched else None,
         status=RepoRunStatus.DONE if fetched and not errors else RepoRunStatus.FAILED,
         execution=state.get("execution"),
         assignment_results=tuple(results),

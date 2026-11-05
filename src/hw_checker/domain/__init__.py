@@ -13,6 +13,7 @@ from hw_checker.domain.assignment import (
     Requirement,
     RequirementKind,
     Severity,
+    TaskEnd,
 )
 from hw_checker.domain.checks import CheckDescription, CheckInput, CheckParamDescription
 from hw_checker.domain.course import (
@@ -123,7 +124,15 @@ from hw_checker.domain.run import (
     RunSummary,
     new_run_id,
 )
-from hw_checker.domain.vcs import BranchHead, CommitInfo, FetchedRepo, ForkRef, PullRequestRef
+from hw_checker.domain.vcs import (
+    BranchHead,
+    CheckedCommit,
+    CommitChoice,
+    CommitInfo,
+    FetchedRepo,
+    ForkRef,
+    PullRequestRef,
+)
 
 __all__ = [
     "ApprovedNote",
@@ -139,8 +148,10 @@ __all__ = [
     "CheckDescription",
     "CheckInput",
     "CheckParamDescription",
+    "CheckedCommit",
     "CodeFacts",
     "CommentStyle",
+    "CommitChoice",
     "CommitInfo",
     "Course",
     "CourseProfile",
@@ -227,6 +238,7 @@ __all__ = [
     "Severity",
     "StepStatus",
     "Student",
+    "TaskEnd",
     "TitleRule",
     "TypeFact",
     "TypeKind",

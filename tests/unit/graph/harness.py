@@ -208,7 +208,7 @@ class Harness:
         values: dict[str, Any] = {
             "roster": RosterService(FakeRosterReader(rows)),
             "assignments": AssignmentCatalogService(self.source, FakeCheckCatalog()),
-            "fetch": RepoFetchService(self.git, self.tmp_path / "clones"),
+            "fetch": RepoFetchService(self.git, self.tmp_path / "clones", self.checker),
             "execution": execution,
             "checks": checks,
             "run_records": (

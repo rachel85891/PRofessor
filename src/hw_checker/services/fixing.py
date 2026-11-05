@@ -184,6 +184,9 @@ class FixService:
         return FixWorkspace(
             working_copy=copy,
             base_sha=fetched.commit_sha,
+            branch_head_sha=None
+            if fetched.latest_sha == fetched.commit_sha
+            else fetched.latest_sha,
             branch_name=f"{BRANCH_PREFIX}{assignment_id}-{self._clock.now():%Y-%m-%d}",
         )
 
@@ -652,6 +655,7 @@ class FixService:
             pr_body=body,
             diff=diff,
             verified=True,
+            branch_head_sha=workspace.branch_head_sha,
         )
         self._proposals.save(proposal)
         logger.info("Proposal saved: %d edits", len(application.applied))

@@ -2,7 +2,8 @@
 
 import difflib
 import shutil
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
+from datetime import UTC, datetime
 from pathlib import Path
 
 from hw_checker.domain import CommitInfo
@@ -10,6 +11,7 @@ from hw_checker.domain.errors import GitOperationError, HwCheckerError, RepoUnav
 
 DEFAULT_SHA = "ab" * 20
 COMMIT_SHA = "cd" * 20
+FAKE_DATE = datetime(2026, 11, 1, tzinfo=UTC)
 
 
 class FakeGitClient:
@@ -17,7 +19,9 @@ class FakeGitClient:
 
     `sources` maps a URL to the folder copied as its working copy; any other URL gets an
     empty folder. `errors` maps a URL to the error its clone raises; `push_error` is raised
-    by every push.
+    by every push. `history` is the first-parent history, oldest first, as commits with
+    their file lists; without it, the history is one commit (`sha`) with the working
+    copy's files.
     """
 
     def __init__(
@@ -26,11 +30,14 @@ class FakeGitClient:
         errors: Mapping[str, HwCheckerError] | None = None,
         sha: str = DEFAULT_SHA,
         push_error: HwCheckerError | None = None,
+        history: Sequence[tuple[CommitInfo, tuple[str, ...]]] | None = None,
     ) -> None:
         self._sources = dict(sources or {})
         self._errors = dict(errors or {})
         self._sha = sha
         self._push_error = push_error
+        self._history = None if history is None else tuple(history)
+        self.checked_out: list[tuple[Path, str]] = []
         self.cloned: list[tuple[str, Path]] = []
         self.pushed: list[tuple[Path, str, str]] = []
         self.branches: list[tuple[Path, str, str]] = []
@@ -59,6 +66,30 @@ class FakeGitClient:
         if not repo_dir.is_dir():
             raise RepoUnavailableError(f"{repo_dir} is not a working copy")
         return ()
+
+    def first_parent_history(self, repo_dir: Path) -> tuple[CommitInfo, ...]:
+        if not repo_dir.is_dir():
+            raise RepoUnavailableError(f"{repo_dir} is not a working copy")
+        return tuple(commit for commit, _ in self._commits(repo_dir))
+
+    def tree_files(self, repo_dir: Path, sha: str) -> tuple[str, ...]:
+        for commit, files in self._commits(repo_dir):
+            if commit.sha == sha:
+                return files
+        raise RepoUnavailableError(f"{sha} is not a commit of {repo_dir}")
+
+    def check_out(self, repo_dir: Path, sha: str) -> None:
+        if all(commit.sha != sha for commit, _ in self._commits(repo_dir)):
+            raise RepoUnavailableError(f"{sha} is not a commit of {repo_dir}")
+        self.checked_out.append((repo_dir, sha))
+
+    def _commits(self, repo_dir: Path) -> tuple[tuple[CommitInfo, tuple[str, ...]], ...]:
+        if self._history is not None:
+            return self._history
+        commit = CommitInfo(
+            sha=self._sha, author_name="Fake", authored_at=FAKE_DATE, message="fake"
+        )
+        return ((commit, tuple(_files(repo_dir))),)
 
     def create_branch(self, repo_dir: Path, branch_name: str, start_point: str) -> None:
         if not repo_dir.is_dir():

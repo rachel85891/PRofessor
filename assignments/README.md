@@ -27,10 +27,35 @@ taught_techniques:            # optional; what has been taught up to this assign
   - routing attributes
 lenient_notes:                # optional; things the checker must not be strict about
   - Do not require async/await at this stage
+ends_when:                    # optional; when the student has started the next task
+  check: project_count
+  params:
+    min: 2
 requirements:                 # the list of requirements (may be empty: [])
   - id: hw01-r1
     ...
 ```
+
+## Which commit is checked (`ends_when`)
+
+Students keep working in the same repo, so by the time a round runs, a repo may already hold the next task. There is no deadline: a student who finishes late is still checked. Instead, an assignment may say when the next task has started:
+
+```yaml
+ends_when:
+  check: project_count   # a structure check that looks at file names only
+  params:
+    min: 2               # the next task (layers) adds a second project
+```
+
+`ends_when` takes the same `check` and `params` as a `structure` requirement, but only a check that looks at file names (`file_exists`, `folder_exists`, `project_count`); a check that reads the files' contents is refused when a round starts. The condition holds on a commit when its check passes there.
+
+When a round checks a repo, it walks the default branch's main line (first parents) from the oldest commit, reading each commit's file list without checking it out:
+
+- The **checked commit** is the last one before the first commit where `ends_when` holds. The build, the run, every check and the fixer's branch use it, so the pull request is based on that older commit.
+- If `ends_when` never holds, the latest commit is checked, as without `ends_when`.
+- If it already holds at the first commit (for example, the repo had two projects from the start), the commits cannot tell the tasks apart: the latest commit is checked, and the report says so.
+
+The repo report and the approval gate show the checked commit, its date, the commit where the next task started and how many commits came after it. Publishing refuses a pull request only when the branch moved after the round, not because the checked commit is older than the head.
 
 ## Requirement fields
 
@@ -96,8 +121,9 @@ The available checks:
 | --- | --- | --- |
 | `file_exists` | `glob` (required), `min_count` (optional, default 1) | At least `min_count` files match `glob`. In `glob`, `**/` means "in any folder", `*` matches part of a name, and `?` one character. |
 | `folder_exists` | `path` (required), for example `Controllers` or `src/Models` | A folder with that path exists, at any depth (projects often sit in a subfolder). |
+| `project_count` | `min` (required, 1 or more) | At least `min` projects (`.csproj` files) exist, at any depth. |
 
-Both checks ignore upper and lower case (`controllers/` matches `Controllers`), skip `bin/`, `obj/` and `.git/`, and only read the files; nothing from the student's repo is run. `glob` and `path` are relative to the repository root, with forward slashes, and may not contain `..`.
+These checks ignore upper and lower case (`controllers/` matches `Controllers`), skip `bin/`, `obj/` and `.git/`, and only read the files; nothing from the student's repo is run. `glob` and `path` are relative to the repository root, with forward slashes, and may not contain `..`.
 
 **code**: reviewed by reading the code. Evidence is required for every finding.
 

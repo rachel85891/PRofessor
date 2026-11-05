@@ -9,11 +9,18 @@ from typing import Annotated
 from pydantic import AfterValidator, BaseModel, ConfigDict, Field
 
 from hw_checker.checks.deterministic.findings import deterministic_finding
-from hw_checker.checks.deterministic.messages import FILE_MISSING, FILE_TOO_FEW, FOLDER_MISSING
+from hw_checker.checks.deterministic.messages import (
+    FILE_MISSING,
+    FILE_TOO_FEW,
+    FOLDER_MISSING,
+    PROJECT_TOO_FEW,
+)
 from hw_checker.checks.registry import check
 from hw_checker.domain import CheckInput, Finding
 
 IGNORED_DIRS = frozenset({"bin", "obj", ".git"})
+PROJECT_FILE_PATTERN = "**/*.csproj"
+"""A .NET project file, at any depth."""
 _DRIVE_LETTER = re.compile(r"^[A-Za-z]:")
 _GLOB_CHARACTERS = frozenset("*?[")
 
@@ -57,6 +64,14 @@ class FolderExistsParams(BaseModel):
     path: RepoFolder
 
 
+class ProjectCountParams(BaseModel):
+    """`min`: at least this many projects (`.csproj` files)."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    min: int = Field(ge=1)
+
+
 @dataclass(frozen=True)
 class RepoTree:
     """Repo-relative POSIX paths of the files and folders that checks may look at."""
@@ -89,6 +104,29 @@ def scan_repo(root: Path) -> RepoTree:
             if _stays_inside(current / name, resolved_root)
         )
     return RepoTree(tuple(files), tuple(folders))
+
+
+def tree_from_files(files: tuple[str, ...]) -> RepoTree:
+    """The tree of a file list (repo-relative POSIX paths, such as a commit's), without
+    bin/, obj/ and .git/; its folders are the files' parent folders."""
+    kept = tuple(
+        path
+        for path in files
+        if not any(part.lower() in IGNORED_DIRS for part in path.split("/")[:-1])
+    )
+    folders = {
+        "/".join(parts[:end])
+        for parts in (path.split("/") for path in kept)
+        for end in range(1, len(parts))
+    }
+    return RepoTree(kept, tuple(sorted(folders)))
+
+
+def repo_tree(check_input: CheckInput) -> RepoTree:
+    """The tree a check looks at: `check_input.files` when set, else the working copy."""
+    if check_input.files is not None:
+        return tree_from_files(check_input.files)
+    return scan_repo(check_input.repo_dir)
 
 
 def _stays_inside(path: Path, root: Path) -> bool:
@@ -128,11 +166,12 @@ def glob_pattern(glob: str) -> re.Pattern[str]:
     "file_exists",
     FileExistsParams,
     "At least min_count files match glob (case-insensitive; bin/, obj/ and .git/ are ignored).",
+    reads_file_list=True,
 )
 def file_exists(check_input: CheckInput, params: FileExistsParams) -> tuple[Finding, ...]:
     """Pass when at least `min_count` files in the working copy match `glob`."""
     pattern = glob_pattern(params.glob)
-    found = sum(1 for path in scan_repo(check_input.repo_dir).files if pattern.fullmatch(path))
+    found = sum(1 for path in repo_tree(check_input).files if pattern.fullmatch(path))
     if found >= params.min_count:
         return ()
     message = (
@@ -148,12 +187,29 @@ def file_exists(check_input: CheckInput, params: FileExistsParams) -> tuple[Find
     "folder_exists",
     FolderExistsParams,
     "A folder with this path exists at any depth (case-insensitive; bin/, obj/, .git/ ignored).",
+    reads_file_list=True,
 )
 def folder_exists(check_input: CheckInput, params: FolderExistsParams) -> tuple[Finding, ...]:
     """Pass when a folder whose path ends with `path` exists; projects may sit in a subfolder."""
     target = params.path.lower()
-    folders = scan_repo(check_input.repo_dir).folders
+    folders = repo_tree(check_input).folders
     if any(folder.lower() == target or folder.lower().endswith(f"/{target}") for folder in folders):
         return ()
     message = FOLDER_MISSING.render(path=params.path)
     return (deterministic_finding(check_input, message, (f"path={params.path}",)),)
+
+
+@check(
+    "project_count",
+    ProjectCountParams,
+    "At least min .csproj projects exist, at any depth (bin/, obj/ and .git/ are ignored).",
+    reads_file_list=True,
+)
+def project_count(check_input: CheckInput, params: ProjectCountParams) -> tuple[Finding, ...]:
+    """Pass when the repo has at least `min` projects (`.csproj` files)."""
+    pattern = glob_pattern(PROJECT_FILE_PATTERN)
+    found = sum(1 for path in repo_tree(check_input).files if pattern.fullmatch(path))
+    if found >= params.min:
+        return ()
+    message = PROJECT_TOO_FEW.render(min_count=params.min, found=found)
+    return (deterministic_finding(check_input, message, (f"min={params.min}", f"found={found}")),)

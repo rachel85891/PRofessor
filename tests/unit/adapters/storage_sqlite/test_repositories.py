@@ -4,12 +4,19 @@ import os
 import stat
 import threading
 from collections.abc import Iterator
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
 
 from hw_checker.adapters.storage_sqlite import SqlStorage, migrate
-from hw_checker.domain import ProposalStatus, ReviewOutcome, Run
+from hw_checker.domain import (
+    CheckedCommit,
+    CommitChoice,
+    ProposalStatus,
+    ReviewOutcome,
+    Run,
+)
 from hw_checker.domain.errors import StorageError
 from tests.unit.storage import builders
 
@@ -150,3 +157,31 @@ def test_storage_error_does_not_contain_row_contents(storage: SqlStorage) -> Non
         storage.runs.save_repo_run("run-2", run.repo_runs[1])
 
     assert "תלמיד" not in str(raised.value)
+
+
+def test_the_checked_commit_and_the_branch_head_are_saved_and_loaded_back(
+    storage: SqlStorage,
+) -> None:
+    run = builders.full_run()
+    checked = CheckedCommit(
+        sha="2" * 40,
+        authored_at=datetime(2026, 11, 1, 10, 0, tzinfo=UTC),
+        choice=CommitChoice.BEFORE_NEXT_TASK,
+        next_task_sha="4" * 40,
+        later_commits=2,
+        latest_sha="5" * 40,
+    )
+    repo_runs = (
+        *run.repo_runs[:2],
+        run.repo_runs[2].model_copy(update={"checked_commit": checked}),
+    )
+    run = run.model_copy(update={"repo_runs": repo_runs})
+    proposal = builders.proposal(
+        "p-1", repo_runs[2].repo_run_id, ProposalStatus.PENDING_REVIEW
+    ).model_copy(update={"branch_head_sha": "5" * 40})
+
+    storage.runs.save(run)
+    storage.proposals.save(proposal)
+
+    assert storage.runs.get(run.run_id).repo_runs[2].checked_commit == checked
+    assert storage.proposals.get("p-1").branch_head_sha == "5" * 40

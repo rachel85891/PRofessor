@@ -618,3 +618,35 @@ def test_a_rule_id_is_unique_across_the_course_and_the_assignments(tmp_path: Pat
         "assignments/hw01/review_rules.yaml: rule 'comments': the id is used again "
         "(first in course/review_rules.yaml)"
     ) in problems_of(source_for(directory))
+
+
+ENDS_WHEN = "ends_when:\n  check: project_count\n  params:\n    min: 2\n"
+
+
+def test_ends_when_loads_with_its_check_and_params(tmp_path: Path) -> None:
+    hw = HW02.replace("title: Get by id\n", "title: Get by id\n" + ENDS_WHEN)
+
+    [_, loaded] = load(tmp_path, {"_general": GENERAL, "hw02": hw}).load_all()
+
+    assert loaded.ends_when is not None
+    assert (loaded.ends_when.check, dict(loaded.ends_when.params)) == ("project_count", {"min": 2})
+
+
+def test_ends_when_is_optional(tmp_path: Path) -> None:
+    [_, loaded] = load(tmp_path, {"_general": GENERAL, "hw02": HW02}).load_all()
+
+    assert loaded.ends_when is None
+
+
+def test_ends_when_with_an_unknown_key_or_no_check_is_reported(tmp_path: Path) -> None:
+    (tmp_path / "a").mkdir()
+    (tmp_path / "b").mkdir()
+    unknown = HW02.replace("title: Get by id\n", "title: Get by id\n" + ENDS_WHEN + "  when: x\n")
+    missing = HW02.replace("title: Get by id\n", "title: Get by id\nends_when:\n  params: {}\n")
+
+    assert "field 'ends_when.when': unknown key" in problems_of(
+        load(tmp_path / "a", {"_general": GENERAL, "hw02": unknown})
+    )
+    assert "field 'ends_when.check': this required field is missing" in problems_of(
+        load(tmp_path / "b", {"_general": GENERAL, "hw02": missing})
+    )

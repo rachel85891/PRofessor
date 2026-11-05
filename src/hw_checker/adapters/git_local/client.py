@@ -143,6 +143,60 @@ class LocalGitClient:
         except ValueError as error:
             raise RepoUnavailableError(f"{repo_dir}: cannot parse git log: {error}") from error
 
+    def first_parent_history(self, repo_dir: Path) -> tuple[CommitInfo, ...]:
+        """Return the checked-out branch's first-parent history, oldest first.
+
+        Raises:
+            RepoUnavailableError: `repo_dir` is not a readable Git working copy.
+            ExecutionEnvironmentError: the git executable is not available.
+        """
+        self._require_own_working_copy(repo_dir)
+        output = self._git.run(
+            [
+                "-c",
+                "i18n.logOutputEncoding=UTF-8",
+                "log",
+                "-z",
+                "--first-parent",
+                "--reverse",
+                f"--format={LOG_FORMAT}",
+                "HEAD",
+            ],
+            repo_dir,
+            RepoUnavailableError,
+        )
+        try:
+            return parse_log_output(output)
+        except ValueError as error:
+            raise RepoUnavailableError(f"{repo_dir}: cannot parse git log: {error}") from error
+
+    def tree_files(self, repo_dir: Path, sha: str) -> tuple[str, ...]:
+        """Return the paths of every file in the commit `sha`, read with `git ls-tree`.
+
+        Raises:
+            RepoUnavailableError: `sha` is not a commit sha, or the tree cannot be read.
+            ExecutionEnvironmentError: the git executable is not available.
+        """
+        self._require_sha(sha)
+        output = self._git.run(
+            ["ls-tree", "-r", "-z", "--name-only", sha], repo_dir, RepoUnavailableError
+        )
+        return tuple(path for path in output.split("\0") if path)
+
+    def check_out(self, repo_dir: Path, sha: str) -> None:
+        """Check out the commit `sha` detached, and drop untracked and ignored files.
+
+        Raises:
+            RepoUnavailableError: `sha` is not a commit sha, or the checkout failed.
+            ExecutionEnvironmentError: the git executable is not available.
+        """
+        self._require_sha(sha)
+        self._require_own_working_copy(repo_dir)
+        self._git.run(
+            ["checkout", "--quiet", "--force", "--detach", sha], repo_dir, RepoUnavailableError
+        )
+        self._git.run(["clean", "-ffdxq"], repo_dir, RepoUnavailableError)
+
     def create_branch(self, repo_dir: Path, branch_name: str, start_point: str) -> None:
         """Create and check out `branch_name` at the commit `start_point`; never overwrite.
 
@@ -358,6 +412,11 @@ class LocalGitClient:
         )
         self._git.run(["reset", "--hard", remote_ref], destination, RepoUnavailableError)
         self._git.run(["clean", "-ffdx"], destination, RepoUnavailableError)
+
+    @staticmethod
+    def _require_sha(sha: str) -> None:
+        if not _SHA_PATTERN.match(sha):
+            raise RepoUnavailableError(f"not a full commit sha: {sha!r}")
 
     def _require_commits(self, repo_dir: Path, url: str) -> None:
         result = self._git.probe(

@@ -3,6 +3,7 @@ import re
 import sqlite3
 from collections.abc import Callable
 from contextlib import AbstractContextManager, nullcontext
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -12,8 +13,12 @@ from hw_checker import cli
 from hw_checker.bootstrap import open_checkpointer
 from hw_checker.config.settings import LLM_ROLES, LlmSettings, Settings
 from hw_checker.domain import (
+    CheckedCommit,
+    CommitChoice,
+    PendingReview,
     RepoRunStatus,
     RepoSummary,
+    ReviewPrompt,
     RosterWarning,
     RosterWarningKind,
     RunStatus,
@@ -440,3 +445,31 @@ def test_llm_check_without_a_key_says_how_to_set_it(
     assert captured.err.startswith("Error: The LLM API key is not set.")
     assert "HW_CHECKER_LLM__API_KEY=<your key>" in captured.err
     assert captured.out == ""
+
+
+def test_the_gate_says_when_the_pull_request_is_based_on_an_earlier_commit() -> None:
+    checked = CheckedCommit(
+        sha="a" * 40,
+        authored_at=datetime(2026, 11, 1, tzinfo=UTC),
+        choice=CommitChoice.BEFORE_NEXT_TASK,
+        next_task_sha="b" * 40,
+        later_commits=1,
+        latest_sha="c" * 40,
+    )
+    review = PendingReview(
+        repo_id="dana__api",
+        repo_run_id="run-1/dana__api",
+        student="Dana Test",
+        branch_name="hw-review/hw01-2026-11-05",
+        pr_title="HW1 review: small fixes",
+        checked_commit=checked,
+    )
+    out = io.StringIO()
+
+    cli.print_prompt(ReviewPrompt(run_id="run-1", pending=(review,), how_to_answer="answer"), out)
+
+    assert (
+        "    checked commit: `aaaaaaa` (2026-11-01), the last before the next task started at "
+        "`bbbbbbb`. The repo has 1 later commit; the pull request is based on this older "
+        "commit.\n"
+    ) in out.getvalue()

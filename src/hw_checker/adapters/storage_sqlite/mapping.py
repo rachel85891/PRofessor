@@ -17,6 +17,7 @@ from hw_checker.adapters.storage_sqlite.schema import (
 from hw_checker.domain import (
     AssignmentResult,
     AssignmentVersion,
+    CheckedCommit,
     Evidence,
     ExecutionResult,
     Finding,
@@ -67,6 +68,9 @@ def fill_repo_run_row(row: RepoRunRow, repo_run: RepoRunResult) -> None:
     row.repo_id = repo_run.repo.repo_id
     row.repo = repo_run.repo.model_dump(mode="json")
     row.commit_sha = repo_run.commit_sha
+    row.checked_commit = (
+        None if repo_run.checked_commit is None else repo_run.checked_commit.model_dump(mode="json")
+    )
     row.status = repo_run.status.value
     row.execution = (
         None if repo_run.execution is None else repo_run.execution.model_dump(mode="json")
@@ -104,6 +108,9 @@ def repo_run_from_rows(
         repo_run_id=row.repo_run_id,
         repo=RepoTarget.model_validate(row.repo),
         commit_sha=row.commit_sha,
+        checked_commit=(
+            None if row.checked_commit is None else CheckedCommit.model_validate(row.checked_commit)
+        ),
         status=RepoRunStatus(row.status),
         execution=None if row.execution is None else ExecutionResult.model_validate(row.execution),
         assignment_results=results,
@@ -205,6 +212,7 @@ def fill_proposal_row(row: ProposalRow, proposal: FixProposal) -> None:
     row.diff = proposal.diff
     row.verified = proposal.verified
     row.status = proposal.status.value
+    row.branch_head_sha = proposal.branch_head_sha
 
 
 def proposal_from_row(row: ProposalRow) -> FixProposal:
@@ -222,6 +230,7 @@ def proposal_from_row(row: ProposalRow) -> FixProposal:
         diff=row.diff,
         verified=row.verified,
         status=ProposalStatus(row.status),
+        branch_head_sha=row.branch_head_sha,
     )
 
 

@@ -39,6 +39,7 @@ from hw_checker.domain import (
 from hw_checker.domain.errors import HwCheckerError, LLMError
 from hw_checker.graph import RoundGraph, RoundInput
 from hw_checker.ports import LLMClient
+from hw_checker.reporting.wording import describe_checked_commit
 
 EXIT_OK = 0
 EXIT_FAILED = 1
@@ -301,6 +302,8 @@ def print_prompt(prompt: ReviewPrompt, out: TextIO) -> None:
             f"not evaluated {review.not_evaluated}",
             file=out,
         )
+        if review.checked_commit is not None:
+            print(f"    checked commit: {describe_checked_commit(review.checked_commit)}", file=out)
         print(f"    branch: {review.branch_name}", file=out)
         print(f"    pull request: {review.pr_title}", file=out)
         print(f"    report: {review.report_path or 'not written'}", file=out)

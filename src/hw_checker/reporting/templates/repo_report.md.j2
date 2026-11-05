@@ -7,6 +7,9 @@
 {% endif %}
 - Repo: {{ repo.url }}
 - Commit: {{ short_sha or "not fetched" }}
+{% if checked_commit %}
+- Checked commit: {{ checked_commit }}
+{% endif %}
 - Run: {{ report.run_id }}
 - Assignment: {{ report.assignment_id }}
 - Status: {{ report.repo_run.status.value }}

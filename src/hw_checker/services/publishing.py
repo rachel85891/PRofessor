@@ -220,6 +220,7 @@ class PublishService:
                 self._writer.write_diff(run_id, repo_id, proposal.diff) if proposal.diff else None
             ),
             last_attempt=attempts[-1] if attempts else None,
+            checked_commit=line.checked_commit if line else None,
         )
 
     def _publish(self, proposal: FixProposal) -> PublishRecord:
@@ -231,12 +232,14 @@ class PublishService:
             )
         repo = proposal.repo
         head = self._code_host.default_branch_head(repo)
-        if head.sha != proposal.base_sha:
+        # A proposal may be based on an earlier commit (`ends_when`); what must not have
+        # moved is the branch head the round saw.
+        if head.sha != proposal.expected_head:
             return self._record(
                 proposal,
                 PublishOutcome.STALE,
                 message=(
-                    f"{repo.owner}/{repo.name} moved from {proposal.base_sha[:SHORT_SHA]} to "
+                    f"{repo.owner}/{repo.name} moved from {proposal.expected_head[:SHORT_SHA]} to "
                     f"{head.sha[:SHORT_SHA]} since the check; nothing was pushed. Check it "
                     "again in a new round."
                 ),

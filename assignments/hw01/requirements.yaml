@@ -4,10 +4,15 @@
 # Updated by the developer on 2026-10-28 (lecturer input): GET all not required, PUT returns Ok().
 # Updated by the developer on 2026-10-29: update-then-read-back and login-returns-user added (from the manual review).
 # Stage 14d: depends_on added (approved by the developer on 2026-11-05).
+# Stage 15: ends_when added (developer decision 2026-11-05): the next task (layers) adds a second project.
 # taught_techniques: to be filled from the course slides.
 id: hw01
 order: 1
 title: Users API with text-file storage
+ends_when:
+  check: project_count
+  params:
+    min: 2
 requirements:
   - id: hw01-get-missing
     kind: http
