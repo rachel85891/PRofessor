@@ -223,6 +223,8 @@ class ReviewRuleSet(DomainModel):
 class CommentStyle(DomainModel):
     """How a comment is written in one file type: `//Text` and `//fix: Text` in C#."""
 
+    language: NonBlankStr
+    """The file type's language, as the PR text names it (`C#`)."""
     line: NonBlankStr
     """What starts a comment line."""
     fix_marker: NonBlankStr
@@ -242,6 +244,12 @@ class CommentStyle(DomainModel):
         comment's start and ignoring case."""
         rest = self.fix_marker.removeprefix(self.line)
         return re.compile(rf"^{re.escape(self.line)}\s*{re.escape(rest)}", re.IGNORECASE)
+
+    @property
+    def marker_shown(self) -> str:
+        """The fix marker as the PR text shows it: `//fix:`, or `<!--fix: … -->` when the
+        comment needs an end."""
+        return f"{self.fix_marker} … {self.end}" if self.end else self.fix_marker
 
 
 class PrSection(DomainModel):
@@ -321,7 +329,8 @@ class CourseProfile(DomainModel):
     """What `{taught_so_far}` in a rule becomes when the assignment lists taught
     techniques; `{techniques}` is the list."""
     comment_style: dict[str, CommentStyle] = Field(min_length=1)
-    """By file suffix (`.cs`). Only these files are edited, except a data file's newline."""
+    """By file suffix (`.cs`), in the order the prompts and the PR list them. A file the
+    fixer is shown is edited only when its suffix is here (except a data file's newline)."""
     pr_format: PrFormat
 
     @field_validator("comment_style")

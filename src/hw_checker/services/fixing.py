@@ -18,6 +18,7 @@ from pathlib import Path, PurePosixPath
 from hw_checker.domain import (
     Assignment,
     AssignmentResult,
+    CommentStyle,
     Course,
     EditApplication,
     EditKind,
@@ -235,8 +236,10 @@ class FixService:
         Raises:
             FixError: even without any file the prompt is too long.
         """
-        paths = self._files.list_files(workspace.working_copy, frozenset(self._config.skip_dirs))
-        shown = self._prompt_files(workspace.working_copy, paths)
+        root = workspace.working_copy
+        paths = self._files.list_files(root, frozenset(self._config.skip_dirs))
+        selected = self._shown_paths(paths, assignments)
+        shown = [{"path": path, "text": self._file_text(root, path)} for path in selected]
         policy = role_policy(self._course, assignment, assignments, ReviewRole.FIXER)
         values: dict[str, object] = policy.slots() | {
             "course": self._course.profile,
@@ -253,6 +256,7 @@ class FixService:
             "max_edits": self._config.max_edits,
             "max_fix_lines": self._config.max_fix_lines,
             "data_files": sorted(self._data_files(paths)),
+            "edited_suffixes": list(self._styles(selected)),
         }
         omitted: list[str] = []
         while True:
@@ -287,10 +291,12 @@ class FixService:
         self._git.discard_changes(copy)
         paths = self._files.list_files(copy, frozenset(self._config.skip_dirs))
         files = {path: self._files.read_bytes(copy, path) for path in paths}
+        selected = self._shown_paths(paths, assignments)
         rules = EditRules(
             max_edits=self._config.max_edits,
             max_fix_lines=self._config.max_fix_lines,
-            styles=self._course.profile.comment_style,
+            styles=self._styles(selected),
+            editable=frozenset(selected),
             forbidden=role_policy(
                 self._course, assignment, assignments, ReviewRole.FIXER
             ).forbidden,
@@ -688,12 +694,27 @@ class FixService:
             lines += [f"Recheck failed: {problem}" for problem in verification.problems]
         return lines
 
-    def _prompt_files(self, root: Path, paths: Sequence[str]) -> list[dict[str, str]]:
+    def _shown_paths(self, paths: Sequence[str], assignments: Sequence[Assignment]) -> list[str]:
+        """The files the fixer is shown, in the prompt's order: the stack's code (`source_suffixes`,
+        files with a comment style first), the files the assignments review (`reviewed_files`),
+        then configuration and data. Only these files are edited."""
         code = [p for p in paths if PurePosixPath(p).suffix in self._config.source_suffixes]
         code.sort(key=lambda path: (self._course.profile.style_for(path) is None, path))
+        globs = [a.reviewed_files for a in assignments if a.reviewed_files is not None]
+        reviewed = sorted(p for p in paths if any(files.matches(p) for files in globs))
         configs = [p for p in paths if self._matches(p, self._config.config_globs)]
-        shown = code + configs + sorted(self._data_files(paths))
-        return [{"path": path, "text": self._file_text(root, path)} for path in shown]
+        return list(dict.fromkeys(code + reviewed + configs + sorted(self._data_files(paths))))
+
+    def _styles(self, shown: Sequence[str]) -> dict[str, CommentStyle]:
+        """The comment styles of the `shown` files' types, in the course's order: the files
+        that may be edited. All of the course's styles when no shown file has one."""
+        styles = self._course.profile.comment_style
+        used = {
+            suffix: style
+            for suffix, style in styles.items()
+            if any(path.endswith(suffix) for path in shown)
+        }
+        return used or dict(styles)
 
     def _file_text(self, root: Path, path: str) -> str:
         text = self._files.read_bytes(root, path).decode("utf-8", errors="replace")

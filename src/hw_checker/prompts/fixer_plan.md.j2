@@ -10,7 +10,7 @@ You review {{ course.audience }}'s {{ course.stack }} homework ({{ assignment.sh
 # The edits you may plan
 
 Return a `FixPlan`: `edits` (at most {{ max_edits }}) and `files_notes`. Each edit:
-- `file`: the path exactly as shown below (forward slashes). Only {% for suffix in course.comment_style %}`{{ suffix }}`{{ ", " if not loop.last }}{% endfor %} files are edited, except `final_newline`.
+- `file`: the path exactly as shown below (forward slashes). Only {% for suffix in edited_suffixes %}`{{ suffix }}`{{ ", " if not loop.last }}{% endfor %} files are edited, except `final_newline`.
 - `kind`:
   - `fix`: a small code change. `replace` must keep the surrounding lines, start the changed part with a `{{ style.fix_marker }} ...{{ style.end }}` line, and change at most {{ max_fix_lines }} code lines. Never change a property declaration (`{ get; set; }`). Give a `fallback_note`: the question to leave instead if the fix is dropped.
   - `note`: only adds comment lines (`{{ style.line }}Text{{ style.end }}`, no space after `{{ style.line }}`). `replace` is `find` with comment lines added; the code stays exactly the same.

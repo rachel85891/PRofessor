@@ -85,12 +85,12 @@ def test_a_forbidden_literal_is_matched_as_written() -> None:
 
 
 def test_the_fix_marker_allows_spaces_and_any_case() -> None:
-    style = CommentStyle(line="//", fix_marker="//fix:")
+    style = CommentStyle(language="C#", line="//", fix_marker="//fix:")
 
     assert style.marker_pattern.match("// FIX: added")
     assert not style.marker_pattern.match("//fixed it")
     with pytest.raises(ValidationError, match="fix_marker must start with"):
-        CommentStyle(line="#", fix_marker="//fix:")
+        CommentStyle(language="C#", line="#", fix_marker="//fix:")
 
 
 @pytest.mark.parametrize(
@@ -113,7 +113,9 @@ def test_the_pr_sections_are_each_known_section_once(change: Any, message: str) 
 
 def test_comment_styles_are_keyed_by_file_suffix() -> None:
     with pytest.raises(ValidationError, match="file suffixes"):
-        builders.course_profile(comment_style={"csharp": {"line": "//", "fix_marker": "//fix:"}})
+        builders.course_profile(
+            comment_style={"csharp": {"language": "C#", "line": "//", "fix_marker": "//fix:"}}
+        )
 
     profile = builders.course_profile()
     assert profile.style_for("Controllers/A.cs") is not None

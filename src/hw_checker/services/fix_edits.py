@@ -44,6 +44,8 @@ class EditRules:
     """A `fix` changes at most this many code lines."""
     styles: Mapping[str, CommentStyle]
     """The comment style by file suffix; only these files are edited."""
+    editable: frozenset[str] | None = None
+    """The files the fixer was shown; when given, no other file is edited."""
     forbidden: tuple[ForbiddenText, ...] = ()
     """Text an edit must never add (the fixer's rules in effect)."""
     data_files: frozenset[str] = field(default_factory=frozenset)
@@ -152,6 +154,8 @@ def _path_problem(
     if rules.style(path) is None:
         suffixes = " or ".join(rules.styles)
         return f"{path} is not a {suffixes} file; only {suffixes} files are edited"
+    if rules.editable is not None and path not in rules.editable:
+        return f"{path} was not shown to you; only the files shown are edited"
     return None
 
 

@@ -13,6 +13,11 @@ ends_when:
   check: project_count
   params:
     min: 2
+# Stage 18 (developer decision 2026-11-05, hw01 client task): the fixer also reviews the
+# client files in wwwroot, at any depth, but never a library.
+reviewed_files:
+  include: ["**/wwwroot/**/*.html", "**/wwwroot/**/*.js", "**/wwwroot/**/*.css"]
+  exclude: ["**/*.min.js", "**/*.min.css", "**/lib/**"]
 requirements:
   - id: hw01-get-missing
     kind: http

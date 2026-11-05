@@ -10,7 +10,6 @@ from hw_checker.checks.deterministic.structure import (
     FolderExistsParams,
     file_exists,
     folder_exists,
-    glob_pattern,
     scan_repo,
 )
 from hw_checker.domain import (
@@ -21,6 +20,7 @@ from hw_checker.domain import (
     RequirementKind,
     Severity,
 )
+from hw_checker.domain.assignment import glob_pattern
 
 REQUIREMENT = Requirement(
     id="hw01-r1",

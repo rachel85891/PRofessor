@@ -10,7 +10,7 @@ from tests.unit.services.fixer_data import ASSIGNMENT, COURSE
 
 CONTROLLER = "Controllers/UsersController.cs"
 DATA = "users.json"
-STYLES = COURSE.profile.comment_style
+STYLES = {".cs": COURSE.profile.comment_style[".cs"]}
 STYLE = STYLES[".cs"]
 RULES = EditRules(
     max_edits=5,

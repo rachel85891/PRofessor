@@ -4,6 +4,10 @@
       "additionalProperties": false,
       "description": "How a comment is written in one file type: `//Text` and `//fix: Text` in C#.",
       "properties": {
+        "language": {
+          "title": "Language",
+          "type": "string"
+        },
         "line": {
           "title": "Line",
           "type": "string"
@@ -19,6 +23,7 @@
         }
       },
       "required": [
+        "language",
         "line",
         "fix_marker"
       ],

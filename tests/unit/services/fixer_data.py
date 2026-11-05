@@ -47,8 +47,11 @@ DATA = "users.json"
 SOURCE = YamlAssignmentSource(REPO_ROOT / "assignments", REPO_ROOT / "course")
 COURSE = SOURCE.load_course()
 """The real course profile and course rules (stage 3f: policy is data)."""
-HW01_RULES = next(a for a in SOURCE.load_all() if a.id == "hw01").review_rules
+HW01_REAL = next(a for a in SOURCE.load_all() if a.id == "hw01")
+HW01_RULES = HW01_REAL.review_rules
 """hw01's real review rules."""
+HW01_REVIEWED = HW01_REAL.reviewed_files
+"""hw01's real `reviewed_files`: the client files in wwwroot."""
 CONTROLLER_TEXT = """using System.Text.Json;
 
 public class UsersController
@@ -183,10 +186,11 @@ class FixerSetup:
         replies: dict[str, list[BaseModel]] | None = None,
         runner: FakeCodeRunner | None = None,
         outcomes: dict[str, Outcome] | None = None,
+        files: dict[str, str] | None = None,
         **config_overrides: Any,
     ) -> None:
         self.checked = tmp_path / "clones" / REPO.repo_id
-        for path, text in FILES.items():
+        for path, text in (FILES if files is None else files).items():
             (self.checked / path).parent.mkdir(parents=True, exist_ok=True)
             (self.checked / path).write_bytes(text.encode("utf-8"))
         self.fetched = FetchedRepo(working_copy=self.checked, commit_sha=DEFAULT_SHA)

@@ -102,7 +102,7 @@ def course_profile(**overrides: Any) -> CourseProfile:
         "stack": "Web API",
         "student_wording": "Plain English.",
         "taught_so_far": " (taught so far: {techniques})",
-        "comment_style": {".cs": {"line": "//", "fix_marker": "//fix:"}},
+        "comment_style": {".cs": {"language": "C#", "line": "//", "fix_marker": "//fix:"}},
         "pr_format": {
             "opening": "Hello! ",
             "opening_intro": "starts with the greeting.",
