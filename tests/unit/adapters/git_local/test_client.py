@@ -333,3 +333,30 @@ def test_log_works_without_configured_author(tmp_path: Path) -> None:
     unconfigured = LocalGitClient("git", 10, None, None, FakeCommandRunner(respond))
 
     assert unconfigured.log(tmp_path) == ()
+
+
+def test_tracked_files_lists_tracked_and_gitignore_matched_paths(tmp_path: Path) -> None:
+    def respond(args: list[str]) -> subprocess.CompletedProcess[str]:
+        if args[:2] == ["rev-parse", "--show-toplevel"]:
+            return ok(str(tmp_path))
+        if "--ignored" in args:
+            return ok("App/bin/a.dll\0")
+        return ok("App/App.csproj\0App/bin/a.dll\0.gitignore\0")
+
+    runner = FakeCommandRunner(respond)
+
+    tracked = client(runner).tracked_files(tmp_path)
+
+    assert tracked.paths == (".gitignore", "App/App.csproj", "App/bin/a.dll")
+    assert tracked.ignored == ("App/bin/a.dll",)
+    ignored_call = runner.commands[-1]
+    assert "--exclude-per-directory=.gitignore" in ignored_call
+    assert "--exclude-standard" not in ignored_call
+    assert "core.ignoreCase=true" in ignored_call
+
+
+def test_tracked_files_in_a_folder_of_another_repo_is_rejected(tmp_path: Path) -> None:
+    runner = FakeCommandRunner(lambda args: ok(str(tmp_path.parent)))
+
+    with pytest.raises(RepoUnavailableError, match="not a Git working copy"):
+        client(runner).tracked_files(tmp_path)

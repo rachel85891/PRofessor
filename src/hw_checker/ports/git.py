@@ -3,7 +3,7 @@
 from pathlib import Path
 from typing import Protocol
 
-from hw_checker.domain import CommitInfo
+from hw_checker.domain import CommitInfo, TrackedFiles
 
 
 class GitClient(Protocol):
@@ -88,6 +88,16 @@ class GitClient(Protocol):
 
         Raises:
             PublishError: the push was rejected or failed.
+            ExecutionEnvironmentError: the git executable is not available.
+        """
+        ...
+
+    def tracked_files(self, repo_dir: Path) -> TrackedFiles:
+        """Return the files git tracks in `repo_dir`, and which of them the repo's own
+        `.gitignore` files match (the machine's global excludes are not used).
+
+        Raises:
+            RepoUnavailableError: `repo_dir` is not a readable Git working copy.
             ExecutionEnvironmentError: the git executable is not available.
         """
         ...

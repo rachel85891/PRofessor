@@ -14,10 +14,12 @@ from hw_checker.domain import (
     RequirementKind,
     Severity,
     StepStatus,
+    TrackedFiles,
 )
 from hw_checker.domain.errors import InvalidAssignmentError
 from hw_checker.services.deterministic_checks import DeterministicCheckService
 from tests.fakes.checks import FakeRequirementChecker
+from tests.fakes.git import FakeGitClient
 from tests.unit.domain import builders
 
 REPO = Path("repo")
@@ -131,3 +133,36 @@ def test_an_assignment_without_deterministic_requirements_gives_an_empty_result(
     result = DeterministicCheckService(FakeRequirementChecker()).evaluate(only_code, REPO, None)
 
     assert (result.findings, result.not_evaluated) == ((), ())
+
+
+def test_tracked_files_are_read_once_and_given_to_every_check(tmp_path: Path) -> None:
+    (tmp_path / "Program.cs").write_text("class P {}\n", encoding="utf-8")
+    git = FakeGitClient(ignored=frozenset({"Program.cs"}))
+    checker = FakeRequirementChecker()
+
+    DeterministicCheckService(checker, git).evaluate(ASSIGNMENT, tmp_path, EXECUTION)
+
+    expected = TrackedFiles(paths=("Program.cs",), ignored=("Program.cs",))
+    assert all(c.tracked == expected for c in checker.checked)
+
+
+def test_unreadable_git_state_leaves_tracked_files_empty(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    checker = FakeRequirementChecker()
+
+    with caplog.at_level(logging.WARNING, logger="hw_checker.services.deterministic_checks"):
+        DeterministicCheckService(checker, FakeGitClient()).evaluate(
+            ASSIGNMENT, tmp_path / "missing", EXECUTION
+        )
+
+    assert all(c.tracked is None for c in checker.checked)
+    assert "RepoUnavailableError" in caplog.text
+
+
+def test_without_a_git_client_tracked_files_are_not_read() -> None:
+    checker = FakeRequirementChecker()
+
+    DeterministicCheckService(checker).evaluate(ASSIGNMENT, REPO, EXECUTION)
+
+    assert all(c.tracked is None for c in checker.checked)

@@ -202,6 +202,62 @@ NAMING_EXAMPLE_NO_SUGGESTION = MessageTemplate(
     en="{name} ({file}, line {line})",
 )
 
+LOCATED_EXAMPLE = MessageTemplate(
+    name="LOCATED_EXAMPLE",
+    he="{item} ({file}, שורה {line})",
+    en="{item} ({file}, line {line})",
+)
+
+GITIGNORE_MISSING = MessageTemplate(
+    name="GITIGNORE_MISSING",
+    he=(
+        "בריפוזיטורי אין קובץ .gitignore, ולכן קבצי בנייה וקבצים של סביבת הפיתוח נכנסים "
+        "אליו. כדאי להוסיף .gitignore{how_to_add}."
+    ),
+    en=(
+        "The repository has no `.gitignore`, so build and IDE files end up in it. "
+        "Add a `.gitignore`{how_to_add}."
+    ),
+)
+
+GITIGNORE_NOT_COVERING = MessageTemplate(
+    name="GITIGNORE_NOT_COVERING",
+    he=(
+        "אלה נמצאים בריפוזיטורי, ואף .gitignore לא משאיר אותם בחוץ: {examples}. "
+        "סך הכול: {count}. כדאי להוסיף ל-.gitignore את {patterns}."
+    ),
+    en=(
+        "These are in the repository and no `.gitignore` leaves them out: {examples}. "
+        "Total: {count}. Add {patterns} to the `.gitignore`."
+    ),
+)
+
+NOT_COMMITTED = MessageTemplate(
+    name="NOT_COMMITTED",
+    he=(
+        "אלה נמצאים בריפוזיטורי, אבל לא אמורים להיות בו: {examples}. סך הכול: {count}. "
+        "צריך להסיר אותם מהריפוזיטורי (למשל git rm -r --cached {first}); "
+        "אחר כך ה-.gitignore ישאיר אותם בחוץ."
+    ),
+    en=(
+        "These are in the repository but should not be committed: {examples}. "
+        "Total: {count}. Remove them from the repository (for example "
+        "`git rm -r --cached {first}`); the `.gitignore` keeps them out after that."
+    ),
+)
+
+ABSOLUTE_PATHS = MessageTemplate(
+    name="ABSOLUTE_PATHS",
+    he=(
+        "בקוד יש נתיב מלא על דיסק של המחשב, ולכן הפרויקט לא ירוץ במחשב אחר: {examples}. "
+        "סך הכול: {count}. כדאי להשתמש בנתיב יחסי לפרויקט."
+    ),
+    en=(
+        "The code uses a full path on a disk of your computer, so the project cannot run on "
+        "another computer: {examples}. Total: {count}. Use a path relative to the project."
+    ),
+)
+
 SHAPE_NAMES: dict[str, Localized] = {
     "object": Localized(he="אובייקט", en="an object"),
     "array_of_objects": Localized(he="רשימה של אובייקטים", en="a list of objects"),
@@ -237,4 +293,9 @@ ALL_TEMPLATES: tuple[MessageTemplate, ...] = (
     NAMING_CONTROLLER_SUFFIX,
     NAMING_EXAMPLE,
     NAMING_EXAMPLE_NO_SUGGESTION,
+    LOCATED_EXAMPLE,
+    GITIGNORE_MISSING,
+    GITIGNORE_NOT_COVERING,
+    NOT_COMMITTED,
+    ABSOLUTE_PATHS,
 )

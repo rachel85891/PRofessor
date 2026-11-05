@@ -117,6 +117,9 @@ def test_builtin_checks_are_registered() -> None:
         "camel_case_locals",
         "file_matches_type",
         "controller_suffix",
+        "gitignore_covers",
+        "not_committed",
+        "no_absolute_paths",
     }
 
 

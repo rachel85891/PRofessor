@@ -5,7 +5,7 @@ import shutil
 from collections.abc import Mapping
 from pathlib import Path
 
-from hw_checker.domain import CommitInfo
+from hw_checker.domain import CommitInfo, TrackedFiles
 from hw_checker.domain.errors import GitOperationError, HwCheckerError, RepoUnavailableError
 
 DEFAULT_SHA = "ab" * 20
@@ -17,7 +17,8 @@ class FakeGitClient:
 
     `sources` maps a URL to the folder copied as its working copy; any other URL gets an
     empty folder. `errors` maps a URL to the error its clone raises; `push_error` is raised
-    by every push.
+    by every push. `ignored` lists the tracked paths that `tracked_files` reports as
+    matched by `.gitignore`.
     """
 
     def __init__(
@@ -26,11 +27,13 @@ class FakeGitClient:
         errors: Mapping[str, HwCheckerError] | None = None,
         sha: str = DEFAULT_SHA,
         push_error: HwCheckerError | None = None,
+        ignored: frozenset[str] = frozenset(),
     ) -> None:
         self._sources = dict(sources or {})
         self._errors = dict(errors or {})
         self._sha = sha
         self._push_error = push_error
+        self._ignored = ignored
         self.cloned: list[tuple[str, Path]] = []
         self.pushed: list[tuple[Path, str, str]] = []
         self.branches: list[tuple[Path, str, str]] = []
@@ -100,6 +103,15 @@ class FakeGitClient:
         if self._push_error is not None:
             raise self._push_error
         self.pushed.append((repo_dir, branch_name, remote_url))
+
+    def tracked_files(self, repo_dir: Path) -> TrackedFiles:
+        """Every file in the folder is tracked; `ignored` (given at construction) is ignored."""
+        if not repo_dir.is_dir():
+            raise RepoUnavailableError(f"{repo_dir} is not a working copy")
+        paths = tuple(sorted(_files(repo_dir)))
+        return TrackedFiles(
+            paths=paths, ignored=tuple(path for path in paths if path in self._ignored)
+        )
 
 
 def _files(root: Path) -> dict[str, bytes]:
