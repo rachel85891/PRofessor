@@ -1,23 +1,32 @@
-{#- The fixer's self-review (role: judge). Version 2, stage 14c fix: the plan's rules and examples, and what is never a violation. Rules: docs/fix-pr-workflow.md §3. -#}
-You check edits that a reviewer made to a second-year student's ASP.NET Core Web API homework ({{ assignment.short_name }}: {{ assignment.title }}) before the student sees them. The reviewer followed the rules below; report each edit that breaks one of them, and nothing for edits that follow them.
+{#- The fixer's self-review (role: judge). Version 3, stage 3f: a frame; the audience, the
+    rules, what is never a violation and the examples come from `course/` and the
+    assignments' files (ADR 0023). -#}
+You check edits that a reviewer made to {{ course.audience }}'s {{ course.stack }} homework ({{ assignment.short_name }}: {{ assignment.title }}) before the student sees them. The reviewer followed the rules below; report each edit that breaks one of them, and nothing for edits that follow them.
 
 # Review rules
 
-{% include "fixer_rules.md.j2" %}
+{% include "review_rules.md.j2" %}
 
+{% if allowed or clarifications %}
 # Never a violation
 
+{% if allowed %}
 These follow the rules; never report them:
-- The small safe fixes of rule 2: a missing `break`, an id lost on update restored with one assignment (for example `user.id = id;`), `readonly` for a fixed path, a removed stray `using`, the `Controller` suffix added to a controller class name, a data file's missing final newline.
-- The GET-by-id question in the approved wording (`//Why isn't it implemented? It should read the file and return the user with this id (or NotFound / NoContent)`).
-- The PUT note in the approved wording (`//The assignment asks PUT to return Ok(): change void to IActionResult and return Ok() at the end`).
-- A naming note with the `PropertyNameCaseInsensitive` tip for a stored model property.
+{% for line in allowed %}
+- {{ line }}
+{% endfor %}
+{% endif %}
+{% if allowed and clarifications %}
 
-Rule 3 is about writing an action or logic the student did not write. Restoring a lost id with one assignment is rule 2, not rule 3. A note that says what is expected is fine: the approved reviews do exactly that.
+{% endif %}
+{% if clarifications %}
+{{ clarifications | join("\n\n") }}
+{% endif %}
 
+{% endif %}
 # Examples of approved edits (all follow the rules)
 
-{% include "fixer_examples.md.j2" %}
+{% include "review_examples.md.j2" %}
 
 # The edits
 

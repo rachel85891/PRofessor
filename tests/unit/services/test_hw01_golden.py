@@ -25,7 +25,9 @@ from tests.unit.domain import builders
 from tests.unit.services.fixer_data import (
     BREAK_FIX,
     CONTROLLER,
+    COURSE,
     DATA,
+    HW01_RULES,
     NAMING_NOTE,
     REPO,
     RUN_ID,
@@ -69,6 +71,7 @@ HW01 = Assignment(
         ),
     ),
     taught_techniques=("controllers", "routing attributes"),
+    review_rules=HW01_RULES,
 )
 HW01_UNTAUGHT = HW01.model_copy(update={"taught_techniques": ()})
 ASSIGNMENTS = (GENERAL, HW01)
@@ -154,9 +157,11 @@ def test_the_fixer_plan_prompt_of_a_retry_with_kept_edits_is_unchanged(tmp_path:
 def test_the_self_review_prompt_is_unchanged(tmp_path: Path) -> None:
     setup = FixerSetup(tmp_path)
     workspace = setup.service.prepare(RUN_ID, "hw01", REPO, setup.fetched)
-    application = setup.service.apply(workspace, EDITS)
+    application = setup.service.apply(workspace, EDITS, HW01, ASSIGNMENTS)
 
-    setup.service.self_review(RUN_ID, workspace, HW01_UNTAUGHT, application)
+    setup.service.self_review(
+        RUN_ID, workspace, HW01_UNTAUGHT, (GENERAL, HW01_UNTAUGHT), application
+    )
 
     [call] = setup.llm.calls
     assert call.prompt == _golden("fixer_review.md")
@@ -180,4 +185,6 @@ def test_the_writer_prompt_and_the_pr_body_are_unchanged(tmp_path: Path) -> None
     ("cleared", "line"), [(("hw01-update",), 0), (("hw01-naming",), 1), ((), 1)]
 )
 def test_both_pr_titles_are_unchanged(cleared: tuple[str, ...], line: int) -> None:
-    assert pr_title(HW01, cleared, ASSIGNMENTS) == _golden("pr_titles.txt").splitlines()[line]
+    assert (
+        pr_title(HW01, cleared, ASSIGNMENTS, COURSE) == _golden("pr_titles.txt").splitlines()[line]
+    )

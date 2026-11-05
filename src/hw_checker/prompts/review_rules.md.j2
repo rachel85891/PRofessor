@@ -1,0 +1,6 @@
+{#- Frame: the numbered review rules of the prompt's role, filled from `course/` and the
+    assignments' `review_rules.yaml` (ADR 0023). One rule per line: the self-review quotes
+    them by number. -#}
+{% for rule in rules %}
+{{ loop.index }}. {{ rule }}
+{% endfor %}

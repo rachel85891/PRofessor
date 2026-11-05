@@ -26,6 +26,7 @@ from tests.unit.services.fixer_data import (
     BREAK_FIX,
     CONTROLLER,
     CONTROLLER_TEXT,
+    COURSE,
     DATA,
     NAMING_NOTE,
     NO_VIOLATIONS,
@@ -164,7 +165,7 @@ def test_apply_writes_the_accepted_edits_and_keeps_the_rejected_ones_with_reason
     setup = FixerSetup(tmp_path)
     workspace = setup.service.prepare(RUN_ID, "hw01", REPO, setup.fetched)
 
-    application = setup.service.apply(workspace, [BREAK_FIX, OUTSIDE])
+    application = setup.service.apply(workspace, [BREAK_FIX, OUTSIDE], ASSIGNMENT, (ASSIGNMENT,))
 
     assert application.applied == (BREAK_FIX,)
     assert application.changed_files == (CONTROLLER,)
@@ -176,9 +177,9 @@ def test_apply_writes_the_accepted_edits_and_keeps_the_rejected_ones_with_reason
 def test_apply_starts_again_from_the_checked_commit(tmp_path: Path) -> None:
     setup = FixerSetup(tmp_path)
     workspace = setup.service.prepare(RUN_ID, "hw01", REPO, setup.fetched)
-    setup.service.apply(workspace, [BREAK_FIX])
+    setup.service.apply(workspace, [BREAK_FIX], ASSIGNMENT, (ASSIGNMENT,))
 
-    setup.service.apply(workspace, [NAMING_NOTE])
+    setup.service.apply(workspace, [NAMING_NOTE], ASSIGNMENT, (ASSIGNMENT,))
 
     assert "//fix:" not in setup.text(CONTROLLER)
     assert "camelCase" in setup.text(CONTROLLER)
@@ -190,10 +191,12 @@ def test_the_self_review_asks_the_judge_and_changes_no_file(tmp_path: Path) -> N
     )
     setup = FixerSetup(tmp_path, replies={"judge": [SelfReview(violations=(violation,))]})
     workspace = setup.service.prepare(RUN_ID, "hw01", REPO, setup.fetched)
-    application = setup.service.apply(workspace, [BREAK_FIX, NAMING_NOTE])
+    application = setup.service.apply(
+        workspace, [BREAK_FIX, NAMING_NOTE], ASSIGNMENT, (ASSIGNMENT,)
+    )
     before = setup.text(CONTROLLER)
 
-    reviewed = setup.service.self_review(RUN_ID, workspace, ASSIGNMENT, application)
+    reviewed = setup.service.self_review(RUN_ID, workspace, ASSIGNMENT, (ASSIGNMENT,), application)
 
     assert reviewed is not None
     review, usage = reviewed
@@ -216,10 +219,12 @@ def test_a_violating_edit_is_removed_and_kept_as_rejected(tmp_path: Path) -> Non
     )
     setup = FixerSetup(tmp_path)
     workspace = setup.service.prepare(RUN_ID, "hw01", REPO, setup.fetched)
-    application = setup.service.apply(workspace, [BREAK_FIX, NAMING_NOTE])
+    application = setup.service.apply(
+        workspace, [BREAK_FIX, NAMING_NOTE], ASSIGNMENT, (ASSIGNMENT,)
+    )
 
     reviewed = setup.service.remove_violations(
-        workspace, ASSIGNMENT, application, SelfReview(violations=(violation,))
+        workspace, ASSIGNMENT, (ASSIGNMENT,), application, SelfReview(violations=(violation,))
     )
 
     assert reviewed.applied == (BREAK_FIX,)
@@ -238,11 +243,13 @@ def test_a_judge_removing_a_readonly_fix_is_ignored_and_the_report_keeps_why(
     setup = FixerSetup(tmp_path, replies={"judge": [SelfReview(violations=(violation,))]})
     (setup.checked / STORE).write_bytes(STORE_TEXT.encode())
     workspace = setup.service.prepare(RUN_ID, "hw01", REPO, setup.fetched)
-    application = setup.service.apply(workspace, [READONLY_FIX])
-    reviewed = setup.service.self_review(RUN_ID, workspace, ASSIGNMENT, application)
+    application = setup.service.apply(workspace, [READONLY_FIX], ASSIGNMENT, (ASSIGNMENT,))
+    reviewed = setup.service.self_review(RUN_ID, workspace, ASSIGNMENT, (ASSIGNMENT,), application)
     assert reviewed is not None
 
-    kept = setup.service.remove_violations(workspace, ASSIGNMENT, application, reviewed[0])
+    kept = setup.service.remove_violations(
+        workspace, ASSIGNMENT, (ASSIGNMENT,), application, reviewed[0]
+    )
 
     assert kept.applied == (READONLY_FIX,)
     assert "private readonly string path" in setup.text(STORE)
@@ -267,12 +274,14 @@ def test_a_judge_flagging_a_real_file_exists_check_removes_it(tmp_path: Path) ->
     )
     setup = FixerSetup(tmp_path, replies={"judge": [SelfReview(violations=(violation,))]})
     workspace = setup.service.prepare(RUN_ID, "hw01", REPO, setup.fetched)
-    setup.service.apply(workspace, [BREAK_FIX])
+    setup.service.apply(workspace, [BREAK_FIX], ASSIGNMENT, (ASSIGNMENT,))
     application = EditApplication(applied=(BREAK_FIX, exists), changed_files=(CONTROLLER,))
-    reviewed = setup.service.self_review(RUN_ID, workspace, ASSIGNMENT, application)
+    reviewed = setup.service.self_review(RUN_ID, workspace, ASSIGNMENT, (ASSIGNMENT,), application)
     assert reviewed is not None
 
-    kept = setup.service.remove_violations(workspace, ASSIGNMENT, application, reviewed[0])
+    kept = setup.service.remove_violations(
+        workspace, ASSIGNMENT, (ASSIGNMENT,), application, reviewed[0]
+    )
 
     assert kept.applied == (BREAK_FIX,)
     assert [rejected.reason for rejected in kept.rejected] == [
@@ -283,11 +292,11 @@ def test_a_judge_flagging_a_real_file_exists_check_removes_it(tmp_path: Path) ->
 def test_edits_without_violations_are_kept(tmp_path: Path) -> None:
     setup = FixerSetup(tmp_path)
     workspace = setup.service.prepare(RUN_ID, "hw01", REPO, setup.fetched)
-    application = setup.service.apply(workspace, [BREAK_FIX])
+    application = setup.service.apply(workspace, [BREAK_FIX], ASSIGNMENT, (ASSIGNMENT,))
 
-    assert setup.service.remove_violations(workspace, ASSIGNMENT, application, NO_VIOLATIONS) == (
-        application
-    )
+    assert setup.service.remove_violations(
+        workspace, ASSIGNMENT, (ASSIGNMENT,), application, NO_VIOLATIONS
+    ) == (application)
 
 
 @pytest.mark.parametrize("self_review", [False, True])
@@ -296,9 +305,13 @@ def test_no_self_review_call_when_it_is_off_or_nothing_was_applied(
 ) -> None:
     setup = FixerSetup(tmp_path, self_review=self_review)
     workspace = setup.service.prepare(RUN_ID, "hw01", REPO, setup.fetched)
-    application = setup.service.apply(workspace, [BREAK_FIX] if not self_review else [])
+    application = setup.service.apply(
+        workspace, [BREAK_FIX] if not self_review else [], ASSIGNMENT, (ASSIGNMENT,)
+    )
 
-    assert setup.service.self_review(RUN_ID, workspace, ASSIGNMENT, application) is None
+    assert (
+        setup.service.self_review(RUN_ID, workspace, ASSIGNMENT, (ASSIGNMENT,), application) is None
+    )
     assert setup.llm.calls == []
 
 
@@ -425,7 +438,7 @@ TITLE_ASSIGNMENT = ASSIGNMENT.model_copy(
 def test_the_title_comes_from_the_requirements_the_recheck_cleared(
     cleared: tuple[str, ...], title: str
 ) -> None:
-    assert pr_title(TITLE_ASSIGNMENT, cleared, (TITLE_ASSIGNMENT,)) == title
+    assert pr_title(TITLE_ASSIGNMENT, cleared, (TITLE_ASSIGNMENT,), COURSE) == title
 
 
 def test_no_applied_edit_means_no_branch_and_no_proposal(tmp_path: Path) -> None:
@@ -444,7 +457,9 @@ def test_no_applied_edit_means_no_branch_and_no_proposal(tmp_path: Path) -> None
 def test_propose_commits_once_and_saves_a_verified_pending_proposal(tmp_path: Path) -> None:
     setup = FixerSetup(tmp_path)
     workspace = setup.service.prepare(RUN_ID, "hw01", REPO, setup.fetched)
-    application = setup.service.apply(workspace, [BREAK_FIX, NAMING_NOTE])
+    application = setup.service.apply(
+        workspace, [BREAK_FIX, NAMING_NOTE], ASSIGNMENT, (ASSIGNMENT,)
+    )
 
     outcome = setup.service.propose(
         RUN_ID, REPO, workspace, ASSIGNMENT, application, "HW1 review: x", "Body\n", 2

@@ -3,12 +3,23 @@ from typing import Any
 
 import pytest
 
-from hw_checker.domain import EditKind, NoteSection, PlannedEdit
+from hw_checker.domain import EditKind, NoteSection, PlannedEdit, ReviewRole
 from hw_checker.services.fix_edits import EditRules, apply_edits, fallback_edit
+from hw_checker.services.review_policy import role_policy
+from tests.unit.services.fixer_data import ASSIGNMENT, COURSE
 
 CONTROLLER = "Controllers/UsersController.cs"
 DATA = "users.json"
-RULES = EditRules(max_edits=5, max_fix_lines=6, data_files=frozenset({DATA}))
+STYLES = COURSE.profile.comment_style
+STYLE = STYLES[".cs"]
+RULES = EditRules(
+    max_edits=5,
+    max_fix_lines=6,
+    styles=STYLES,
+    forbidden=role_policy(COURSE, ASSIGNMENT, (ASSIGNMENT,), ReviewRole.FIXER).forbidden,
+    data_files=frozenset({DATA}),
+)
+"""hw01's guardrails: the real course's comment style and forbidden texts."""
 
 SWITCH = (
     "        switch (kind)\n"
@@ -266,7 +277,7 @@ def test_edits_over_the_limit_are_rejected() -> None:
         for index, line in enumerate(["        switch (kind)", "            case 1:", "        }"])
     ]
 
-    result = apply_edits(files(), notes, EditRules(max_edits=2, max_fix_lines=6))
+    result = apply_edits(files(), notes, EditRules(max_edits=2, max_fix_lines=6, styles=STYLES))
 
     assert len(result.application.applied) == 2
     assert reasons(result) == ["more than 2 edits in one repo"]
@@ -302,7 +313,7 @@ def test_a_file_that_is_not_utf8_is_not_edited() -> None:
 
 
 def test_the_fallback_of_a_fix_is_a_note_above_the_original_text() -> None:
-    note = fallback_edit(edit())
+    note = fallback_edit(edit(), STYLE)
 
     assert note is not None
     assert note.kind is EditKind.NOTE
@@ -313,4 +324,4 @@ def test_the_fallback_of_a_fix_is_a_note_above_the_original_text() -> None:
 
 
 def test_a_fix_without_a_fallback_note_has_no_fallback() -> None:
-    assert fallback_edit(edit(fallback_note=None)) is None
+    assert fallback_edit(edit(fallback_note=None), STYLE) is None

@@ -17,20 +17,22 @@ class EditKind(StrEnum):
     """What a planned edit may change (docs/fix-pr-workflow.md §3)."""
 
     FIX = "fix"
-    """A small code change, with a `//fix: ...` line directly above it."""
+    """A small code change, with a fix marker line (the course's comment style) directly
+    above it."""
     NOTE = "note"
-    """Only adds `//` comment lines: a question or a note for the student."""
+    """Only adds comment lines: a question or a note for the student."""
     FINAL_NEWLINE = "final_newline"
     """Adds the missing final newline to the data file."""
 
 
 class NoteSection(StrEnum):
-    """The PR section a note belongs in (docs/fix-pr-workflow.md §4); each note is in one."""
+    """The PR section a note belongs in (docs/fix-pr-workflow.md §4); each note is in one.
+    The sections' headings are the course's data (`course.yaml`, ADR 0023)."""
 
     NAMES = "names"
-    """"Names (C# conventions)": a naming note."""
+    """The section of naming notes."""
     FOR_YOU = "for_you"
-    """"For you to do": a question or an instruction for the student."""
+    """The section of questions and instructions for the student."""
 
 
 class PlannedEdit(DomainModel):
@@ -95,19 +97,20 @@ class SelfReview(DomainModel):
 
 
 class PullRequestText(DomainModel):
-    """The writer's reply: the PR body's opening and the items of its sections.
+    """The writer's reply: the PR body's opening and the items of its sections, whose
+    headings and order are the course's data.
 
-    The "Files" section is not the writer's: it is the plan's `files_notes`, verbatim.
+    The `files` section is not the writer's: it is the plan's `files_notes`, verbatim.
     """
 
     opening: str
-    """Starts with "Hi! "; one or two sentences on what works."""
+    """Starts with the course's opening; one or two sentences on what works."""
     fixed: tuple[str, ...]
-    """"Fixed in this PR (marked `//fix:` in the code)"."""
+    """The `fixed` section: one item per code or data change."""
     for_you: tuple[str, ...]
-    """"For you to do (marked in the code)"."""
+    """The `for_you` section: one item per question or instruction."""
     names: tuple[str, ...]
-    """"Names (C# conventions)"."""
+    """The `names` section: one item per naming note."""
 
 
 class VerifyResult(DomainModel):

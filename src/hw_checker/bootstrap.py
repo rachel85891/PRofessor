@@ -80,6 +80,8 @@ CLONES_FOLDER = "clones"
 RUNS_FOLDER = "runs"
 CHECKPOINTS_FILE = "checkpoints.sqlite"
 FIXER_CACHE_FILE = "fixer_cache.sqlite"
+COURSE_PROMPTS = "prompts"
+"""A course's own prompt frames, used instead of the package's (ADR 0023)."""
 
 _STUDIO_RESOURCES = ExitStack()
 """What Studio's graph keeps open for the server's life (the fixer's LLM client)."""
@@ -123,12 +125,13 @@ def build_graph_services(settings: Settings, fixer_llm: LLMClient | None = None)
         settings.runner.logs_root,
     )
     checks = DeterministicCheckService(DeterministicRequirementChecker(registry))
+    assignment_source = YamlAssignmentSource(settings.assignments_dir, settings.course_dir)
     fixing = (
         FixService(
             fixer_llm,
             git_client,
             LocalSourceFiles(),
-            JinjaTextTemplates(TEMPLATES_DIR),
+            JinjaTextTemplates(TEMPLATES_DIR, settings.course_dir / COURSE_PROMPTS),
             storage.proposals,
             report_writer,
             clock,
@@ -136,6 +139,7 @@ def build_graph_services(settings: Settings, fixer_llm: LLMClient | None = None)
             checks,
             workspace / RUNS_FOLDER,
             fixer_config(settings),
+            assignment_source.load_course(),
         )
         if fixer_llm is not None
         else None
@@ -152,9 +156,7 @@ def build_graph_services(settings: Settings, fixer_llm: LLMClient | None = None)
                 settings.roster.header_row,
             )
         ),
-        assignments=AssignmentCatalogService(
-            YamlAssignmentSource(settings.assignments_dir, settings.course_dir), registry
-        ),
+        assignments=AssignmentCatalogService(assignment_source, registry),
         fetch=RepoFetchService(git_client, workspace / CLONES_FOLDER),
         execution=execution,
         checks=checks,

@@ -41,7 +41,7 @@ BROKEN = ExecutionResult(
 
 def verified(setup: FixerSetup, *edits: object) -> tuple[VerifyResult, EditApplication, object]:
     workspace = setup.service.prepare(RUN_ID, "hw01", REPO, setup.fetched)
-    application = setup.service.apply(workspace, list(edits))  # type: ignore[arg-type]
+    application = setup.service.apply(workspace, list(edits), ASSIGNMENT, (ASSIGNMENT,))  # type: ignore[arg-type]
     result = setup.service.verify(
         RUN_ID, REPO, workspace, (ASSIGNMENT,), SUCCEEDED, RESULTS, application, 1
     )
@@ -105,7 +105,7 @@ def verified_with_dependency(
     setup: FixerSetup, results: tuple[AssignmentResult, ...], *edits: object
 ) -> VerifyResult:
     workspace = setup.service.prepare(RUN_ID, "hw01", REPO, setup.fetched)
-    application = setup.service.apply(workspace, list(edits))  # type: ignore[arg-type]
+    application = setup.service.apply(workspace, list(edits), ASSIGNMENT, (ASSIGNMENT,))  # type: ignore[arg-type]
     return setup.service.verify(
         RUN_ID, REPO, workspace, (DEPENDENT,), SUCCEEDED, results, application, 1
     )
@@ -179,7 +179,7 @@ def test_a_blamed_fix_falls_back_to_its_note(tmp_path: Path) -> None:
     setup = FixerSetup(tmp_path, outcomes={"hw01-update": (FINDING,)})
     result, application, workspace = verified(setup, BREAK_FIX, NAMING_NOTE)
 
-    fallen = setup.service.fall_back(workspace, application, result)  # type: ignore[arg-type]
+    fallen = setup.service.fall_back(workspace, ASSIGNMENT, (ASSIGNMENT,), application, result)  # type: ignore[arg-type]
 
     assert [edit.kind for edit in fallen.applied] == [EditKind.NOTE, EditKind.NOTE]
     text = setup.text(CONTROLLER)
@@ -195,7 +195,7 @@ def test_a_blamed_fix_without_a_fallback_note_is_dropped(tmp_path: Path) -> None
     no_note = BREAK_FIX.model_copy(update={"fallback_note": None})
     result, application, workspace = verified(setup, no_note)
 
-    fallen = setup.service.fall_back(workspace, application, result)  # type: ignore[arg-type]
+    fallen = setup.service.fall_back(workspace, ASSIGNMENT, (ASSIGNMENT,), application, result)  # type: ignore[arg-type]
 
     assert fallen.applied == ()
     assert fallen.rejected[0].reason.endswith("dropped (no fallback note)")
@@ -224,7 +224,7 @@ def title_after_verify(
     setup: FixerSetup, results: tuple[AssignmentResult, ...], *edits: object
 ) -> str:
     workspace = setup.service.prepare(RUN_ID, "hw01", REPO, setup.fetched)
-    application = setup.service.apply(workspace, list(edits))  # type: ignore[arg-type]
+    application = setup.service.apply(workspace, list(edits), ASSIGNMENT, (ASSIGNMENT,))  # type: ignore[arg-type]
     verification = setup.service.verify(
         RUN_ID, REPO, workspace, (CRITICAL_ASSIGNMENT,), SUCCEEDED, results, application, 1
     )

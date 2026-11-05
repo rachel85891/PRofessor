@@ -1,8 +1,10 @@
 """Fix service: one verified review branch and PR text per repo (stage 14, ADR 0021).
 
 The model only plans edits; `fix_edits` decides what is applied, in a separate working copy
-at the checked commit. Students' files go into prompts as data inside delimiters. Nothing
-here logs code, prompts or replies: only counts, durations and tokens.
+at the checked commit. Students' files go into prompts as data inside delimiters. The
+course's policy (audience, rules, PR format) is data from `course/` and the assignments'
+files (ADR 0023); the prompts are frames it fills. Nothing here logs code, prompts or
+replies: only counts, durations and tokens.
 """
 
 import fnmatch
@@ -16,6 +18,7 @@ from pathlib import Path, PurePosixPath
 from hw_checker.domain import (
     Assignment,
     AssignmentResult,
+    Course,
     EditApplication,
     EditKind,
     ExecutionResult,
@@ -28,14 +31,17 @@ from hw_checker.domain import (
     LlmUsage,
     NoteSection,
     PlannedEdit,
+    PrSectionId,
     PullRequestText,
     RejectedEdit,
     RepoTarget,
+    ReviewRole,
     SelfReview,
     Severity,
     StepStatus,
     VerifyResult,
 )
+from hw_checker.domain.course import SHORT_NAME
 from hw_checker.domain.errors import FixError, LLMOutputError
 from hw_checker.ports import (
     Clock,
@@ -50,25 +56,25 @@ from hw_checker.ports.llm import TokenUsage
 from hw_checker.services.deterministic_checks import DETERMINISTIC_KINDS, DeterministicCheckService
 from hw_checker.services.execution import ExecutionService
 from hw_checker.services.fix_edits import EditRules, apply_edits, fallback_edit
-from hw_checker.services.fix_review import judge, numbered_rules
+from hw_checker.services.fix_review import Allowances, judge, numbered_rules
+from hw_checker.services.review_policy import role_policy
 
 logger = logging.getLogger(__name__)
 
-FIXER_ROLE = "fixer"
-JUDGE_ROLE = "judge"
-WRITER_ROLE = "writer"
+FIXER_ROLE = ReviewRole.FIXER.value
+JUDGE_ROLE = ReviewRole.JUDGE.value
+WRITER_ROLE = ReviewRole.WRITER.value
 PLAN_TEMPLATE = "fixer_plan.md.j2"
 REVIEW_TEMPLATE = "fixer_review.md.j2"
-RULES_TEMPLATE = "fixer_rules.md.j2"
+RULES_TEMPLATE = "review_rules.md.j2"
 WRITER_TEMPLATE = "pr_text.md.j2"
 BODY_TEMPLATE = "pr_body.md.j2"
 FIXES_FOLDER = "fixes"
 BRANCH_PREFIX = "hw-review/"
 STRONG_SEVERITIES = frozenset({Severity.MAJOR, Severity.CRITICAL})
-OPENING = "Hi! "
-"""How every PR body starts (the approved PRs)."""
 MIN_OPENING_CHARS = 20
-"""After "Hi!", a shorter opening is not the sentence on what works that the PR needs."""
+"""After the course's opening, a shorter one is not the sentence on what works that the PR
+needs."""
 MIN_ITEM_CHARS = 15
 """A shorter section item cannot describe its edit."""
 EDIT_KIND_LABELS = tuple(f"`{kind.value}`" for kind in EditKind)
@@ -126,6 +132,7 @@ class FixService:
         checks: DeterministicCheckService,
         runs_dir: Path,
         config: FixerConfig,
+        course: Course,
     ) -> None:
         self._llm = llm
         self._git = git
@@ -138,6 +145,7 @@ class FixService:
         self._checks = checks
         self._runs_dir = runs_dir
         self._config = config
+        self._course = course
 
     @property
     def max_attempts(self) -> int:
@@ -223,7 +231,9 @@ class FixService:
         """
         paths = self._files.list_files(workspace.working_copy, frozenset(self._config.skip_dirs))
         shown = self._prompt_files(workspace.working_copy, paths)
-        values: dict[str, object] = {
+        policy = role_policy(self._course, assignment, assignments, ReviewRole.FIXER)
+        values: dict[str, object] = policy.slots() | {
+            "course": self._course.profile,
             "assignment": assignment,
             "requirements": [r for a in assignments for r in a.requirements],
             "lenient_notes": [note for a in assignments for note in a.lenient_notes],
@@ -250,9 +260,16 @@ class FixService:
                 )
             omitted.insert(0, shown.pop()["path"])
 
-    def apply(self, workspace: FixWorkspace, edits: Sequence[PlannedEdit]) -> EditApplication:
+    def apply(
+        self,
+        workspace: FixWorkspace,
+        edits: Sequence[PlannedEdit],
+        assignment: Assignment,
+        assignments: tuple[Assignment, ...],
+    ) -> EditApplication:
         """Apply `edits` to the fix working copy from the checked commit, keeping only the
-        ones that pass every guardrail.
+        ones that pass every guardrail (with the forbidden texts of the fixer's rules in
+        effect for `assignment`).
 
         Raises:
             GitOperationError: the working copy cannot be reset.
@@ -265,6 +282,10 @@ class FixService:
         rules = EditRules(
             max_edits=self._config.max_edits,
             max_fix_lines=self._config.max_fix_lines,
+            styles=self._course.profile.comment_style,
+            forbidden=role_policy(
+                self._course, assignment, assignments, ReviewRole.FIXER
+            ).forbidden,
             data_files=frozenset(self._data_files(paths)),
         )
         result = apply_edits(files, edits, rules)
@@ -281,6 +302,7 @@ class FixService:
         run_id: str,
         workspace: FixWorkspace,
         assignment: Assignment,
+        assignments: tuple[Assignment, ...],
         application: EditApplication,
     ) -> tuple[SelfReview, LlmUsage] | None:
         """Ask the `judge` role which applied edits break the rules. It changes no file, so
@@ -296,9 +318,12 @@ class FixService:
         if not self._config.self_review or not application.applied:
             return None
         diff = self._git.diff(workspace.working_copy, workspace.base_sha)
+        policy = role_policy(self._course, assignment, assignments, ReviewRole.JUDGE)
         prompt = self._templates.render(
             REVIEW_TEMPLATE,
-            {
+            policy.slots()
+            | {
+                "course": self._course.profile,
                 "assignment": assignment,
                 "edits": application.applied,
                 "diff": diff.replace(_DIFF_CLOSE, "<\\/student_diff>"),
@@ -311,21 +336,29 @@ class FixService:
         self,
         workspace: FixWorkspace,
         assignment: Assignment,
+        assignments: tuple[Assignment, ...],
         application: EditApplication,
         review: SelfReview,
     ) -> EditApplication:
         """Remove the edits the self-review found breaking a rule (kept as rejected, with the
         reason), applying the others again from the checked commit. A violation that does
-        not quote its rule, or reports an edit the rules allow outright, is ignored; the
-        reasons are kept for the repo report (`fix_review`).
+        not quote its rule (as the judge's prompt numbers them), or reports an edit the
+        rules allow outright, is ignored; the reasons are kept for the repo report
+        (`fix_review`).
 
         Raises:
             GitOperationError: the copy cannot be reset.
             FixError: a file cannot be read or written.
         """
         applied = application.applied
-        rules = numbered_rules(self._templates.render(RULES_TEMPLATE, {"assignment": assignment}))
-        outcome = judge(review, applied, rules)
+        policy = role_policy(self._course, assignment, assignments, ReviewRole.JUDGE)
+        rules = numbered_rules(self._templates.render(RULES_TEMPLATE, policy.slots()))
+        allowances = Allowances(
+            detectors=policy.detectors,
+            approved_notes=policy.approved_notes,
+            styles=self._course.profile.comment_style,
+        )
+        outcome = judge(review, applied, rules, allowances)
         broken = outcome.broken
         logger.info(
             "Self-review: %d of %d edits removed, %d violations ignored",
@@ -336,7 +369,7 @@ class FixService:
         if not broken:
             return application.model_copy(update={"ignored_review": outcome.ignored})
         kept = [edit for index, edit in enumerate(applied) if index not in broken]
-        reapplied = self.apply(workspace, kept)
+        reapplied = self.apply(workspace, kept, assignment, assignments)
         removed = tuple(
             RejectedEdit(edit=applied[index], reason=reason) for index, reason in broken.items()
         )
@@ -421,7 +454,12 @@ class FixService:
         )
 
     def fall_back(
-        self, workspace: FixWorkspace, application: EditApplication, verification: VerifyResult
+        self,
+        workspace: FixWorkspace,
+        assignment: Assignment,
+        assignments: tuple[Assignment, ...],
+        application: EditApplication,
+        verification: VerifyResult,
     ) -> EditApplication:
         """Replace each blamed `fix` with its fallback note (or drop it without one) and apply
         the edits again from the checked commit.
@@ -437,14 +475,15 @@ class FixService:
             if index not in blamed:
                 edits.append(edit)
                 continue
-            note = fallback_edit(edit)
+            style = self._course.profile.style_for(edit.file)
+            note = fallback_edit(edit, style) if style is not None else None
             if note is not None:
                 edits.append(note)
             reason = "the recheck still failed after the last attempt; " + (
                 "kept as its fallback note" if note else "dropped (no fallback note)"
             )
             dropped.append(RejectedEdit(edit=edit, reason=reason))
-        reapplied = self.apply(workspace, edits)
+        reapplied = self.apply(workspace, edits, assignment, assignments)
         return reapplied.model_copy(
             update={
                 "rejected": application.rejected + reapplied.rejected + tuple(dropped),
@@ -452,7 +491,13 @@ class FixService:
             }
         )
 
-    def restore(self, workspace: FixWorkspace, attempt: FixAttempt) -> EditApplication:
+    def restore(
+        self,
+        workspace: FixWorkspace,
+        assignment: Assignment,
+        assignments: tuple[Assignment, ...],
+        attempt: FixAttempt,
+    ) -> EditApplication:
         """Apply an earlier attempt's kept edits again from the checked commit, so the working
         copy holds what that attempt's recheck passed.
 
@@ -460,7 +505,7 @@ class FixService:
             GitOperationError: the working copy cannot be reset.
             FixError: a file cannot be read or written, or the edits no longer apply the same.
         """
-        reapplied = self.apply(workspace, attempt.application.applied)
+        reapplied = self.apply(workspace, attempt.application.applied, assignment, assignments)
         if reapplied.applied != attempt.application.applied:
             raise FixError(f"Attempt {attempt.number}'s edits no longer apply the same way.")
         return attempt.application
@@ -490,8 +535,8 @@ class FixService:
     ) -> tuple[str, str, tuple[LlmUsage, ...]]:
         """Ask the `writer` role for the PR text, and return the title, the rendered body and
         each call's usage. The title is decided here, not by the model, from the requirements
-        the last recheck `cleared`; the body's opening starts with "Hi! ", and its "Files"
-        section is `files_notes` only.
+        the last recheck `cleared`, by the course's title rule; the body's opening starts
+        with the course's opening, and its "Files" section is `files_notes` only.
 
         Every applied edit needs an item in its section, and the opening a real sentence on
         what works; a reply that misses one is asked for once more, with the problems.
@@ -502,39 +547,59 @@ class FixService:
             LLMError: the call failed.
             FixError: the body cannot be rendered.
         """
+        pr_format = self._course.profile.pr_format
+        labels = {
+            section.id.value: section.label or section.heading
+            for section in pr_format.sections
+            if section.id is not PrSectionId.FILES
+        }
         groups = _sections(application.applied)
+        policy = role_policy(self._course, assignment, assignments, ReviewRole.WRITER)
         prompt = self._templates.render(
             WRITER_TEMPLATE,
             {
+                "course": self._course.profile,
                 "assignment": assignment,
+                "rules": list(policy.rules),
                 "passed": _passed_titles(assignments, results),
                 "sections": [
-                    (heading, [_described(edit) for edit in groups[key]])
-                    for key, heading in SECTION_HEADINGS.items()
+                    (label, [_described(edit, self._course) for edit in groups[key]])
+                    for key, label in labels.items()
+                ],
+                "writer_sections": [
+                    section for section in pr_format.sections if section.id.value in labels
                 ],
             },
         )
+        opening_prefix = pr_format.opening
         text, tokens = self._llm.complete_with_usage(WRITER_ROLE, prompt, PullRequestText)
         usages = [self._usage(run_id, WRITER_ROLE, prompt, tokens)]
-        problems = _text_problems(text, groups)
+        problems = _text_problems(text, groups, labels, opening_prefix)
         if problems:
             retry = prompt + WRITER_FEEDBACK + "".join(f"- {problem}\n" for problem in problems)
             text, tokens = self._llm.complete_with_usage(WRITER_ROLE, retry, PullRequestText)
             usages.append(self._usage(run_id, WRITER_ROLE, retry, tokens))
-            problems = _text_problems(text, groups)
+            problems = _text_problems(text, groups, labels, opening_prefix)
         if problems:
             raise LLMOutputError("The writer's PR text is unusable: " + "; ".join(problems))
-        # A section without edits stays empty, whatever the writer returned for it.
-        text = text.model_copy(
-            update={key: getattr(text, key) if groups[key] else () for key in SECTION_HEADINGS}
-        )
         opening = text.opening.strip()
-        if not opening.startswith(OPENING.strip()):
-            opening = OPENING + opening
+        if not opening.startswith(opening_prefix.strip()):
+            opening = opening_prefix + opening
+        # A section without edits stays empty, whatever the writer returned for it.
+        items = {key: list(getattr(text, key)) if groups[key] else [] for key in labels} | {
+            PrSectionId.FILES.value: list(files_notes)
+        }
         body = self._templates.render(
-            BODY_TEMPLATE, {"opening": opening, "text": text, "files_notes": list(files_notes)}
+            BODY_TEMPLATE,
+            {
+                "opening": opening,
+                "sections": [
+                    {"heading": section.heading, "items": items[section.id.value]}
+                    for section in pr_format.sections
+                ],
+            },
         )
-        title = pr_title(assignment, cleared, assignments)
+        title = pr_title(assignment, cleared, assignments, self._course)
         return title, body.strip() + "\n", tuple(usages)
 
     def propose(
@@ -568,9 +633,10 @@ class FixService:
             )
         copy = workspace.working_copy
         self._git.create_branch(copy, workspace.branch_name, workspace.base_sha)
-        head = self._git.commit(
-            copy, f"{assignment.short_name} review: fixes and questions", application.changed_files
+        message = self._course.profile.pr_format.commit_message.replace(
+            SHORT_NAME, assignment.short_name
         )
+        head = self._git.commit(copy, message, application.changed_files)
         diff = self._git.diff(copy, workspace.base_sha)
         diff_path = self._writer.write_diff(run_id, repo.repo_id, diff)
         repo_run_id = f"{run_id}/{repo.repo_id}"
@@ -615,7 +681,7 @@ class FixService:
 
     def _prompt_files(self, root: Path, paths: Sequence[str]) -> list[dict[str, str]]:
         code = [p for p in paths if PurePosixPath(p).suffix in self._config.source_suffixes]
-        code.sort(key=lambda path: (not path.endswith(".cs"), path))
+        code.sort(key=lambda path: (self._course.profile.style_for(path) is None, path))
         configs = [p for p in paths if self._matches(p, self._config.config_globs)]
         shown = code + configs + sorted(self._data_files(paths))
         return [{"path": path, "text": self._file_text(root, path)} for path in shown]
@@ -712,19 +778,22 @@ def _kept_text(kept: Sequence[PlannedEdit]) -> str:
 
 
 def pr_title(
-    assignment: Assignment, cleared: Sequence[str], assignments: tuple[Assignment, ...]
+    assignment: Assignment,
+    cleared: Sequence[str],
+    assignments: tuple[Assignment, ...],
+    course: Course,
 ) -> str:
-    """`<short name> review: fixes and questions` when the verified fix branch clears a major
-    or critical requirement that failed before (a real bug), otherwise `<short name> review:
-    small fixes and questions` (§4).
+    """The course title rule's `strong` title when the verified fix branch clears a major or
+    critical requirement that failed before (a real bug), otherwise its `normal` title,
+    with the assignment's short name (§4, ADR 0023).
 
     `cleared` comes from the last recheck, not from the model's claims; notes only add
     comments, so they never clear anything.
     """
     severity = {r.id: r.severity for a in assignments for r in a.requirements}
     strong = any(severity.get(requirement_id) in STRONG_SEVERITIES for requirement_id in cleared)
-    kind = "fixes and questions" if strong else "small fixes and questions"
-    return f"{assignment.short_name} review: {kind}"
+    rule = course.profile.pr_format.title_rule
+    return (rule.strong if strong else rule.normal).replace(SHORT_NAME, assignment.short_name)
 
 
 def _findings(results: Sequence[AssignmentResult]) -> list[dict[str, str]]:
@@ -747,40 +816,43 @@ def _findings(results: Sequence[AssignmentResult]) -> list[dict[str, str]]:
     return found
 
 
-SECTION_HEADINGS = {"fixed": "Fixed", "for_you": "For you to do", "names": "Names"}
-"""The PR text's sections (`PullRequestText` fields) and their headings in the writer's prompt."""
-
-
 def _sections(applied: Sequence[PlannedEdit]) -> dict[str, list[PlannedEdit]]:
-    """The applied edits by the PR section they belong in: code and data changes under
-    "Fixed", and each note in the one section its plan gave it (a question without one)."""
-    groups: dict[str, list[PlannedEdit]] = {key: [] for key in SECTION_HEADINGS}
+    """The applied edits by the writer's section they belong in: code and data changes under
+    "fixed", and each note in the one section its plan gave it (a question without one)."""
+    fixed, for_you, names = PrSectionId.FIXED, PrSectionId.FOR_YOU, PrSectionId.NAMES
+    groups: dict[str, list[PlannedEdit]] = {key.value: [] for key in (fixed, for_you, names)}
     for edit in applied:
         if edit.kind is not EditKind.NOTE:
-            groups["fixed"].append(edit)
+            groups[fixed.value].append(edit)
         elif edit.note_section is NoteSection.NAMES:
-            groups["names"].append(edit)
+            groups[names.value].append(edit)
         else:
-            groups["for_you"].append(edit)
+            groups[for_you.value].append(edit)
     return groups
 
 
-def _described(edit: PlannedEdit) -> dict[str, object]:
+def _described(edit: PlannedEdit, course: Course) -> dict[str, object]:
     """An edit as the writer sees it: the file's name, never the edit kind or the full path."""
     return {
         "file_name": PurePosixPath(edit.file).name,
         "reason": edit.reason,
-        "comments": _added_comments(edit),
+        "comments": _added_comments(edit, course),
     }
 
 
-def _text_problems(text: PullRequestText, groups: dict[str, list[PlannedEdit]]) -> list[str]:
+def _text_problems(
+    text: PullRequestText,
+    groups: dict[str, list[PlannedEdit]],
+    labels: dict[str, str],
+    opening: str,
+) -> list[str]:
     """What makes the writer's reply unusable: a missing or empty item, an opening that is
     not a sentence, or an item that names an edit's kind or full path."""
     problems: list[str] = []
-    if len(text.opening.strip().removeprefix(OPENING.strip()).strip()) < MIN_OPENING_CHARS:
-        problems.append('opening: after "Hi!" write one or two sentences on what works')
-    for key, heading in SECTION_HEADINGS.items():
+    prefix = opening.strip()
+    if len(text.opening.strip().removeprefix(prefix).strip()) < MIN_OPENING_CHARS:
+        problems.append(f'opening: after "{prefix}" write one or two sentences on what works')
+    for key, heading in labels.items():
         edits, items = groups[key], getattr(text, key)
         if not edits:
             continue
@@ -818,12 +890,15 @@ def _passed_titles(
     ]
 
 
-def _added_comments(edit: PlannedEdit) -> list[str]:
+def _added_comments(edit: PlannedEdit, course: Course) -> list[str]:
+    style = course.profile.style_for(edit.file)
+    if style is None:
+        return []
     before = set(edit.find.replace("\r\n", "\n").split("\n"))
     return [
-        line.strip().removeprefix("//").strip()
+        line.strip().removeprefix(style.line).removesuffix(style.end).strip()
         for line in edit.replace.replace("\r\n", "\n").split("\n")
-        if line.strip().startswith("//") and line not in before
+        if line.strip().startswith(style.line) and line not in before
     ]
 
 

@@ -34,8 +34,40 @@ def test_the_version_changes_when_a_template_changes(tmp_path: Path) -> None:
     assert templates.version() != before
 
 
+def test_a_course_override_is_used_instead_of_the_frame(tmp_path: Path) -> None:
+    frames, course = tmp_path / "frames", tmp_path / "course_prompts"
+    frames.mkdir()
+    course.mkdir()
+    (frames / "hello.md.j2").write_text("Hello {{ name }}!", encoding="utf-8")
+    (frames / "bye.md.j2").write_text("Bye {{ name }}.", encoding="utf-8")
+    (course / "hello.md.j2").write_text("Shalom {{ name }}!", encoding="utf-8")
+    templates = JinjaTextTemplates(frames, course)
+    before = templates.version()
+
+    assert templates.render("hello.md.j2", {"name": "Dana"}) == "Shalom Dana!"
+    assert templates.render("bye.md.j2", {"name": "Dana"}) == "Bye Dana."
+    (course / "hello.md.j2").write_text("Hi {{ name }}!", encoding="utf-8")
+    assert templates.version() != before
+
+
+def test_a_missing_overrides_folder_changes_nothing(tmp_path: Path) -> None:
+    (tmp_path / "hello.md.j2").write_text("Hello {{ name }}!", encoding="utf-8")
+
+    templates = JinjaTextTemplates(tmp_path, tmp_path / "absent")
+
+    assert templates.render("hello.md.j2", {"name": "Dana"}) == "Hello Dana!"
+
+
 @pytest.mark.parametrize(
-    "name", ["fixer_plan.md.j2", "fixer_review.md.j2", "pr_text.md.j2", "pr_body.md.j2"]
+    "name",
+    [
+        "fixer_plan.md.j2",
+        "fixer_review.md.j2",
+        "pr_text.md.j2",
+        "pr_body.md.j2",
+        "review_rules.md.j2",
+        "review_examples.md.j2",
+    ],
 )
 def test_every_prompt_template_ships_with_the_package(name: str) -> None:
     assert (TEMPLATES_DIR / name).is_file()

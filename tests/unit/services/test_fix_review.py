@@ -4,8 +4,26 @@ from typing import Any
 
 import pytest
 
-from hw_checker.domain import EditKind, NoteSection, PlannedEdit, ReviewViolation, SelfReview
-from hw_checker.services.fix_review import judge, never_a_violation, numbered_rules
+from hw_checker.domain import (
+    EditKind,
+    NoteSection,
+    PlannedEdit,
+    ReviewRole,
+    ReviewViolation,
+    SafeFix,
+    SelfReview,
+)
+from hw_checker.services.fix_review import Allowances, judge, never_a_violation, numbered_rules
+from hw_checker.services.review_policy import role_policy
+from tests.unit.services.fixer_data import ASSIGNMENT, COURSE
+
+POLICY = role_policy(COURSE, ASSIGNMENT, (ASSIGNMENT,), ReviewRole.JUDGE)
+ALLOWANCES = Allowances(
+    detectors=POLICY.detectors,
+    approved_notes=POLICY.approved_notes,
+    styles=COURSE.profile.comment_style,
+)
+"""What hw01's rules allow outright (the real course and hw01 data)."""
 
 RULES = numbered_rules(
     "1. Write every comment you add in English, short.\n"
@@ -148,7 +166,7 @@ def test_the_rules_are_read_by_number() -> None:
     ],
 )
 def test_the_edits_the_rules_allow_outright(edit: PlannedEdit, what: str) -> None:
-    assert never_a_violation(edit) == what
+    assert never_a_violation(edit, ALLOWANCES) == what
 
 
 @pytest.mark.parametrize(
@@ -164,11 +182,11 @@ def test_the_edits_the_rules_allow_outright(edit: PlannedEdit, what: str) -> Non
     ids=["file-exists", "implements-core", "other-note"],
 )
 def test_other_edits_are_not_allowed_outright(edit: PlannedEdit) -> None:
-    assert never_a_violation(edit) is None
+    assert never_a_violation(edit, ALLOWANCES) is None
 
 
 def test_a_violation_on_an_edit_the_rules_allow_is_ignored_with_the_reason() -> None:
-    outcome = judge(SelfReview(violations=(violation(),)), [READONLY], RULES)
+    outcome = judge(SelfReview(violations=(violation(),)), [READONLY], RULES, ALLOWANCES)
 
     assert outcome.broken == {}
     [reason] = outcome.ignored
@@ -184,7 +202,7 @@ def test_a_violation_that_quotes_its_rule_is_acted_on() -> None:
         explanation="It adds a File.Exists check.",
     )
 
-    outcome = judge(SelfReview(violations=(flagged,)), [EXISTS], RULES)
+    outcome = judge(SelfReview(violations=(flagged,)), [EXISTS], RULES, ALLOWANCES)
 
     assert outcome.broken == {0: "self-review: rule 4: It adds a File.Exists check."}
     assert outcome.ignored == ()
@@ -203,7 +221,7 @@ def test_a_violation_that_quotes_its_rule_is_acted_on() -> None:
 def test_a_violation_that_does_not_quote_its_rule_is_ignored(
     overrides: dict[str, Any], problem: str
 ) -> None:
-    outcome = judge(SelfReview(violations=(violation(**overrides),)), [EXISTS], RULES)
+    outcome = judge(SelfReview(violations=(violation(**overrides),)), [EXISTS], RULES, ALLOWANCES)
 
     assert outcome.broken == {}
     [reason] = outcome.ignored
@@ -211,6 +229,24 @@ def test_a_violation_that_does_not_quote_its_rule_is_ignored(
 
 
 def test_a_violation_of_an_edit_that_does_not_exist_is_dropped() -> None:
-    outcome = judge(SelfReview(violations=(violation(index=3),)), [EXISTS], RULES)
+    outcome = judge(SelfReview(violations=(violation(index=3),)), [EXISTS], RULES, ALLOWANCES)
 
     assert outcome == type(outcome)(broken={}, ignored=())
+
+
+def test_a_safe_fix_no_rule_allows_is_not_allowed_outright() -> None:
+    without = Allowances(
+        detectors=ALLOWANCES.detectors - {SafeFix.READONLY_FIELD},
+        approved_notes=ALLOWANCES.approved_notes,
+        styles=ALLOWANCES.styles,
+    )
+
+    assert never_a_violation(READONLY, without) is None
+
+
+def test_a_note_is_approved_only_in_a_rules_wording() -> None:
+    put = note("        public void Put()", "The assignment asks PUT to return Ok(): change it")
+    without = Allowances(detectors=frozenset(), approved_notes=(), styles=ALLOWANCES.styles)
+
+    assert never_a_violation(put, ALLOWANCES) == "the PUT note in the approved wording"
+    assert never_a_violation(put, without) is None

@@ -5,8 +5,10 @@ from typing import Any
 
 from pydantic import BaseModel
 
+from hw_checker.adapters.assignments_yaml import YamlAssignmentSource
 from hw_checker.adapters.jinja_templates import JinjaTextTemplates
 from hw_checker.adapters.local_files import LocalSourceFiles
+from hw_checker.config.settings import REPO_ROOT
 from hw_checker.domain import (
     Assignment,
     AssignmentResult,
@@ -42,6 +44,11 @@ REPO = builders.repo_target(repo_id="dana__api")
 CONTROLLER = "Controllers/UsersController.cs"
 MODEL = "Models/User.cs"
 DATA = "users.json"
+SOURCE = YamlAssignmentSource(REPO_ROOT / "assignments", REPO_ROOT / "course")
+COURSE = SOURCE.load_course()
+"""The real course profile and course rules (stage 3f: policy is data)."""
+HW01_RULES = next(a for a in SOURCE.load_all() if a.id == "hw01").review_rules
+"""hw01's real review rules."""
 CONTROLLER_TEXT = """using System.Text.Json;
 
 public class UsersController
@@ -75,6 +82,7 @@ ASSIGNMENT = Assignment(
     id="hw01",
     order=1,
     title="Users API",
+    review_rules=HW01_RULES,
     requirements=(
         builders.requirement(
             id="hw01-update", title="PUT updates a user", kind=RequirementKind.BUILD
@@ -221,6 +229,7 @@ class FixerSetup:
             DeterministicCheckService(self.checker),
             self.runs,
             config(**config_overrides),
+            COURSE,
         )
 
     def fix_copy(self) -> Path:

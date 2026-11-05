@@ -148,6 +148,7 @@ def test_the_fixer_proposes_a_verified_review_branch_that_fixes_the_data_file(
             checks,
             tmp_path / "runs",
             fixer_config(settings),
+            YamlAssignmentSource(REPO_ROOT / "assignments", REPO_ROOT / "course").load_course(),
         )
         graph = build_fix_graph(catalog.list_assignments(), fixing)
         output: dict[str, Any] = graph.invoke(

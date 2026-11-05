@@ -1,0 +1,13 @@
+{#- Frame: the approved examples of the prompt's role, filled from `course/` and the
+    assignments' `review_rules.yaml` (ADR 0023). A plan is shown exactly as written. -#}
+{% for example in examples %}
+{% if not loop.first %}
+
+{% endif %}
+{% set situation = example.situation if example.rule is none else "An edit that follows rule " ~ example.rule ~ "." %}
+Example {{ loop.index }}. {{ situation }}
+
+```json
+{{ example.plan }}
+```
+{% endfor %}
