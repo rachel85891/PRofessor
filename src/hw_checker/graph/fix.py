@@ -1,8 +1,10 @@
 """The fixer subgraph (`fix_repo`): one verified review branch per repo (ADR 0021).
 
 `prepare_branch → plan_edits → apply_edits → self_review → remove_violations → verify`, then
-back to `plan_edits` (through `next_attempt`) while edits were rejected or the recheck failed
-and attempts remain; else `fall_back → verify` once more, and `write_pr_text → propose`, or
+back to `plan_edits` (through `next_attempt`, with the attempt's kept edits) while edits were
+rejected or the recheck failed and attempts remain. Then the best acceptable attempt is used
+(`best_attempt`; `use_best` applies it again when it is not the last one), or, when no
+attempt passed the recheck, `fall_back → verify` once more; and `write_pr_text → propose`, or
 `give_up`. Each node calls `FixService` and is guarded: a failure is a round error for the
 repo, the repo report says why, and the round goes on.
 
@@ -28,17 +30,19 @@ from hw_checker.domain import (
     EditApplication,
     ExecutionResult,
     FetchedRepo,
+    FixAttempt,
     FixOutcome,
     FixPlan,
     FixWorkspace,
     LlmUsage,
+    PlannedEdit,
     RepoTarget,
     SelfReview,
     VerifyResult,
 )
-from hw_checker.domain.errors import LLMOutputError
+from hw_checker.domain.errors import FixError, LLMOutputError
 from hw_checker.graph.guard import Update, guarded
-from hw_checker.services.fixing import FixService
+from hw_checker.services.fixing import FixService, attempt_choice, best_attempt
 
 FixGraph = CompiledStateGraph["FixState", None, "FixInput", "FixOutput"]
 DRAWING = "drawing"
@@ -82,6 +86,10 @@ class FixState(FixInput, FixOutput):
     workspace: NotRequired[FixWorkspace]
     attempt: NotRequired[int]
     feedback: NotRequired[list[str]]
+    kept: NotRequired[list[PlannedEdit]]
+    """The previous attempt's kept edits, shown to the next plan."""
+    tried: NotRequired[list[FixAttempt]]
+    """Every attempt so far, with its recheck (not the fallback's)."""
     plan: NotRequired[FixPlan]
     application: NotRequired[EditApplication]
     review: NotRequired[SelfReview | None]
@@ -152,6 +160,8 @@ def build_fix_graph(
                 ),
                 "attempt": 1,
                 "feedback": [],
+                "kept": [],
+                "tried": [],
             },
         )
 
@@ -165,6 +175,7 @@ def build_fix_graph(
                 state["assignment_results"],
                 state["attempt"],
                 state.get("feedback", []),
+                state.get("kept", []),
             )
             return {"plan": plan, "llm_usage": [usage]}
 
@@ -206,28 +217,48 @@ def build_fix_graph(
         )
 
     def verify(state: FixState) -> Update:
-        return step(
-            "verify",
-            state,
-            lambda: {
-                "verification": fixing.verify(
-                    state["run_id"],
-                    state["repo"],
-                    state["workspace"],
-                    selected(state),
-                    state.get("execution"),
-                    state["assignment_results"],
-                    state["application"],
-                    state["attempt"],
-                )
-            },
-        )
+        def work() -> Update:
+            verification = fixing.verify(
+                state["run_id"],
+                state["repo"],
+                state["workspace"],
+                selected(state),
+                state.get("execution"),
+                state["assignment_results"],
+                state["application"],
+                state["attempt"],
+            )
+            if state.get("fell_back"):
+                return {"verification": verification}
+            attempt = FixAttempt(
+                number=state["attempt"],
+                plan=state["plan"],
+                application=state["application"],
+                verification=verification,
+            )
+            return {"verification": verification, "tried": [*state.get("tried", []), attempt]}
+
+        return step("verify", state, work)
 
     def next_attempt(state: FixState) -> Update:
         return {
             "attempt": state["attempt"] + 1,
             "feedback": FixService.feedback(state["application"], state["verification"]),
+            "kept": list(state["application"].applied),
         }
+
+    def use_best(state: FixState) -> Update:
+        def work() -> Update:
+            best = best_attempt(state.get("tried", []))
+            if best is None:
+                raise FixError("No attempt passed the recheck.")
+            return {
+                "plan": best.plan,
+                "application": fixing.restore(state["workspace"], best),
+                "verification": best.verification,
+            }
+
+        return step("use_best", state, work)
 
     def fall_back(state: FixState) -> Update:
         return step(
@@ -278,6 +309,8 @@ def build_fix_graph(
                         state.get("pr_title", ""),
                         state.get("pr_body", ""),
                         state["attempt"],
+                        attempt_choice(state.get("tried", []), state.get("fell_back", False)),
+                        state["verification"].blocked if "verification" in state else (),
                     )
                 ]
             },
@@ -292,9 +325,15 @@ def build_fix_graph(
         revise = bool(application.rejected) or not verification.passed
         if revise and state["attempt"] < fixing.max_attempts:
             return "next_attempt"
-        if not verification.passed:
+        best = best_attempt(state.get("tried", []))
+        if best is None:
             return "fall_back"
+        if best.number != state["attempt"]:
+            return "use_best"
         return _finish(application)
+
+    def after_use_best(state: FixState) -> str:
+        return END if state.get("failed") else _finish(state["application"])
 
     # To draw the graph (Studio), LangGraph runs these on a state that may be partial or
     # empty; then they return a fixed key per node. A full state's key is unchanged.
@@ -311,6 +350,7 @@ def build_fix_graph(
             [result.model_dump(mode="json") for result in results],
             state["attempt"],
             state.get("feedback", []),
+            [edit.model_dump(mode="json") for edit in state.get("kept", [])],
         )
 
     def review_key(state: FixState) -> str:
@@ -355,6 +395,7 @@ def build_fix_graph(
     builder.add_node("remove_violations", remove_violations)
     builder.add_node("verify", verify)
     builder.add_node("next_attempt", next_attempt)
+    builder.add_node("use_best", use_best)
     builder.add_node("fall_back", fall_back)
     builder.add_node("give_up", give_up)
     builder.add_node(
@@ -378,8 +419,9 @@ def build_fix_graph(
     builder.add_conditional_edges(
         "verify",
         after_verify,
-        ["next_attempt", "fall_back", "write_pr_text", "propose", "give_up", END],
+        ["next_attempt", "use_best", "fall_back", "write_pr_text", "propose", "give_up", END],
     )
+    builder.add_conditional_edges("use_best", after_use_best, ["write_pr_text", "propose", END])
     builder.add_edge("next_attempt", "plan_edits")
     builder.add_edge("give_up", END)
     builder.add_edge("propose", END)

@@ -45,6 +45,7 @@ requirements:                 # the list of requirements (may be empty: [])
 | `check` | `structure` and `custom` only | The name of the deterministic check to run. |
 | `params` | no | Named values for the check, for example a file pattern. Only together with `check`. Values may be text, numbers, `true`/`false`, or a list of those. |
 | `probes` | `http` only, at least one | HTTP requests to send to the running app (see below). |
+| `depends_on` | no | Ids of requirements that must pass before this one can, for example reading back an updated user needs GET by id. Each id must exist (in any assignment), and a requirement cannot depend on itself, also not through others. The fixer's recheck does not hold a fix's claim on this requirement against it while one of these still fails. |
 
 Unknown fields are rejected, so a typo such as `chek` is reported instead of being silently ignored.
 

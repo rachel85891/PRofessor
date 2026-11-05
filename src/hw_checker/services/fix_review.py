@@ -92,7 +92,8 @@ def never_a_violation(edit: PlannedEdit) -> str | None:
 
 
 def _safe_fix(added: list[str], removed: list[str]) -> str | None:
-    if not removed and added == ["break;"]:
+    # A break after a loop's match may need the `if` body wrapped in braces.
+    if not removed and [line for line in added if line not in ("{", "}")] == ["break;"]:
         return "a missing break"
     if not removed and len(added) == 1 and _ID_ASSIGNMENT.match(added[0]):
         return "an id lost on update, restored with one assignment"

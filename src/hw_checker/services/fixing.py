@@ -7,6 +7,7 @@ here logs code, prompts or replies: only counts, durations and tokens.
 
 import fnmatch
 import hashlib
+import json
 import logging
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -19,6 +20,7 @@ from hw_checker.domain import (
     EditKind,
     ExecutionResult,
     FetchedRepo,
+    FixAttempt,
     FixOutcome,
     FixPlan,
     FixProposal,
@@ -83,6 +85,7 @@ TRUNCATED = "\n... (cut here: the file is longer)"
 CALL_ID_LENGTH = 24
 _FILE_CLOSE = "</student_file>"
 _DIFF_CLOSE = "</student_diff>"
+_KEPT_CLOSE = "</previous_edits>"
 
 
 @dataclass(frozen=True)
@@ -185,15 +188,19 @@ class FixService:
         results: Sequence[AssignmentResult],
         attempt: int,
         feedback: Sequence[str] = (),
+        kept: Sequence[PlannedEdit] = (),
     ) -> tuple[FixPlan, LlmUsage]:
-        """Ask the `fixer` role for a plan of edits.
+        """Ask the `fixer` role for a plan of edits. From the second attempt on, the prompt
+        shows the previous attempt's `kept` edits and asks for the whole plan again.
 
         Raises:
             LLMOutputError: the reply could not be read as a plan.
             LLMError: the call failed.
             FixError: the prompt cannot be built within `max_prompt_chars`.
         """
-        prompt = self.plan_prompt(workspace, assignment, assignments, results, attempt, feedback)
+        prompt = self.plan_prompt(
+            workspace, assignment, assignments, results, attempt, feedback, kept
+        )
         plan, tokens = self._llm.complete_with_usage(FIXER_ROLE, prompt, FixPlan)
         logger.info("Fix plan, attempt %d: %d edits", attempt, len(plan.edits))
         return plan, self._usage(run_id, FIXER_ROLE, prompt, tokens)
@@ -206,6 +213,7 @@ class FixService:
         results: Sequence[AssignmentResult],
         attempt: int,
         feedback: Sequence[str] = (),
+        kept: Sequence[PlannedEdit] = (),
     ) -> str:
         """The fixer's prompt, within `max_prompt_chars`: when it is too long, files are left
         out from the end (data and configuration first, then code) and listed as not shown.
@@ -221,6 +229,7 @@ class FixService:
             "lenient_notes": [note for a in assignments for note in a.lenient_notes],
             "findings": _findings(results),
             "feedback": list(feedback),
+            "kept": _kept_text(kept),
             "attempt": attempt,
             "max_attempts": self._config.max_attempts,
             "max_edits": self._config.max_edits,
@@ -354,8 +363,9 @@ class FixService:
 
         It passes when the build is not worse, no requirement that passed now fails, and
         every requirement a `fix` claims passes. A worse build or a newly failing
-        requirement blames every `fix`; an unmet claim blames its own fix. Nothing is run
-        when nothing was applied.
+        requirement blames every `fix`; an unmet claim blames its own fix, unless a
+        requirement it `depends_on` still fails: then it is kept in `blocked`. Nothing is
+        run when nothing was applied.
 
         Raises:
             ExecutionEnvironmentError: the engine cannot be reached.
@@ -381,8 +391,21 @@ class FixService:
             if edit.kind is EditKind.FIX
         ]
         blamed = {index for index, _ in fixes} if problems else set()
+        depends = {r.id: r.depends_on for a in assignments for r in a.requirements}
+        blocked: list[str] = []
         for index, fix in fixes:
-            unmet = [r for r in fix.finding_ids if r not in passed_after]
+            unmet: list[str] = []
+            for claim in fix.finding_ids:
+                if claim in passed_after:
+                    continue
+                waiting = [d for d in depends.get(claim, ()) if d not in passed_after]
+                if waiting:
+                    blocked.append(
+                        f"`{claim}` can't pass until {_ticked(waiting)} passes "
+                        f"(claimed by the fix in {fix.file})"
+                    )
+                else:
+                    unmet.append(claim)
             if unmet:
                 problems.append(
                     f"the fix in {fix.file} claims {', '.join(unmet)}, which still fails"
@@ -394,6 +417,7 @@ class FixService:
             problems=tuple(problems),
             failing_fixes=tuple(sorted(blamed)),
             cleared=tuple(sorted(failed_before & passed_after)),
+            blocked=tuple(blocked),
         )
 
     def fall_back(
@@ -427,6 +451,19 @@ class FixService:
                 "ignored_review": application.ignored_review,
             }
         )
+
+    def restore(self, workspace: FixWorkspace, attempt: FixAttempt) -> EditApplication:
+        """Apply an earlier attempt's kept edits again from the checked commit, so the working
+        copy holds what that attempt's recheck passed.
+
+        Raises:
+            GitOperationError: the working copy cannot be reset.
+            FixError: a file cannot be read or written, or the edits no longer apply the same.
+        """
+        reapplied = self.apply(workspace, attempt.application.applied)
+        if reapplied.applied != attempt.application.applied:
+            raise FixError(f"Attempt {attempt.number}'s edits no longer apply the same way.")
+        return attempt.application
 
     @staticmethod
     def give_up(repo: RepoTarget, attempts: int, verification: VerifyResult) -> FixOutcome:
@@ -510,6 +547,8 @@ class FixService:
         title: str,
         body: str,
         attempts: int,
+        attempt_choice: str = "",
+        blocked: Sequence[str] = (),
     ) -> FixOutcome:
         """Commit the applied edits as one review commit on the review branch and save the
         proposal (pending review, verified); with nothing applied, propose nothing and say why.
@@ -525,6 +564,7 @@ class FixService:
                 attempts=attempts,
                 reason=_nothing_applied(application),
                 ignored_review=application.ignored_review,
+                attempt_choice=attempt_choice,
             )
         copy = workspace.working_copy
         self._git.create_branch(copy, workspace.branch_name, workspace.base_sha)
@@ -558,6 +598,8 @@ class FixService:
             attempts=attempts,
             edits=len(application.applied),
             ignored_review=application.ignored_review,
+            attempt_choice=attempt_choice,
+            blocked=tuple(blocked),
         )
 
     @staticmethod
@@ -609,6 +651,64 @@ class FixService:
             input_tokens=tokens.input_tokens,
             output_tokens=tokens.output_tokens,
         )
+
+
+def best_attempt(tried: Sequence[FixAttempt]) -> FixAttempt | None:
+    """The attempt a proposal is made of: among those whose recheck passed, the one with the
+    most applied edits, the later one on a tie; None when no recheck passed."""
+    best: FixAttempt | None = None
+    for attempt in tried:
+        if attempt.verification.passed and (
+            best is None or len(attempt.application.applied) >= len(best.application.applied)
+        ):
+            best = attempt
+    return best
+
+
+def attempt_choice(tried: Sequence[FixAttempt], fell_back: bool) -> str:
+    """For the repo report: which attempt the proposal is made of, and why."""
+    if not tried:
+        return ""
+    total = len(tried)
+    if fell_back:
+        return (
+            f"Attempt {tried[-1].number} of {total} is used, its failing fixes replaced by "
+            "their notes: no attempt passed the recheck."
+        )
+    best = best_attempt(tried)
+    if best is None:
+        return ""
+    others = "; ".join(
+        f"attempt {attempt.number}: "
+        + (
+            f"recheck passed, {_edits(len(attempt.application.applied))}"
+            if attempt.verification.passed
+            else "recheck failed"
+        )
+        for attempt in tried
+        if attempt.number != best.number
+    )
+    choice = (
+        f"Attempt {best.number} of {total} is used: its recheck passed with "
+        f"{_edits(len(best.application.applied))}"
+    )
+    return f"{choice} (the most of the attempts that passed; {others})." if others else f"{choice}."
+
+
+def _ticked(requirement_ids: Sequence[str]) -> str:
+    return " and ".join(f"`{requirement_id}`" for requirement_id in requirement_ids)
+
+
+def _edits(count: int) -> str:
+    return f"{count} applied edit" + ("" if count == 1 else "s")
+
+
+def _kept_text(kept: Sequence[PlannedEdit]) -> str:
+    """The previous attempt's kept edits as JSON, in the plan's own fields; empty when none."""
+    if not kept:
+        return ""
+    text = json.dumps([edit.model_dump(mode="json") for edit in kept], ensure_ascii=False, indent=2)
+    return text.replace(_KEPT_CLOSE, "<\\/previous_edits>")
 
 
 def pr_title(

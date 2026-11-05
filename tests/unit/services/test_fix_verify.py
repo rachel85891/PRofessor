@@ -89,6 +89,65 @@ def test_a_newly_failing_requirement_blames_every_fix(tmp_path: Path) -> None:
     assert result.failing_fixes == (0,)
 
 
+DEPENDENT = ASSIGNMENT.model_copy(
+    update={
+        "requirements": (
+            ASSIGNMENT.requirements[0].model_copy(update={"depends_on": ("hw01-naming",)}),
+            ASSIGNMENT.requirements[1],
+        )
+    }
+)
+"""`hw01-update` can only pass once `hw01-naming` passes."""
+BOTH_FAILING = (AssignmentResult(assignment_id="hw01", findings=(FINDING, NAMING_FINDING)),)
+
+
+def verified_with_dependency(
+    setup: FixerSetup, results: tuple[AssignmentResult, ...], *edits: object
+) -> VerifyResult:
+    workspace = setup.service.prepare(RUN_ID, "hw01", REPO, setup.fetched)
+    application = setup.service.apply(workspace, list(edits))  # type: ignore[arg-type]
+    return setup.service.verify(
+        RUN_ID, REPO, workspace, (DEPENDENT,), SUCCEEDED, results, application, 1
+    )
+
+
+def test_a_claim_whose_dependency_still_fails_does_not_fail_the_recheck(tmp_path: Path) -> None:
+    setup = FixerSetup(
+        tmp_path, outcomes={"hw01-update": (FINDING,), "hw01-naming": (NAMING_FINDING,)}
+    )
+
+    result = verified_with_dependency(setup, BOTH_FAILING, NAMING_NOTE, BREAK_FIX)
+
+    assert result.passed and result.failing_fixes == ()
+    assert result.blocked == (
+        f"`hw01-update` can't pass until `hw01-naming` passes (claimed by the fix in {CONTROLLER})",
+    )
+
+
+def test_a_claim_whose_dependency_passes_still_fails_the_recheck(tmp_path: Path) -> None:
+    setup = FixerSetup(tmp_path, outcomes={"hw01-update": (FINDING,)})
+
+    result = verified_with_dependency(setup, BOTH_FAILING, NAMING_NOTE, BREAK_FIX)
+
+    assert not result.passed and result.blocked == ()
+    assert result.problems == (f"the fix in {CONTROLLER} claims hw01-update, which still fails",)
+    assert result.failing_fixes == (1,)
+
+
+def test_a_newly_failing_requirement_fails_the_recheck_even_with_a_blocked_claim(
+    tmp_path: Path,
+) -> None:
+    setup = FixerSetup(
+        tmp_path, outcomes={"hw01-update": (FINDING,), "hw01-naming": (NAMING_FINDING,)}
+    )
+
+    result = verified_with_dependency(setup, RESULTS, BREAK_FIX)
+
+    assert not result.passed
+    assert result.problems == ("requirements that passed now fail: hw01-naming",)
+    assert len(result.blocked) == 1 and result.failing_fixes == (0,)
+
+
 def test_a_broken_build_fails_the_recheck(tmp_path: Path) -> None:
     setup = FixerSetup(tmp_path, runner=FakeCodeRunner(results={LABEL: BROKEN}))
 

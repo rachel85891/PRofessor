@@ -37,6 +37,7 @@ FULL_STATE: dict[str, Any] = {
     ),
     "attempt": 2,
     "feedback": ["Rejected fix in x.cs: too long"],
+    "kept": [NAMING_NOTE],
     "application": APPLICATION,
     "plan": PLAN,
     "verification": VerifyResult(passed=True, cleared=("hw01-update",)),
@@ -102,7 +103,15 @@ def test_full_state_keys_are_unchanged(harness: Harness) -> None:
     versions = [(a.id, a.source_hash) for a in CATALOG if a.id in ("_general", "hw01")]
 
     assert key_func(graph, "plan_edits")(FULL_STATE) == expected_key(
-        version, "plan_edits", REPO.repo_id, "ab" * 20, versions, results, 2, FULL_STATE["feedback"]
+        version,
+        "plan_edits",
+        REPO.repo_id,
+        "ab" * 20,
+        versions,
+        results,
+        2,
+        FULL_STATE["feedback"],
+        [NAMING_NOTE.model_dump(mode="json")],
     )
     assert key_func(graph, "self_review")(FULL_STATE) == expected_key(
         version, "self_review", REPO.repo_id, "ab" * 20, applied

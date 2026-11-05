@@ -245,6 +245,7 @@ def _requirement_data(entry: RequirementEntry, assignment_id: str) -> dict[str, 
         "check": entry.check,
         "params": entry.params,
         "http_probes": [_probe_data(probe, entry.id, assignment_id) for probe in entry.probes],
+        "depends_on": entry.depends_on,
     }
 
 
@@ -303,7 +304,40 @@ def _cross_file_problems(loaded: list[_LoadedFile]) -> list[str]:
             f"{' and '.join(labels)} use the same requirement id '{requirement_id}'; "
             "requirement ids must be unique across all assignments."
         )
+    problems.extend(_dependency_problems(loaded))
     return problems
+
+
+def _dependency_problems(loaded: list[_LoadedFile]) -> list[str]:
+    """Every `depends_on` names a known requirement, and no requirement depends on itself
+    through others."""
+    labels = {r.id: item.label for item in loaded for r in item.assignment.requirements}
+    depends = {r.id: r.depends_on for item in loaded for r in item.assignment.requirements}
+    problems = [
+        f"{labels[requirement_id]}: requirement '{requirement_id}', field 'depends_on': "
+        f"unknown requirement '{dependency}'; check the spelling."
+        for requirement_id, dependencies in depends.items()
+        for dependency in dependencies
+        if dependency not in depends
+    ]
+    for requirement_id in depends:
+        if _reaches(requirement_id, requirement_id, depends, set()):
+            problems.append(
+                f"{labels[requirement_id]}: requirement '{requirement_id}', field "
+                "'depends_on': it depends on itself through other requirements."
+            )
+    return problems
+
+
+def _reaches(start: str, target: str, depends: dict[str, tuple[str, ...]], seen: set[str]) -> bool:
+    for dependency in depends.get(start, ()):
+        if dependency == target:
+            return True
+        if dependency not in seen:
+            seen.add(dependency)
+            if _reaches(dependency, target, depends, seen):
+                return True
+    return False
 
 
 def _shared_across_files(

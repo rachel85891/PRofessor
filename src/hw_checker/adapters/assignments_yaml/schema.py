@@ -48,6 +48,7 @@ class RequirementEntry(_FileModel):
     check: str | None = None
     params: dict[str, Any] = {}
     probes: list[ProbeEntry] = []
+    depends_on: list[str] = []
 
 
 class AssignmentFile(_FileModel):

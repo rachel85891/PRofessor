@@ -80,6 +80,14 @@ def test_the_rules_are_read_by_number() -> None:
         ),
         (
             fix(
+                "    if (item.Id == id)\n        found = line;",
+                "    if (item.Id == id)\n    {\n        found = line;\n"
+                "        //fix: Found- break\n        break;\n    }",
+            ),
+            "a missing break",
+        ),
+        (
+            fix(
                 "        var users = Read();",
                 "        //fix: Keep the id, otherwise the user is saved without it\n"
                 "        user.id = id;\n        var users = Read();",
@@ -127,7 +135,17 @@ def test_the_rules_are_read_by_number() -> None:
             "a naming note with the PropertyNameCaseInsensitive tip",
         ),
     ],
-    ids=["readonly", "break", "id", "using", "controller", "get-by-id", "put", "names"],
+    ids=[
+        "readonly",
+        "break",
+        "loop-break",
+        "id",
+        "using",
+        "controller",
+        "get-by-id",
+        "put",
+        "names",
+    ],
 )
 def test_the_edits_the_rules_allow_outright(edit: PlannedEdit, what: str) -> None:
     assert never_a_violation(edit) == what

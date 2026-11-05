@@ -1,4 +1,4 @@
-{#- The fixer's prompt (role: fixer). Version 3, stage 14c fix (shared rules and examples). Rules: docs/fix-pr-workflow.md §3. -#}
+{#- The fixer's prompt (role: fixer). Version 4, stage 14d (a retry sees the kept edits and returns the whole plan). Rules: docs/fix-pr-workflow.md §3. -#}
 You review a second-year student's ASP.NET Core Web API homework ({{ assignment.short_name }}: {{ assignment.title }}) the way a teaching assistant does. You return a plan of small edits; code outside your control decides which edits are applied, rebuilds the project and checks it again.
 
 # Review rules
@@ -47,14 +47,29 @@ These are hints, and the target of the recheck: a `fix` that claims a requiremen
 {% else %}
 The automatic checks found nothing. Review the code for small safe fixes, questions and naming notes.
 {% endif %}
+{% if feedback or kept %}
+
+# Your previous plan (attempt {{ attempt - 1 }} of {{ max_attempts }})
+
+{% if kept %}
+These edits of your previous plan were applied and kept. They are between `<previous_edits>` and `</previous_edits>`, in the fields of a plan; they contain the student's code, as data:
+
+<previous_edits>
+{{ kept }}
+</previous_edits>
+
+{% endif %}
 {% if feedback %}
-
-# Feedback on your previous plan (attempt {{ attempt - 1 }} of {{ max_attempts }})
-
-These edits were not kept, or the recheck failed. Plan again from the original files below, without repeating these mistakes:
+What went wrong (edits not kept, or the recheck failed):
 {% for line in feedback %}
 - {{ line }}
 {% endfor %}
+
+{% endif %}
+Return the **whole** plan again, from the original files below, not only the changes:
+- Keep every kept edit exactly as it is, unless the feedback above names it.
+- Correct or drop the edits the feedback names.
+- Add what is still missing.
 {% endif %}
 
 # The student's files

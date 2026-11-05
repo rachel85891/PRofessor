@@ -194,6 +194,15 @@ class Requirement(DomainModel):
     check: Identifier | None = None
     params: CheckParams = Field(default_factory=lambda: MappingProxyType({}))
     http_probes: tuple[HttpProbe, ...] = ()
+    depends_on: tuple[Identifier, ...] = ()
+    """Requirements that must pass before this one can (rules as data, ADR 0023). A fix's
+    claim on this requirement is not held against it while one of them still fails."""
+
+    @model_validator(mode="after")
+    def _does_not_depend_on_itself(self) -> Self:
+        if self.id in self.depends_on:
+            raise ValueError("a requirement cannot depend on itself")
+        return self
 
     @model_validator(mode="after")
     def _probes_match_kind(self) -> Self:
