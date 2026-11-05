@@ -36,6 +36,15 @@
           "title": "Applies To",
           "type": "array"
         },
+        "files": {
+          "default": [],
+          "items": {
+            "pattern": "^\\.\\w+$",
+            "type": "string"
+          },
+          "title": "Files",
+          "type": "array"
+        },
         "until": {
           "anyOf": [
             {
@@ -199,6 +208,15 @@
           "title": "Applies To",
           "type": "array"
         },
+        "files": {
+          "default": [],
+          "items": {
+            "pattern": "^\\.\\w+$",
+            "type": "string"
+          },
+          "title": "Files",
+          "type": "array"
+        },
         "until": {
           "anyOf": [
             {
@@ -248,6 +266,18 @@
           "title": "Text",
           "type": "string"
         },
+        "wordings": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/RuleWording"
+          },
+          "title": "Wordings",
+          "type": "array"
+        },
+        "shown_in": {
+          "$ref": "#/$defs/RulePlace",
+          "default": "rules"
+        },
         "example": {
           "anyOf": [
             {
@@ -281,6 +311,14 @@
             "$ref": "#/$defs/ForbiddenText"
           },
           "title": "Forbidden Text",
+          "type": "array"
+        },
+        "forbidden_change": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/ForbiddenText"
+          },
+          "title": "Forbidden Change",
           "type": "array"
         },
         "never_a_violation": {
@@ -355,6 +393,40 @@
       ],
       "title": "RuleKind",
       "type": "string"
+    },
+    "RulePlace": {
+      "description": "Where the fixer's prompt shows a rule.",
+      "enum": [
+        "rules",
+        "fix_kind"
+      ],
+      "title": "RulePlace",
+      "type": "string"
+    },
+    "RuleWording": {
+      "additionalProperties": false,
+      "description": "A rule's text for a prompt whose edited file types are all in `files`.",
+      "properties": {
+        "files": {
+          "items": {
+            "pattern": "^\\.\\w+$",
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Files",
+          "type": "array"
+        },
+        "text": {
+          "title": "Text",
+          "type": "string"
+        }
+      },
+      "required": [
+        "files",
+        "text"
+      ],
+      "title": "RuleWording",
+      "type": "object"
     },
     "SafeFix": {
       "description": "The registered detectors of small safe fixes. Each recognizes one shape of edit in\ncode; a `fix_allowed` rule chooses which of them the judge may never report.",

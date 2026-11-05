@@ -5,9 +5,21 @@ from pathlib import Path
 
 import pytest
 
-from hw_checker.domain import EditKind, PlannedEdit, ReviewedFiles
+from hw_checker.domain import (
+    EditKind,
+    FixExample,
+    PlannedEdit,
+    ReviewedFiles,
+    ReviewRole,
+    ReviewRule,
+    ReviewRuleSet,
+)
+from hw_checker.services.fix_edits import EditRules, apply_edits, fallback_edit
+from hw_checker.services.review_policy import role_policy
+from tests.unit.domain import builders
 from tests.unit.services.fixer_data import (
     ASSIGNMENT,
+    COURSE,
     FILES,
     HW01_REVIEWED,
     REPO,
@@ -124,3 +136,220 @@ def test_only_the_files_shown_with_a_comment_style_are_edited(tmp_path: Path) ->
         "Api.csproj is not a .cs or .js or .html or .css file; only .cs or .js or .html or "
         ".css files are edited",
     ]
+
+
+# ---------------------------------------------------------------- §2: comments per file type
+
+HTML = "Api/wwwroot/update.html"
+JS = "Api/wwwroot/update.js"
+CSS = "Api/wwwroot/css/site.css"
+CLIENT_STYLES = {
+    suffix: COURSE.profile.comment_style[suffix] for suffix in (".cs", ".js", ".html", ".css")
+}
+PAGE = '<input id="name">\n'
+SHEET = "form { display: none; }\n"
+
+
+def _client_rules(*rules: ReviewRule, files: tuple[str, ...] = (JS, HTML, CSS)) -> EditRules:
+    course = COURSE.model_copy(update={"rules": ReviewRuleSet(rules=(*COURSE.rules.rules, *rules))})
+    policy = role_policy(course, ASSIGNMENT, (ASSIGNMENT,), ReviewRole.FIXER, files)
+    return EditRules(
+        max_edits=12,
+        max_fix_lines=6,
+        styles=CLIENT_STYLES,
+        forbidden=policy.forbidden,
+        forbidden_changes=policy.forbidden_changes,
+    )
+
+
+def _fix(file: str, find: str, replace: str) -> PlannedEdit:
+    return PlannedEdit(
+        file=file,
+        find=find,
+        replace=replace,
+        kind=EditKind.FIX,
+        finding_ids=(),
+        reason="The page looks for an id that is not there.",
+        fallback_note="Is this the input's id?",
+        note_section=None,
+    )
+
+
+def _reasons(files: dict[str, str], edits: list[PlannedEdit], rules: EditRules) -> list[str]:
+    data = {path: text.encode() for path, text in files.items()}
+    return [rejected.reason for rejected in apply_edits(data, edits, rules).application.rejected]
+
+
+RENAMED_JS = UPDATE_JS.replace("firstname", "name")
+
+
+@pytest.mark.parametrize(
+    ("file", "find", "replace", "reason"),
+    [
+        (JS, UPDATE_JS, "//fix: The page's id is name\n" + RENAMED_JS, None),
+        (HTML, PAGE, "<!--fix: The script looks for firstname-->\n" + PAGE, None),
+        (CSS, SHEET, "/*fix: The form must show*/\nform { display: block; }\n", None),
+        (
+            HTML,
+            PAGE,
+            '//fix: The script looks for firstname\n<input id="firstname">\n',
+            "a fix needs a <!--fix: ... line directly above the changed code",
+        ),
+        (
+            JS,
+            UPDATE_JS,
+            "<!--fix: renamed-->\n" + RENAMED_JS,
+            "a fix needs a //fix: ... line directly above the changed code",
+        ),
+        (
+            CSS,
+            SHEET,
+            "//fix: The form must show\nform { display: block; }\n",
+            "a fix needs a /*fix: ... line directly above the changed code",
+        ),
+    ],
+    ids=["js", "html", "css", "html-with-slashes", "js-with-html-marker", "css-with-slashes"],
+)
+def test_the_fix_marker_is_checked_by_the_edited_files_style(
+    file: str, find: str, replace: str, reason: str | None
+) -> None:
+    files = {JS: UPDATE_JS, HTML: PAGE, CSS: SHEET}
+    if file == HTML and reason is None:
+        replace = replace.replace(PAGE, '<input id="firstname">\n')
+
+    reasons = _reasons(files, [_fix(file, find, replace)], _client_rules())
+
+    assert reasons == ([] if reason is None else [reason])
+
+
+def test_a_note_uses_the_files_own_comment_syntax() -> None:
+    html_note = _note(HTML, PAGE, "<!--Does update.js look for this id?-->")
+    js_note_in_html = _note(HTML, PAGE, "//Does update.js look for this id?")
+
+    reasons = _reasons({HTML: PAGE}, [html_note, js_note_in_html], _client_rules())
+
+    assert reasons == ["a note may only add <!-- comment lines and must leave the code unchanged"]
+
+
+def test_a_fallback_note_is_written_in_the_files_comment_syntax() -> None:
+    fix = _fix(HTML, PAGE, '<!--fix: x-->\n<input id="firstname">\n')
+
+    note = fallback_edit(fix, CLIENT_STYLES[".html"])
+
+    assert note is not None
+    assert note.replace == "<!--Is this the input's id?-->\n" + PAGE
+
+
+def test_a_cs_only_guard_is_not_applied_to_a_js_edit() -> None:
+    getter = "const user = { get; set; };\n"
+    cs_find = "    public int id { get; set; }\n"
+    js_fix = _fix(JS, getter, "//fix: An object\nconst user = {};\n")
+    cs_fix = _fix("Models/User.cs", cs_find, "    //fix: x\n    public int Id { get; set; }\n")
+    files = {JS: getter, "Models/User.cs": cs_find}
+
+    reasons = _reasons(files, [js_fix, cs_fix], _client_rules(files=(JS, "Models/User.cs")))
+
+    assert reasons == ["a fix never changes a model's property declaration ({ get; set; })"]
+
+
+def test_a_rule_limited_to_file_types_guards_only_those_files() -> None:
+    limited = builders.review_rule(
+        id="no-alert",
+        files=[".js"],
+        text="Do not add alert.",
+        forbidden_text=[{"text": "alert(", "message": "no new alert"}],
+    )
+    page_find = "<p>Hi</p>\n"
+    js_note = _note(JS, UPDATE_JS, "//Show it with alert(input.value)?")
+    html_note = _note(HTML, page_find, "<!--Show it with alert(input.value)?-->")
+
+    reasons = _reasons(
+        {JS: UPDATE_JS, HTML: page_find}, [js_note, html_note], _client_rules(limited)
+    )
+
+    assert reasons == ["no new alert"]
+
+
+def test_a_rule_limited_to_file_types_is_in_a_prompt_only_when_one_is_shown() -> None:
+    limited = builders.review_rule(id="client-only", files=[".html", ".js"], text="Client rule.")
+    course = COURSE.model_copy(
+        update={"rules": ReviewRuleSet(rules=(*COURSE.rules.rules, limited))}
+    )
+
+    def rules(*files: str) -> tuple[str, ...]:
+        return role_policy(course, ASSIGNMENT, (ASSIGNMENT,), ReviewRole.FIXER, files).rules
+
+    assert "Client rule." not in rules("Controllers/UsersController.cs", "Api.csproj")
+    assert "Client rule." in rules("Controllers/UsersController.cs", JS)
+    assert "Client rule." in rules(HTML)
+
+
+def test_an_example_limited_to_file_types_is_shown_only_with_them() -> None:
+    example = FixExample.model_validate(
+        {
+            "id": "client-example",
+            "applies_to": ["fixer"],
+            "files": [".js"],
+            "situation": "An invented page.",
+            "plan": '{"edits": [], "files_notes": []}',
+            "origin": {"source": "developer"},
+            "status": "approved",
+        }
+    )
+    course = COURSE.model_copy(
+        update={"rules": COURSE.rules.model_copy(update={"examples": (example,)})}
+    )
+
+    def situations(*files: str) -> list[str]:
+        policy = role_policy(course, ASSIGNMENT, (ASSIGNMENT,), ReviewRole.FIXER, files)
+        return [shown.situation for shown in policy.examples]
+
+    assert "An invented page." not in situations("Program.cs")
+    assert "An invented page." in situations("Program.cs", JS)
+
+
+def test_the_comments_rule_keeps_its_cs_wording_only_when_only_cs_is_edited() -> None:
+    [comments] = [rule for rule in COURSE.rules.rules if rule.id == "comments"]
+
+    def first_rule(*files: str) -> str:
+        return role_policy(COURSE, ASSIGNMENT, (ASSIGNMENT,), ReviewRole.FIXER, files).rules[0]
+
+    assert first_rule("Program.cs", "Api.csproj", "users.json") == comments.wordings[0].text
+    assert first_rule("Program.cs", JS) == comments.text
+    assert "`//`" not in comments.text
+
+
+def test_the_plan_lists_the_comment_style_of_every_file_type_shown(tmp_path: Path) -> None:
+    setup = FixerSetup(tmp_path, files=CLIENT_FILES)
+    workspace = setup.service.prepare(RUN_ID, "hw01", REPO, setup.fetched)
+
+    prompt = setup.service.plan_prompt(
+        workspace, CLIENT_ASSIGNMENT, (CLIENT_ASSIGNMENT,), RESULTS, 1
+    )
+
+    assert "Only `.cs`, `.js`, `.html`, `.css` files are edited" in prompt
+    assert (
+        "start the changed part with the fix marker line of the file's type (`//fix: ...` in "
+        "`.cs` and `.js` files, `<!--fix: ...-->` in `.html` files, `/*fix: ...*/` in `.css` "
+        "files)"
+    ) in prompt
+    assert (
+        "only adds comment lines (in the file type's syntax: `//Text` in `.cs` and `.js` files; "
+        "`<!--Text-->` in `.html` files; `/*Text*/` in `.css` files; no space after the "
+        "comment's start)"
+    ) in prompt
+    assert "Never change a property declaration (`{ get; set; }`)." in prompt
+    assert "a naming note (C#, JavaScript, HTML and CSS conventions)" in prompt
+
+
+def test_a_prompt_without_cs_files_has_no_cs_condition(tmp_path: Path) -> None:
+    client_only = {path: text for path, text in CLIENT_FILES.items() if not path.endswith(".cs")}
+    setup = FixerSetup(tmp_path, files=client_only)
+    workspace = setup.service.prepare(RUN_ID, "hw01", REPO, setup.fetched)
+
+    prompt = setup.service.plan_prompt(
+        workspace, CLIENT_ASSIGNMENT, (CLIENT_ASSIGNMENT,), RESULTS, 1
+    )
+
+    assert "{ get; set; }" not in prompt
+    assert "Only `.js`, `.html`, `.css` files are edited" in prompt

@@ -9,9 +9,9 @@ model per file: `CourseProfile` is `course/course.yaml`, `ReviewRuleSet` is a
 import re
 from collections.abc import Mapping, Sequence
 from enum import StrEnum
-from typing import Self
+from typing import Annotated, Self
 
-from pydantic import Field, field_validator, model_validator
+from pydantic import Field, StringConstraints, field_validator, model_validator
 
 from hw_checker.domain.base import DomainModel, Identifier, NonBlankStr
 
@@ -77,6 +77,15 @@ class SafeFix(StrEnum):
     FINAL_NEWLINE = "final_newline"
 
 
+class RulePlace(StrEnum):
+    """Where the fixer's prompt shows a rule."""
+
+    RULES = "rules"
+    """In the numbered review rules, which the self-review quotes by number."""
+    FIX_KIND = "fix_kind"
+    """With the `fix` edit kind, as a condition every fix meets; not numbered."""
+
+
 class PrSectionId(StrEnum):
     """The PR body's sections the code fills: the writer's three lists, and the plan's
     notes on leftover files."""
@@ -96,6 +105,15 @@ TAUGHT_SO_FAR = "{taught_so_far}"
 """In a rule: the course's `taught_so_far` phrase, or nothing when nothing is listed."""
 RULE_REFERENCE = re.compile(r"\{rule:([^{}\s]+)\}")
 """In a rule's texts: `{rule:<id>}` becomes that rule's number in the role's list."""
+
+FileSuffix = Annotated[str, StringConstraints(pattern=r"^\.\w+$")]
+"""A file type, by its suffix (`.cs`)."""
+
+
+def covers(files: Sequence[str], path: str) -> bool:
+    """Whether an item limited to the file types `files` speaks of the file at `path`; an
+    item limited to none speaks of every file."""
+    return not files or any(path.endswith(suffix) for suffix in files)
 
 
 class ForbiddenText(DomainModel):
@@ -148,12 +166,23 @@ class RuleExample(DomainModel):
     replace: str
 
 
+class RuleWording(DomainModel):
+    """A rule's text for a prompt whose edited file types are all in `files`."""
+
+    files: tuple[FileSuffix, ...] = Field(min_length=1)
+    text: NonBlankStr
+
+
 class PolicyItem(DomainModel):
-    """What rules and examples share: the roles they speak to, how they regress from one
-    assignment to the next, and their approval."""
+    """What rules and examples share: the roles they speak to, the file types they speak
+    of, how they regress from one assignment to the next, and their approval."""
 
     id: Identifier
     applies_to: tuple[ReviewRole, ...] = Field(min_length=1)
+    files: tuple[FileSuffix, ...] = ()
+    """The file types this item is limited to: it is in a prompt only when the prompt shows
+    a file of one of them, and its guardrails apply only to edits in them. Empty: every
+    file type."""
     until: Identifier | None = None
     """The last assignment this item applies to; later assignments do not see it."""
     replaces: Identifier | None = None
@@ -164,6 +193,10 @@ class PolicyItem(DomainModel):
     origin: Origin
     status: ItemStatus
 
+    def covers(self, path: str) -> bool:
+        """Whether this item speaks of the file at `path`."""
+        return covers(self.files, path)
+
 
 class ReviewRule(PolicyItem):
     """One review rule. `text` is the rule as the prompts number it; the other fields are
@@ -171,11 +204,17 @@ class ReviewRule(PolicyItem):
 
     kind: RuleKind
     text: NonBlankStr
+    wordings: tuple[RuleWording, ...] = ()
+    """The rule's text in a prompt whose edited file types (those with a comment style) are
+    all in one wording's `files`: the first such wording replaces `text`."""
+    shown_in: RulePlace = RulePlace.RULES
     example: RuleExample | None = None
     detectors: tuple[SafeFix, ...] = ()
     """For `fix_allowed`: the safe fixes this rule allows outright."""
     approved_notes: tuple[ApprovedNote, ...] = ()
     forbidden_text: tuple[ForbiddenText, ...] = ()
+    forbidden_change: tuple[ForbiddenText, ...] = ()
+    """Text a fix must never remove or change: checked on the lines it removes."""
     never_a_violation: NonBlankStr | None = None
     """For the judge: what this rule allows outright, as one line."""
     clarification: NonBlankStr | None = None
@@ -187,11 +226,31 @@ class ReviewRule(PolicyItem):
             raise ValueError("only a fix_allowed rule names detectors")
         return self
 
+    @model_validator(mode="after")
+    def _fix_kind_rules_speak_to_the_fixer(self) -> Self:
+        if self.shown_in is RulePlace.FIX_KIND and self.applies_to != (ReviewRole.FIXER,):
+            raise ValueError("a rule shown with the fix kind applies to the fixer only")
+        return self
+
     @property
     def texts(self) -> tuple[str, ...]:
         """Every text of the rule that may hold placeholders."""
+        wordings = tuple(wording.text for wording in self.wordings)
         return tuple(
-            text for text in (self.text, self.never_a_violation, self.clarification) if text
+            text
+            for text in (self.text, *wordings, self.never_a_violation, self.clarification)
+            if text
+        )
+
+    def text_for(self, edited: Sequence[str]) -> str:
+        """The rule's text in a prompt whose edited file types are `edited` (suffixes)."""
+        return next(
+            (
+                wording.text
+                for wording in self.wordings
+                if all(suffix in wording.files for suffix in edited)
+            ),
+            self.text,
         )
 
 

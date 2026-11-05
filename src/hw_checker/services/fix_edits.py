@@ -22,6 +22,7 @@ from hw_checker.domain import (
     PlannedEdit,
     RejectedEdit,
 )
+from hw_checker.services.review_policy import Scoped
 
 MIN_REASON_CHARS = 8
 """A shorter `reason` is a placeholder, not the one sentence the plan asks for."""
@@ -30,7 +31,6 @@ PLACEHOLDER_REASONS = frozenset(
 )
 """Longer reasons that still only fill the field (compared lowercased, without a final
 period)."""
-_PROPERTY_DECLARATION = re.compile(r"\{\s*get;\s*(?:set|init);\s*\}")
 _DRIVE_LETTER = re.compile(r"^[A-Za-z]:")
 
 
@@ -46,8 +46,11 @@ class EditRules:
     """The comment style by file suffix; only these files are edited."""
     editable: frozenset[str] | None = None
     """The files the fixer was shown; when given, no other file is edited."""
-    forbidden: tuple[ForbiddenText, ...] = ()
-    """Text an edit must never add (the fixer's rules in effect)."""
+    forbidden: tuple[Scoped[ForbiddenText], ...] = ()
+    """Text an edit must never add (the fixer's rules in effect), by the file types its rule
+    is limited to."""
+    forbidden_changes: tuple[Scoped[ForbiddenText], ...] = ()
+    """Text a fix must never remove or change, by the file types its rule is limited to."""
     data_files: frozenset[str] = field(default_factory=frozenset)
     """The repo's data files, the only ones a `final_newline` edit may change."""
 
@@ -185,7 +188,7 @@ def _replace(
     style = rules.style(path)
     if style is None:  # Refused by the path check.
         return f"{path} is not edited"
-    problem = _content_problem(find, replace, edit.kind, rules, style)
+    problem = _content_problem(path, find, replace, edit.kind, rules, style)
     if problem:
         return problem
     texts[path] = text.replace(find.replace("\n", newline), replace.replace("\n", newline), 1)
@@ -193,17 +196,20 @@ def _replace(
 
 
 def _content_problem(
-    find: str, replace: str, kind: EditKind, rules: EditRules, style: CommentStyle
+    path: str, find: str, replace: str, kind: EditKind, rules: EditRules, style: CommentStyle
 ) -> str | None:
     old, new = find.split("\n"), replace.split("\n")
     opcodes = difflib.SequenceMatcher(a=old, b=new, autojunk=False).get_opcodes()
     added = [line for tag, _, _, j1, j2 in opcodes if tag != "equal" for line in new[j1:j2]]
     removed = [line for tag, i1, i2, _, _ in opcodes if tag != "equal" for line in old[i1:i2]]
     for forbidden in rules.forbidden:
-        if _adds(forbidden, find, replace, added):
-            return forbidden.message
+        if forbidden.covers(path) and _adds(forbidden.item, find, replace, added):
+            return forbidden.item.message
     if kind is EditKind.NOTE:
         return _note_problem(opcodes, added, style)
+    for change in rules.forbidden_changes:
+        if change.covers(path) and any(change.item.regex.search(line) for line in removed):
+            return change.item.message
     return _fix_problem(opcodes, new, added, removed, rules, style)
 
 
@@ -240,8 +246,6 @@ def _fix_problem(
     rules: EditRules,
     style: CommentStyle,
 ) -> str | None:
-    if any(_PROPERTY_DECLARATION.search(line) for line in removed):
-        return "a fix never changes a model's property declaration ({ get; set; })"
     changed = [line for line in removed if line.strip()]
     changed += [line for line in added if line.strip() and not _is_comment(line, style)]
     if not any(not _is_comment(line, style) for line in changed):

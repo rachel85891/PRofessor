@@ -6,16 +6,24 @@
 # services/fix_edits.py; hw01's prompts must not change by one byte.
 rules:
   - id: comments
-    # Moved from code in stage 3f.
+    # Moved from code in stage 3f. Stage 18: `text` is the wording for every file type; a
+    # prompt that edits only C# files shows the `//` wording of the approved PRs instead.
     applies_to: [fixer, judge]
     kind: style
     text: >-
-      Write every comment you add in English, short, right after `//` with no space. Mark
-      every code change with a `//fix: ...` line directly above the changed code, saying
-      what you changed and why (`//fix: Keep the id, otherwise the updated user is saved
-      without it`). Every other comment is a question or an instruction for the student
-      (`//Why isn't it implemented? It should read the file and return the user with this id
-      (or NotFound / NoContent)`).
+      Write every comment you add in English, short, in the comment syntax of the file's
+      type, with no space after the comment's start. Mark every code change with the fix
+      marker line of the file's type directly above the changed code, saying what you
+      changed and why. Every other comment is a question or an instruction for the student.
+    wordings:
+      - files: [.cs]
+        text: >-
+          Write every comment you add in English, short, right after `//` with no space.
+          Mark every code change with a `//fix: ...` line directly above the changed code,
+          saying what you changed and why (`//fix: Keep the id, otherwise the updated user
+          is saved without it`). Every other comment is a question or an instruction for the
+          student (`//Why isn't it implemented? It should read the file and return the user
+          with this id (or NotFound / NoContent)`).
     forbidden_text:
       - pattern: '[\u0590-\u05FF]'
         message: added text must be English, never Hebrew
@@ -92,6 +100,22 @@ rules:
     origin:
       source: developer
       quote: "docs/fix-pr-workflow.md §3, rule 7"
+    status: approved
+
+  - id: property-declarations
+    # Stage 18: moved from services/fix_edits.py and the fixer_plan frame (stage 14). Shown
+    # with the `fix` edit kind, not numbered, so the self-review's rule numbers stay.
+    applies_to: [fixer]
+    kind: never_do
+    files: [.cs]
+    shown_in: fix_kind
+    text: Never change a property declaration (`{ get; set; }`).
+    forbidden_change:
+      - pattern: '\{\s*get;\s*(?:set|init);\s*\}'
+        message: "a fix never changes a model's property declaration ({ get; set; })"
+    origin:
+      source: developer
+      quote: "docs/fix-pr-workflow.md §3, rule 7 (never rename a stored model property)"
     status: approved
 
   - id: leftover-files

@@ -11,7 +11,7 @@ import fnmatch
 import hashlib
 import json
 import logging
-from collections.abc import Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 
@@ -240,7 +240,8 @@ class FixService:
         paths = self._files.list_files(root, frozenset(self._config.skip_dirs))
         selected = self._shown_paths(paths, assignments)
         shown = [{"path": path, "text": self._file_text(root, path)} for path in selected]
-        policy = role_policy(self._course, assignment, assignments, ReviewRole.FIXER)
+        policy = role_policy(self._course, assignment, assignments, ReviewRole.FIXER, selected)
+        styles = self._styles(selected)
         values: dict[str, object] = policy.slots() | {
             "course": self._course.profile,
             "assignment": assignment,
@@ -256,7 +257,9 @@ class FixService:
             "max_edits": self._config.max_edits,
             "max_fix_lines": self._config.max_fix_lines,
             "data_files": sorted(self._data_files(paths)),
-            "edited_suffixes": list(self._styles(selected)),
+            "edited_suffixes": list(styles),
+            "styles": _style_groups(styles),
+            "languages": joined(dict.fromkeys(style.language for style in styles.values())),
         }
         omitted: list[str] = []
         while True:
@@ -292,14 +295,14 @@ class FixService:
         paths = self._files.list_files(copy, frozenset(self._config.skip_dirs))
         files = {path: self._files.read_bytes(copy, path) for path in paths}
         selected = self._shown_paths(paths, assignments)
+        policy = role_policy(self._course, assignment, assignments, ReviewRole.FIXER, selected)
         rules = EditRules(
             max_edits=self._config.max_edits,
             max_fix_lines=self._config.max_fix_lines,
             styles=self._styles(selected),
             editable=frozenset(selected),
-            forbidden=role_policy(
-                self._course, assignment, assignments, ReviewRole.FIXER
-            ).forbidden,
+            forbidden=policy.forbidden,
+            forbidden_changes=policy.forbidden_changes,
             data_files=frozenset(self._data_files(paths)),
         )
         result = apply_edits(files, edits, rules)
@@ -332,7 +335,13 @@ class FixService:
         if not self._config.self_review or not application.applied:
             return None
         diff = self._git.diff(workspace.working_copy, workspace.base_sha)
-        policy = role_policy(self._course, assignment, assignments, ReviewRole.JUDGE)
+        policy = role_policy(
+            self._course,
+            assignment,
+            assignments,
+            ReviewRole.JUDGE,
+            self._shown(workspace, assignments),
+        )
         prompt = self._templates.render(
             REVIEW_TEMPLATE,
             policy.slots()
@@ -365,7 +374,13 @@ class FixService:
             FixError: a file cannot be read or written.
         """
         applied = application.applied
-        policy = role_policy(self._course, assignment, assignments, ReviewRole.JUDGE)
+        policy = role_policy(
+            self._course,
+            assignment,
+            assignments,
+            ReviewRole.JUDGE,
+            self._shown(workspace, assignments),
+        )
         rules = numbered_rules(self._templates.render(RULES_TEMPLATE, policy.slots()))
         allowances = Allowances(
             detectors=policy.detectors,
@@ -568,7 +583,8 @@ class FixService:
             if section.id is not PrSectionId.FILES
         }
         groups = _sections(application.applied)
-        policy = role_policy(self._course, assignment, assignments, ReviewRole.WRITER)
+        edited = [edit.file for edit in application.applied]
+        policy = role_policy(self._course, assignment, assignments, ReviewRole.WRITER, edited)
         prompt = self._templates.render(
             WRITER_TEMPLATE,
             {
@@ -705,6 +721,12 @@ class FixService:
         configs = [p for p in paths if self._matches(p, self._config.config_globs)]
         return list(dict.fromkeys(code + reviewed + configs + sorted(self._data_files(paths))))
 
+    def _shown(self, workspace: FixWorkspace, assignments: Sequence[Assignment]) -> list[str]:
+        """The files the fixer is shown in the fix working copy."""
+        root = workspace.working_copy
+        paths = self._files.list_files(root, frozenset(self._config.skip_dirs))
+        return self._shown_paths(paths, assignments)
+
     def _styles(self, shown: Sequence[str]) -> dict[str, CommentStyle]:
         """The comment styles of the `shown` files' types, in the course's order: the files
         that may be edited. All of the course's styles when no shown file has one."""
@@ -789,6 +811,34 @@ def attempt_choice(tried: Sequence[FixAttempt], fell_back: bool) -> str:
         f"{_edits(len(best.application.applied))}"
     )
     return f"{choice} (the most of the attempts that passed; {others})." if others else f"{choice}."
+
+
+def joined(items: Iterable[str]) -> str:
+    """`a`, `a and b`, or `a, b and c`."""
+    words = list(items)
+    return " and ".join(filter(None, [", ".join(words[:-1]), *words[-1:]]))
+
+
+def _style_groups(styles: Mapping[str, CommentStyle]) -> list[dict[str, str]]:
+    """The edited file types grouped by their comment style, in the course's order, for the
+    plan's frame: each group's style and its suffixes (`` `.cs` and `.js` ``)."""
+    groups: dict[CommentStyle, list[str]] = {}
+    for suffix, style in styles.items():
+        same = next((key for key in groups if _same_comments(key, style)), style)
+        groups.setdefault(same, []).append(suffix)
+    return [
+        {
+            "line": style.line,
+            "fix_marker": style.fix_marker,
+            "end": style.end,
+            "suffixes": joined(f"`{suffix}`" for suffix in suffixes),
+        }
+        for style, suffixes in groups.items()
+    ]
+
+
+def _same_comments(one: CommentStyle, other: CommentStyle) -> bool:
+    return (one.line, one.fix_marker, one.end) == (other.line, other.fix_marker, other.end)
 
 
 def _ticked(requirement_ids: Sequence[str]) -> str:

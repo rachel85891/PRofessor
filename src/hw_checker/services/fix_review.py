@@ -21,6 +21,7 @@ from hw_checker.domain import (
     SafeFix,
     SelfReview,
 )
+from hw_checker.services.review_policy import Scoped
 
 MIN_QUOTE_CHARS = 10
 """A shorter quote cannot show which part of a rule the edit breaks."""
@@ -34,15 +35,24 @@ _READONLY = "readonly "
 @dataclass(frozen=True)
 class Allowances:
     """What the rules in effect allow outright: the safe fixes their `fix_allowed` rules
-    name, and their notes in the approved wording; `styles` tell comments from code."""
+    name, and their notes in the approved wording, each in the file types its rule is
+    limited to; `styles` tell comments from code."""
 
-    detectors: frozenset[SafeFix]
-    approved_notes: tuple[ApprovedNote, ...]
+    detectors: tuple[Scoped[SafeFix], ...]
+    approved_notes: tuple[Scoped[ApprovedNote], ...]
     styles: Mapping[str, CommentStyle]
 
     def style(self, path: str) -> CommentStyle | None:
         """The comment style of the file at `path`."""
         return next((style for suffix, style in self.styles.items() if path.endswith(suffix)), None)
+
+    def detectors_for(self, path: str) -> list[SafeFix]:
+        """The safe fixes allowed in the file at `path`."""
+        return [scoped.item for scoped in self.detectors if scoped.covers(path)]
+
+    def notes_for(self, path: str) -> list[ApprovedNote]:
+        """The notes in the approved wording for the file at `path`."""
+        return [scoped.item for scoped in self.approved_notes if scoped.covers(path)]
 
 
 @dataclass(frozen=True)
@@ -92,12 +102,9 @@ def judge(
 
 def never_a_violation(edit: PlannedEdit, allowances: Allowances) -> str | None:
     """What the edit is, when the rules allow it outright; None otherwise."""
+    allowed = allowances.detectors_for(edit.file)
     if edit.kind is EditKind.FINAL_NEWLINE:
-        return (
-            _SAFE_FIXES[SafeFix.FINAL_NEWLINE]
-            if SafeFix.FINAL_NEWLINE in allowances.detectors
-            else None
-        )
+        return _SAFE_FIXES[SafeFix.FINAL_NEWLINE] if SafeFix.FINAL_NEWLINE in allowed else None
     style = allowances.style(edit.file)
     if style is None:
         return None
@@ -114,13 +121,14 @@ def never_a_violation(edit: PlannedEdit, allowances: Allowances) -> str | None:
     if edit.kind is EditKind.NOTE:
         text = " ".join(comments).lower()
         return next(
-            (note.what for note in allowances.approved_notes if note.words.lower() in text), None
+            (note.what for note in allowances.notes_for(edit.file) if note.words.lower() in text),
+            None,
         )
     return next(
         (
             _SAFE_FIXES[detector]
             for detector, detects in _DETECTORS.items()
-            if detector in allowances.detectors and detects(added_code, removed_code)
+            if detector in allowed and detects(added_code, removed_code)
         ),
         None,
     )

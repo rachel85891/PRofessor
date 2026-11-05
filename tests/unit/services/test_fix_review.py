@@ -17,7 +17,7 @@ from hw_checker.services.fix_review import Allowances, judge, never_a_violation,
 from hw_checker.services.review_policy import role_policy
 from tests.unit.services.fixer_data import ASSIGNMENT, COURSE
 
-POLICY = role_policy(COURSE, ASSIGNMENT, (ASSIGNMENT,), ReviewRole.JUDGE)
+POLICY = role_policy(COURSE, ASSIGNMENT, (ASSIGNMENT,), ReviewRole.JUDGE, ("Program.cs",))
 ALLOWANCES = Allowances(
     detectors=POLICY.detectors,
     approved_notes=POLICY.approved_notes,
@@ -236,7 +236,9 @@ def test_a_violation_of_an_edit_that_does_not_exist_is_dropped() -> None:
 
 def test_a_safe_fix_no_rule_allows_is_not_allowed_outright() -> None:
     without = Allowances(
-        detectors=ALLOWANCES.detectors - {SafeFix.READONLY_FIELD},
+        detectors=tuple(
+            scoped for scoped in ALLOWANCES.detectors if scoped.item is not SafeFix.READONLY_FIELD
+        ),
         approved_notes=ALLOWANCES.approved_notes,
         styles=ALLOWANCES.styles,
     )
@@ -246,7 +248,7 @@ def test_a_safe_fix_no_rule_allows_is_not_allowed_outright() -> None:
 
 def test_a_note_is_approved_only_in_a_rules_wording() -> None:
     put = note("        public void Put()", "The assignment asks PUT to return Ok(): change it")
-    without = Allowances(detectors=frozenset(), approved_notes=(), styles=ALLOWANCES.styles)
+    without = Allowances(detectors=(), approved_notes=(), styles=ALLOWANCES.styles)
 
     assert never_a_violation(put, ALLOWANCES) == "the PUT note in the approved wording"
     assert never_a_violation(put, without) is None
