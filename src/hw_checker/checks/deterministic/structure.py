@@ -17,6 +17,7 @@ from hw_checker.checks.deterministic.messages import (
 )
 from hw_checker.checks.registry import check
 from hw_checker.domain import CheckInput, Finding
+from hw_checker.domain.assignment import glob_pattern
 
 IGNORED_DIRS = frozenset({"bin", "obj", ".git"})
 PROJECT_FILE_PATTERN = "**/*.csproj"
@@ -133,33 +134,6 @@ def _stays_inside(path: Path, root: Path) -> bool:
     if path.is_symlink() or path.is_junction():
         return False
     return path.resolve().is_relative_to(root)
-
-
-def glob_pattern(glob: str) -> re.Pattern[str]:
-    """Compile a repo glob, matched case-insensitively.
-
-    `**/` matches any number of folders (including none), `**` anything, `*` anything within
-    one path segment, and `?` one character within a segment.
-    """
-    parts: list[str] = []
-    index = 0
-    while index < len(glob):
-        if glob.startswith("**/", index):
-            parts.append("(?:.*/)?")
-            index += 3
-        elif glob.startswith("**", index):
-            parts.append(".*")
-            index += 2
-        elif glob[index] == "*":
-            parts.append("[^/]*")
-            index += 1
-        elif glob[index] == "?":
-            parts.append("[^/]")
-            index += 1
-        else:
-            parts.append(re.escape(glob[index]))
-            index += 1
-    return re.compile("".join(parts), re.IGNORECASE)
 
 
 @check(

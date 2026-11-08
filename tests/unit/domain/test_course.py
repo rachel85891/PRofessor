@@ -53,6 +53,8 @@ def test_a_rule_stops_after_its_until_assignment() -> None:
         ({"applies_to": []}, "applies_to"),
         ({"kind": "always"}, "kind"),
         ({"detectors": ["missing_break"]}, "only a fix_allowed rule names detectors"),
+        ({"kind": "style", "note_section": "names"}, "note_section is only for a note_only rule"),
+        ({"kind": "note_only", "note_section": "fixed"}, "note_section"),
         ({"kind": "fix_allowed", "detectors": ["rename_everything"]}, "detectors"),
         ({"status": "maybe"}, "status"),
         ({"origin": {"source": "rumor"}}, "origin"),
@@ -85,12 +87,21 @@ def test_a_forbidden_literal_is_matched_as_written() -> None:
 
 
 def test_the_fix_marker_allows_spaces_and_any_case() -> None:
-    style = CommentStyle(line="//", fix_marker="//fix:")
+    style = CommentStyle(language="C#", line="//", fix_marker="//fix:")
 
     assert style.marker_pattern.match("// FIX: added")
     assert not style.marker_pattern.match("//fixed it")
     with pytest.raises(ValidationError, match="fix_marker must start with"):
-        CommentStyle(line="#", fix_marker="//fix:")
+        CommentStyle(language="C#", line="#", fix_marker="//fix:")
+
+
+@pytest.mark.parametrize(("start", "end"), [("<!--", "-->"), ("/*", "*/")])
+def test_block_fix_marker_requires_its_closing_delimiter(start: str, end: str) -> None:
+    style = CommentStyle(language="test", line=start, fix_marker=f"{start}fix:", end=end)
+    assert style.marker_pattern.match(f"{start} FIX: added{end}")
+    assert not style.marker_pattern.match(f"{start}fix: added")
+    assert not style.marker_pattern.match(f"{start}fix: added{end} code")
+    assert not style.marker_pattern.match(f"{start}fix: added{end} code {end}")
 
 
 @pytest.mark.parametrize(
@@ -113,7 +124,9 @@ def test_the_pr_sections_are_each_known_section_once(change: Any, message: str) 
 
 def test_comment_styles_are_keyed_by_file_suffix() -> None:
     with pytest.raises(ValidationError, match="file suffixes"):
-        builders.course_profile(comment_style={"csharp": {"line": "//", "fix_marker": "//fix:"}})
+        builders.course_profile(
+            comment_style={"csharp": {"language": "C#", "line": "//", "fix_marker": "//fix:"}}
+        )
 
     profile = builders.course_profile()
     assert profile.style_for("Controllers/A.cs") is not None

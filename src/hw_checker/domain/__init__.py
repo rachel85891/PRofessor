@@ -12,6 +12,7 @@ from hw_checker.domain.assignment import (
     ProbeCapture,
     Requirement,
     RequirementKind,
+    ReviewedFiles,
     Severity,
     TaskEnd,
 )
@@ -229,6 +230,7 @@ __all__ = [
     "ReviewRule",
     "ReviewRuleSet",
     "ReviewViolation",
+    "ReviewedFiles",
     "RosterResult",
     "RosterRow",
     "RosterWarning",

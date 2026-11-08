@@ -10,16 +10,19 @@ from tests.unit.services.fixer_data import ASSIGNMENT, COURSE
 
 CONTROLLER = "Controllers/UsersController.cs"
 DATA = "users.json"
-STYLES = COURSE.profile.comment_style
+STYLES = {".cs": COURSE.profile.comment_style[".cs"]}
 STYLE = STYLES[".cs"]
+POLICY = role_policy(COURSE, ASSIGNMENT, (ASSIGNMENT,), ReviewRole.FIXER, (CONTROLLER, DATA))
 RULES = EditRules(
     max_edits=5,
     max_fix_lines=6,
     styles=STYLES,
-    forbidden=role_policy(COURSE, ASSIGNMENT, (ASSIGNMENT,), ReviewRole.FIXER).forbidden,
+    forbidden=POLICY.forbidden,
+    forbidden_changes=POLICY.forbidden_changes,
     data_files=frozenset({DATA}),
 )
-"""hw01's guardrails: the real course's comment style and forbidden texts."""
+"""hw01's guardrails for a repo with C# code: the real course's comment style, forbidden
+texts and forbidden changes."""
 
 SWITCH = (
     "        switch (kind)\n"

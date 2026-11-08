@@ -31,10 +31,19 @@ ends_when:                    # optional; when the student has started the next 
   check: project_count
   params:
     min: 2
+reviewed_files:               # optional; files besides the code the fixer reviews
+  include: ["**/wwwroot/**/*.js"]
+  exclude: ["**/*.min.js", "**/lib/**"]
 requirements:                 # the list of requirements (may be empty: [])
   - id: hw01-r1
     ...
 ```
+
+## The files the fixer reviews (`reviewed_files`)
+
+The fixer always sees the stack's code (`fixer.source_suffixes` in `config.yaml`: `.cs` and `.csproj`), then configuration and data files. `reviewed_files` adds more files after the code: `include` and `exclude` are repo globs (`**/` any folders, `*` within one folder, case ignored); a file `exclude` matches is left out, such as a library. The round uses the `reviewed_files` of every checked assignment. hw01 reviews the `.html`, `.js` and `.css` files under `wwwroot` at any depth, never `*.min.js`, `*.min.css` or a `lib/` folder. Without `reviewed_files`, only the code is shown, as before stage 18.
+
+A shown file is edited only when its suffix has a `comment_style` in `course/course.yaml`; `.csproj` is shown but never edited.
 
 ## Which commit is checked (`ends_when`)
 
@@ -375,9 +384,9 @@ VS Code validates the files as you type when the YAML extension is installed: th
 | `stack` | The technology: `ASP.NET Core Web API`. |
 | `student_wording` | How every student-facing text is written (plain English, "The assignment asks…", never the lecturer). |
 | `taught_so_far` | What `{taught_so_far}` in a rule becomes when the assignment lists `taught_techniques`; `{techniques}` is the list. Nothing when no technique is listed. |
-| `comment_style` | By file suffix: `line` (what starts a comment, `//`), `fix_marker` (`//fix:`, starting with `line`) and an optional `end` (for example `-->`). Only these files are edited, besides a data file's final newline. |
+| `comment_style` | By file suffix, in the order the prompts and the PR list them: `language` (`C#`, `JavaScript`, `HTML`, `CSS`: how the PR text names the type), `line` (what starts a comment, `//`), `fix_marker` (`//fix:`, starting with `line`) and an optional `end` (for example `-->`). A file the fixer is shown is edited only when its suffix is here, besides a data file's final newline. The plan lists the syntax and marker of every type it shows, and only those. |
 | `pr_format.opening` | How the PR body starts (`Hi! `); added when the writer's opening lacks it. `opening_intro` tells the writer what to put in it. |
-| `pr_format.sections` | The body's sections, in order: each of `fixed`, `for_you`, `names` and `files` exactly once, with its bold `heading`. The writer's three sections also need a `label` (their name in the writer's prompt) and an `intro` (what to write there). |
+| `pr_format.sections` | The body's sections, in order: each of `fixed`, `for_you`, `names` and `files` exactly once, with its bold `heading`. A heading may use `{languages}` (the languages of the section's edited files, in `comment_style` order, joined with "and": `Names ({languages} conventions)` gives `Names (C# conventions)` or `Names (C# and JavaScript conventions)`) and `{fix_markers}` (their fix markers without repeats: `` `//fix:` `` or `` `//fix:` and `<!--fix: … -->` ``). The writer's three sections also need a `label` (their name in the writer's prompt) and an `intro` (what to write there). |
 | `pr_format.item_rule` | How the writer writes every item. |
 | `pr_format.title_rule` | `strong` and `normal` titles with `{short_name}` (`HW1`). The code chooses: `strong` when the verified fix branch clears a major or critical requirement that failed before. |
 | `pr_format.commit_message` | The review commit's message, with `{short_name}`. |
@@ -415,9 +424,16 @@ examples:
 | `applies_to` | One or more of `fixer` (plans the edits), `judge` (the self-review), `writer` (the PR text) and `reviewer` (the LLM review, later). Each prompt shows only its role's rules. |
 | `kind` | `fix_allowed` (may be changed), `note_only` (only a comment), `never_do` (never added or changed), `never_mention` (not even commented on), `style` (how text is written). |
 | `text` | The rule as the prompts number it. It may use `{short_name}`, `{taught_so_far}` and `{rule:<id>}` (that rule's number in the role's list); any other braces stay as written. |
-| `detectors` | `fix_allowed` only: the safe fixes the judge never reports. Registered detectors: `missing_break`, `id_assignment`, `readonly_field`, `stray_using`, `controller_suffix`, `final_newline`. A new kind of safe fix needs a detector in code; choosing which ones apply is data. |
+| `files` | Optional (rules and examples): the file types (suffixes, `[.html, .js]`) the item is limited to. It is in a prompt only when the prompt shows a file of one of them, and its `forbidden_text`, `forbidden_change`, detectors and approved notes apply only to edits in those files. Without it, every file type. |
+| `note_section` | Optional on `note_only` rules: `names` or `for_you`, the PR section for the rule's notes. The plan lists naming-convention languages only for shown file types covered by a `names` rule. |
+| `when_found` | Optional (rules and examples): requirement ids. The item is in a prompt only when one of them has a finding (the course's `repository-files` rule). |
+| `wordings` | Optional: `files` and `text`. In a prompt whose edited file types (those with a `comment_style`) are all in a wording's `files`, the first such wording replaces `text` (the `comments` rule keeps its `//` wording for C#-only prompts). |
+| `shown_in` | `rules` (default: numbered) or `fix_kind`: shown with the `fix` edit kind in the plan, not numbered; for a rule that applies to the `fixer` only (`property-declarations`). |
+| `detectors` | `fix_allowed` only: the safe fixes the judge never reports. Registered detectors: `missing_break`, `id_assignment`, `readonly_field`, `stray_using`, `controller_suffix`, `final_newline`, `client_reference` (one `src`, `href` or `id` value, or the id a script looks up), `assignment_in_condition` (`=` to `===` in an `if` condition, nothing else). A fix of a detector's shape that the detector still refuses (a `using` commented out instead of deleted, a reference no finding names) is rejected before it is applied. A new kind of safe fix needs a detector in code; choosing which ones apply is data. |
+| `named_by` | With `detectors`: requirement ids whose findings must name what the fix changes (`client_reference`); without such a finding the fix is rejected. |
 | `approved_notes` | `words` (compared ignoring case) and `what` (for the repo report): a note containing the words is never a violation. |
 | `forbidden_text` | Text an edit must never add: `text` (literal) or `pattern` (a regular expression), `message` (why; fed back to the fixer), optional `ignore_case`, and `new_only` (reject only an edit that adds an occurrence). |
+| `forbidden_change` | Text a fix must never remove or change, checked on the lines it removes, in the same shape as `forbidden_text` (the `{ get; set; }` guard). |
 | `never_a_violation`, `clarification` | For the judge: one line in its "never a violation" list, and one paragraph on how to read the rule. |
 | `example` | Optional: one edit that follows the rule (`file`, `find`, `replace`), shown after the examples. |
 | `until` | An assignment id: the rule stops after that assignment. |
@@ -426,7 +442,7 @@ examples:
 | `origin` | `source` (`developer`, `task_text`, `intake` or `inferred`) and `quote`: where the rule comes from. |
 | `status` | `approved`, or `draft`: a round refuses to start while a rule or example of the course or of a checked assignment is a draft, and lists them. |
 
-An example (under `examples:`) has the same `id`, `applies_to`, `until`, `replaces`, `after`, `origin` and `status`, plus `situation` (the invented repo) and `plan` (the plan's JSON, shown exactly as written).
+An example (under `examples:`) has the same `id`, `applies_to`, `files`, `when_found`, `until`, `replaces`, `after`, `origin` and `status`, plus `situation` (the invented repo) and `plan` (the plan's JSON, shown exactly as written).
 
 **Inheritance.** Checking assignment N uses the course's rules, then the rules of assignments 1..N by `order`, the same way requirements regress. hw01's rules (no `File.Exists`, PUT returns `Ok()`, no GET all or `Models` folder) apply to hw02 too, unless hw02 has a rule that `replaces` one of them, or the hw01 rule has `until: hw01`.
 

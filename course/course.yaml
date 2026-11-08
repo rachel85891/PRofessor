@@ -19,11 +19,29 @@ student_wording: >-
 # What {taught_so_far} in a rule becomes when the assignment lists taught techniques.
 taught_so_far: " (taught so far: {techniques})"
 
-# Only files with these suffixes are edited (besides a data file's final newline).
+# A file the fixer is shown is edited only when its suffix is here (besides a data file's
+# final newline). The order is the order the prompts and the PR list them in. `language`
+# names the file type in the PR text ("Names (C# conventions)").
 comment_style:
   .cs:
+    language: C#
     line: "//"
     fix_marker: "//fix:"
+  # Stage 18: the client files (developer decision 2026-11-05, hw01 client task).
+  .js:
+    language: JavaScript
+    line: "//"
+    fix_marker: "//fix:"
+  .html:
+    language: HTML
+    line: "<!--"
+    fix_marker: "<!--fix:"
+    end: "-->"
+  .css:
+    language: CSS
+    line: "/*"
+    fix_marker: "/*fix:"
+    end: "*/"
 
 pr_format:
   opening: "Hi! "
@@ -40,7 +58,8 @@ pr_format:
   # In the body's order. `label` and `intro` are what the writer is told about a section.
   sections:
     - id: fixed
-      heading: "Fixed in this PR (marked `//fix:` in the code)"
+      # {fix_markers}: the markers of the fixed files' types (`//fix:` for C# and JavaScript).
+      heading: "Fixed in this PR (marked {fix_markers} in the code)"
       label: Fixed
       intro: >-
         one item per edit listed under "Fixed", nothing else. Start each item with a short
@@ -54,7 +73,8 @@ pr_format:
         one item per edit listed under "For you to do", nothing else: what the student
         should do.
     - id: names
-      heading: "Names (C# conventions)"
+      # {languages}: the languages of the files with a naming note ("C#", "C# and JavaScript").
+      heading: "Names ({languages} conventions)"
       label: Names
       intro: one item per edit listed under "Names", nothing else.
     - id: files

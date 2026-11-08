@@ -26,11 +26,18 @@ MOVED = (
     "The assignment asks",
     "PropertyNameCaseInsensitive",
     "Why isn't it implemented",
+    # Stage 18: the client file types and the C#-only text left in 3f.
+    "<!--fix:",
+    "camelCase",
+    "onclick",
+    "C# conventions",
+    "{ get; set; }",
 )
-"""Policy moved to course/ and assignments/hw01/ in stage 3f."""
+"""Policy moved to course/ and assignments/hw01/ in stages 3f and 18."""
 DESCRIBING = {
     ("domain/course.py", "Hi! "),
     ("domain/course.py", "second-year"),
+    ("domain/course.py", "<!--fix:"),
 }
 """Docstrings that only describe the data format with an example of its value."""
 
@@ -39,7 +46,7 @@ def test_the_course_loads_and_every_item_is_approved_with_its_origin() -> None:
     sets = [SOURCE.load_course().rules] + [a.review_rules for a in SOURCE.load_all()]
     items = [item for rules in sets for item in (*rules.rules, *rules.examples)]
 
-    assert len(items) == 14
+    assert len(items) == 24
     assert all(item.status is ItemStatus.APPROVED and item.origin.quote for item in items)
 
 

@@ -58,6 +58,13 @@ class EndsWhenEntry(_FileModel):
     params: dict[str, Any] = {}
 
 
+class ReviewedFilesEntry(_FileModel):
+    """The files besides the code the fixer reviews: repo globs to include and exclude."""
+
+    include: list[str]
+    exclude: list[str] = []
+
+
 class AssignmentFile(_FileModel):
     """The whole requirements.yaml file of one assignment.
 
@@ -70,5 +77,6 @@ class AssignmentFile(_FileModel):
     title: str
     taught_techniques: list[str] = []
     lenient_notes: list[str] = []
+    reviewed_files: ReviewedFilesEntry | None = None
     ends_when: EndsWhenEntry | None = None
     requirements: list[Any] = []

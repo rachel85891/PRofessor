@@ -257,6 +257,48 @@ class TaskEnd(DomainModel):
         )
 
 
+def glob_pattern(glob: str) -> re.Pattern[str]:
+    """Compile a repo glob, matched case-insensitively.
+
+    `**/` matches any number of folders (including none), `**` anything, `*` anything within
+    one path segment, and `?` one character within a segment.
+    """
+    parts: list[str] = []
+    index = 0
+    while index < len(glob):
+        if glob.startswith("**/", index):
+            parts.append("(?:.*/)?")
+            index += 3
+        elif glob.startswith("**", index):
+            parts.append(".*")
+            index += 2
+        elif glob[index] == "*":
+            parts.append("[^/]*")
+            index += 1
+        elif glob[index] == "?":
+            parts.append("[^/]")
+            index += 1
+        else:
+            parts.append(re.escape(glob[index]))
+            index += 1
+    return re.compile("".join(parts), re.IGNORECASE)
+
+
+class ReviewedFiles(DomainModel):
+    """The files besides the stack's code that the fixer reviews (ADR 0023): repo globs
+    (`**/wwwroot/**/*.js`), matched case-insensitively. A file `exclude` matches is left
+    out, such as a library (`**/*.min.js`, `**/lib/**`)."""
+
+    include: tuple[NonBlankStr, ...] = Field(min_length=1)
+    exclude: tuple[NonBlankStr, ...] = ()
+
+    def matches(self, path: str) -> bool:
+        """Whether the repo-relative `path` is reviewed."""
+        return any(glob_pattern(glob).fullmatch(path) for glob in self.include) and not any(
+            glob_pattern(glob).fullmatch(path) for glob in self.exclude
+        )
+
+
 _NUMBERED_ID = re.compile(r"^([A-Za-z]+)0*(\d+)$")
 
 
@@ -271,6 +313,9 @@ class Assignment(DomainModel):
     lenient_notes: tuple[NonBlankStr, ...] = ()
     review_rules: ReviewRuleSet = ReviewRuleSet()
     """The assignment's own review rules (its `review_rules.yaml`, ADR 0023)."""
+    reviewed_files: ReviewedFiles | None = None
+    """The files besides the stack's code the fixer shows and may edit (such as the client
+    files); without it, only the code."""
     ends_when: TaskEnd | None = None
     """When the student has started the next task; the round checks the commit before it."""
     source_hash: str | None = Field(default=None, pattern=SHA256_HEX_PATTERN)

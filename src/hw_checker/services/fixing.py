@@ -11,13 +11,14 @@ import fnmatch
 import hashlib
 import json
 import logging
-from collections.abc import Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 
 from hw_checker.domain import (
     Assignment,
     AssignmentResult,
+    CommentStyle,
     Course,
     EditApplication,
     EditKind,
@@ -42,7 +43,7 @@ from hw_checker.domain import (
     StepStatus,
     VerifyResult,
 )
-from hw_checker.domain.course import SHORT_NAME
+from hw_checker.domain.course import FIX_MARKERS, LANGUAGES, SHORT_NAME
 from hw_checker.domain.errors import FixError, LLMOutputError
 from hw_checker.ports import (
     Clock,
@@ -235,10 +236,11 @@ class FixService:
         Raises:
             FixError: even without any file the prompt is too long.
         """
-        paths = self._files.list_files(workspace.working_copy, frozenset(self._config.skip_dirs))
-        shown = self._prompt_files(workspace.working_copy, paths)
-        policy = role_policy(self._course, assignment, assignments, ReviewRole.FIXER)
-        values: dict[str, object] = policy.slots() | {
+        root = workspace.working_copy
+        paths = self._files.list_files(root, frozenset(self._config.skip_dirs))
+        selected = self._shown_paths(paths, assignments)
+        shown = [{"path": path, "text": self._file_text(root, path)} for path in selected]
+        values: dict[str, object] = {
             "course": self._course.profile,
             "assignment": assignment,
             "requirements": [r for a in assignments for r in a.requirements],
@@ -256,8 +258,39 @@ class FixService:
         }
         omitted: list[str] = []
         while True:
+            shown_paths = [file["path"] for file in shown]
+            policy = role_policy(
+                self._course,
+                assignment,
+                assignments,
+                ReviewRole.FIXER,
+                shown_paths,
+                _failed(results),
+            )
+            styles = self._styles(shown_paths)
+            naming_languages = (
+                style.language
+                for suffix, style in styles.items()
+                if any(
+                    path.endswith(suffix)
+                    and any(
+                        section.item is NoteSection.NAMES and section.covers(path)
+                        for section in policy.note_sections
+                    )
+                    for path in shown_paths
+                )
+            )
             prompt = self._templates.render(
-                PLAN_TEMPLATE, values | {"files": shown, "omitted": omitted}
+                PLAN_TEMPLATE,
+                values
+                | policy.slots()
+                | {
+                    "files": shown,
+                    "omitted": omitted,
+                    "edited_suffixes": list(styles),
+                    "styles": _style_groups(styles),
+                    "languages": joined(dict.fromkeys(naming_languages)),
+                },
             )
             if len(prompt) <= self._config.max_prompt_chars:
                 return prompt
@@ -274,10 +307,11 @@ class FixService:
         edits: Sequence[PlannedEdit],
         assignment: Assignment,
         assignments: tuple[Assignment, ...],
+        results: Sequence[AssignmentResult] = (),
     ) -> EditApplication:
         """Apply `edits` to the fix working copy from the checked commit, keeping only the
-        ones that pass every guardrail (with the forbidden texts of the fixer's rules in
-        effect for `assignment`).
+        ones that pass every guardrail (with the forbidden texts and safe fixes of the
+        fixer's rules in effect for `assignment`; the safe fixes read the round's `results`).
 
         Raises:
             GitOperationError: the working copy cannot be reset.
@@ -287,14 +321,25 @@ class FixService:
         self._git.discard_changes(copy)
         paths = self._files.list_files(copy, frozenset(self._config.skip_dirs))
         files = {path: self._files.read_bytes(copy, path) for path in paths}
+        selected = self._shown_paths(paths, assignments)
+        policy = role_policy(
+            self._course, assignment, assignments, ReviewRole.FIXER, selected, _failed(results)
+        )
+        styles = self._styles(selected)
         rules = EditRules(
             max_edits=self._config.max_edits,
             max_fix_lines=self._config.max_fix_lines,
-            styles=self._course.profile.comment_style,
-            forbidden=role_policy(
-                self._course, assignment, assignments, ReviewRole.FIXER
-            ).forbidden,
+            styles=styles,
+            editable=frozenset(selected),
+            forbidden=policy.forbidden,
+            forbidden_changes=policy.forbidden_changes,
             data_files=frozenset(self._data_files(paths)),
+            allowances=Allowances(
+                detectors=policy.detectors,
+                approved_notes=policy.approved_notes,
+                styles=styles,
+                findings=_finding_messages(results),
+            ),
         )
         result = apply_edits(files, edits, rules)
         for path, data in result.files.items():
@@ -312,6 +357,7 @@ class FixService:
         assignment: Assignment,
         assignments: tuple[Assignment, ...],
         application: EditApplication,
+        results: Sequence[AssignmentResult] = (),
     ) -> tuple[SelfReview, LlmUsage] | None:
         """Ask the `judge` role which applied edits break the rules. It changes no file, so
         its reply can be cached; `remove_violations` acts on it.
@@ -326,7 +372,14 @@ class FixService:
         if not self._config.self_review or not application.applied:
             return None
         diff = self._git.diff(workspace.working_copy, workspace.base_sha)
-        policy = role_policy(self._course, assignment, assignments, ReviewRole.JUDGE)
+        policy = role_policy(
+            self._course,
+            assignment,
+            assignments,
+            ReviewRole.JUDGE,
+            self._shown(workspace, assignments),
+            _failed(results),
+        )
         prompt = self._templates.render(
             REVIEW_TEMPLATE,
             policy.slots()
@@ -347,6 +400,7 @@ class FixService:
         assignments: tuple[Assignment, ...],
         application: EditApplication,
         review: SelfReview,
+        results: Sequence[AssignmentResult] = (),
     ) -> EditApplication:
         """Remove the edits the self-review found breaking a rule (kept as rejected, with the
         reason), applying the others again from the checked commit. A violation that does
@@ -359,12 +413,20 @@ class FixService:
             FixError: a file cannot be read or written.
         """
         applied = application.applied
-        policy = role_policy(self._course, assignment, assignments, ReviewRole.JUDGE)
+        policy = role_policy(
+            self._course,
+            assignment,
+            assignments,
+            ReviewRole.JUDGE,
+            self._shown(workspace, assignments),
+            _failed(results),
+        )
         rules = numbered_rules(self._templates.render(RULES_TEMPLATE, policy.slots()))
         allowances = Allowances(
             detectors=policy.detectors,
             approved_notes=policy.approved_notes,
             styles=self._course.profile.comment_style,
+            findings=_finding_messages(results),
         )
         outcome = judge(review, applied, rules, allowances)
         broken = outcome.broken
@@ -377,7 +439,7 @@ class FixService:
         if not broken:
             return application.model_copy(update={"ignored_review": outcome.ignored})
         kept = [edit for index, edit in enumerate(applied) if index not in broken]
-        reapplied = self.apply(workspace, kept, assignment, assignments)
+        reapplied = self.apply(workspace, kept, assignment, assignments, results)
         removed = tuple(
             RejectedEdit(edit=applied[index], reason=reason) for index, reason in broken.items()
         )
@@ -468,6 +530,7 @@ class FixService:
         assignments: tuple[Assignment, ...],
         application: EditApplication,
         verification: VerifyResult,
+        results: Sequence[AssignmentResult] = (),
     ) -> EditApplication:
         """Replace each blamed `fix` with its fallback note (or drop it without one) and apply
         the edits again from the checked commit.
@@ -491,7 +554,7 @@ class FixService:
                 "kept as its fallback note" if note else "dropped (no fallback note)"
             )
             dropped.append(RejectedEdit(edit=edit, reason=reason))
-        reapplied = self.apply(workspace, edits, assignment, assignments)
+        reapplied = self.apply(workspace, edits, assignment, assignments, results)
         return reapplied.model_copy(
             update={
                 "rejected": application.rejected + reapplied.rejected + tuple(dropped),
@@ -505,6 +568,7 @@ class FixService:
         assignment: Assignment,
         assignments: tuple[Assignment, ...],
         attempt: FixAttempt,
+        results: Sequence[AssignmentResult] = (),
     ) -> EditApplication:
         """Apply an earlier attempt's kept edits again from the checked commit, so the working
         copy holds what that attempt's recheck passed.
@@ -513,7 +577,9 @@ class FixService:
             GitOperationError: the working copy cannot be reset.
             FixError: a file cannot be read or written, or the edits no longer apply the same.
         """
-        reapplied = self.apply(workspace, attempt.application.applied, assignment, assignments)
+        reapplied = self.apply(
+            workspace, attempt.application.applied, assignment, assignments, results
+        )
         if reapplied.applied != attempt.application.applied:
             raise FixError(f"Attempt {attempt.number}'s edits no longer apply the same way.")
         return attempt.application
@@ -562,7 +628,23 @@ class FixService:
             if section.id is not PrSectionId.FILES
         }
         groups = _sections(application.applied)
-        policy = role_policy(self._course, assignment, assignments, ReviewRole.WRITER)
+        edited = [edit.file for edit in application.applied]
+        policy = role_policy(
+            self._course, assignment, assignments, ReviewRole.WRITER, edited, _failed(results)
+        )
+        styles = self._edited_styles(edited)
+        with_language = len({style.language for style in styles}) > 1 or any(
+            self._course.profile.style_for(path) is not None
+            and (
+                PurePosixPath(path).suffix not in self._config.source_suffixes
+                or any(
+                    assignment.reviewed_files is not None
+                    and assignment.reviewed_files.matches(path)
+                    for assignment in assignments
+                )
+            )
+            for path in edited
+        )
         prompt = self._templates.render(
             WRITER_TEMPLATE,
             {
@@ -571,7 +653,10 @@ class FixService:
                 "rules": list(policy.rules),
                 "passed": _passed_titles(assignments, results),
                 "sections": [
-                    (label, [_described(edit, self._course) for edit in groups[key]])
+                    (
+                        label,
+                        [_described(edit, self._course, with_language) for edit in groups[key]],
+                    )
                     for key, label in labels.items()
                 ],
                 "writer_sections": [
@@ -602,7 +687,12 @@ class FixService:
             {
                 "opening": opening,
                 "sections": [
-                    {"heading": section.heading, "items": items[section.id.value]}
+                    {
+                        "heading": self._heading(
+                            section.heading, groups.get(section.id.value, []), edited
+                        ),
+                        "items": items[section.id.value],
+                    }
                     for section in pr_format.sections
                 ],
             },
@@ -688,12 +778,55 @@ class FixService:
             lines += [f"Recheck failed: {problem}" for problem in verification.problems]
         return lines
 
-    def _prompt_files(self, root: Path, paths: Sequence[str]) -> list[dict[str, str]]:
+    def _shown_paths(self, paths: Sequence[str], assignments: Sequence[Assignment]) -> list[str]:
+        """The files the fixer is shown, in the prompt's order: the stack's code (`source_suffixes`,
+        files with a comment style first), the files the assignments review (`reviewed_files`),
+        then configuration and data. Only these files are edited."""
         code = [p for p in paths if PurePosixPath(p).suffix in self._config.source_suffixes]
         code.sort(key=lambda path: (self._course.profile.style_for(path) is None, path))
+        globs = [a.reviewed_files for a in assignments if a.reviewed_files is not None]
+        reviewed = sorted(p for p in paths if any(files.matches(p) for files in globs))
         configs = [p for p in paths if self._matches(p, self._config.config_globs)]
-        shown = code + configs + sorted(self._data_files(paths))
-        return [{"path": path, "text": self._file_text(root, path)} for path in shown]
+        return list(dict.fromkeys(code + reviewed + configs + sorted(self._data_files(paths))))
+
+    def _heading(self, heading: str, edits: Sequence[PlannedEdit], edited: Sequence[str]) -> str:
+        """A section's heading with `{languages}` and `{fix_markers}` filled from the comment
+        styles of its edited files, in the course's order and without repeats; from all the
+        edited files' when the section's have none (a data file's newline), and from the
+        course's first style when no edited file has one."""
+        styles = (
+            self._edited_styles([edit.file for edit in edits])
+            or self._edited_styles(edited)
+            or list(self._course.profile.comment_style.values())[:1]
+        )
+        languages = joined(dict.fromkeys(style.language for style in styles))
+        markers = joined(dict.fromkeys(f"`{style.marker_shown}`" for style in styles))
+        return heading.replace(LANGUAGES, languages).replace(FIX_MARKERS, markers)
+
+    def _edited_styles(self, files: Sequence[str]) -> list[CommentStyle]:
+        """The comment styles of `files`, in the course's order."""
+        return [
+            style
+            for suffix, style in self._course.profile.comment_style.items()
+            if any(path.endswith(suffix) for path in files)
+        ]
+
+    def _shown(self, workspace: FixWorkspace, assignments: Sequence[Assignment]) -> list[str]:
+        """The files the fixer is shown in the fix working copy."""
+        root = workspace.working_copy
+        paths = self._files.list_files(root, frozenset(self._config.skip_dirs))
+        return self._shown_paths(paths, assignments)
+
+    def _styles(self, shown: Sequence[str]) -> dict[str, CommentStyle]:
+        """The comment styles of the `shown` files' types, in the course's order: the files
+        that may be edited. All of the course's styles when no shown file has one."""
+        styles = self._course.profile.comment_style
+        used = {
+            suffix: style
+            for suffix, style in styles.items()
+            if any(path.endswith(suffix) for path in shown)
+        }
+        return used or dict(styles)
 
     def _file_text(self, root: Path, path: str) -> str:
         text = self._files.read_bytes(root, path).decode("utf-8", errors="replace")
@@ -770,6 +903,34 @@ def attempt_choice(tried: Sequence[FixAttempt], fell_back: bool) -> str:
     return f"{choice} (the most of the attempts that passed; {others})." if others else f"{choice}."
 
 
+def joined(items: Iterable[str]) -> str:
+    """`a`, `a and b`, or `a, b and c`."""
+    words = list(items)
+    return " and ".join(filter(None, [", ".join(words[:-1]), *words[-1:]]))
+
+
+def _style_groups(styles: Mapping[str, CommentStyle]) -> list[dict[str, str]]:
+    """The edited file types grouped by their comment style, in the course's order, for the
+    plan's frame: each group's style and its suffixes (`` `.cs` and `.js` ``)."""
+    groups: dict[CommentStyle, list[str]] = {}
+    for suffix, style in styles.items():
+        same = next((key for key in groups if _same_comments(key, style)), style)
+        groups.setdefault(same, []).append(suffix)
+    return [
+        {
+            "line": style.line,
+            "fix_marker": style.fix_marker,
+            "end": style.end,
+            "suffixes": joined(f"`{suffix}`" for suffix in suffixes),
+        }
+        for style, suffixes in groups.items()
+    ]
+
+
+def _same_comments(one: CommentStyle, other: CommentStyle) -> bool:
+    return (one.line, one.fix_marker, one.end) == (other.line, other.fix_marker, other.end)
+
+
 def _ticked(requirement_ids: Sequence[str]) -> str:
     return " and ".join(f"`{requirement_id}`" for requirement_id in requirement_ids)
 
@@ -825,6 +986,23 @@ def _findings(results: Sequence[AssignmentResult]) -> list[dict[str, str]]:
     return found
 
 
+def _failed(results: Sequence[AssignmentResult]) -> set[str]:
+    """The requirements with a finding."""
+    return {finding.requirement_id for result in results for finding in result.findings}
+
+
+def _finding_messages(results: Sequence[AssignmentResult]) -> dict[str, tuple[str, ...]]:
+    """The findings' messages by requirement id: what the checks named."""
+    messages: dict[str, tuple[str, ...]] = {}
+    for result in results:
+        for finding in result.findings:
+            messages[finding.requirement_id] = (
+                *messages.get(finding.requirement_id, ()),
+                finding.message_en,
+            )
+    return messages
+
+
 def _responses(results: Sequence[AssignmentResult]) -> list[dict[str, str]]:
     """The app's answers to failed requests, with the data delimiter neutralized."""
     return [
@@ -855,10 +1033,13 @@ def _sections(applied: Sequence[PlannedEdit]) -> dict[str, list[PlannedEdit]]:
     return groups
 
 
-def _described(edit: PlannedEdit, course: Course) -> dict[str, object]:
-    """An edit as the writer sees it: the file's name, never the edit kind or the full path."""
+def _described(edit: PlannedEdit, course: Course, with_language: bool) -> dict[str, object]:
+    """An edit as the writer sees it: the file's name (and its language, `with_language`),
+    never the edit kind or the full path."""
+    style = course.profile.style_for(edit.file)
     return {
         "file_name": PurePosixPath(edit.file).name,
+        "language": style.language if with_language and style is not None else "",
         "reason": edit.reason,
         "comments": _added_comments(edit, course),
     }
