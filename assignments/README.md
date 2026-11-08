@@ -425,6 +425,7 @@ examples:
 | `kind` | `fix_allowed` (may be changed), `note_only` (only a comment), `never_do` (never added or changed), `never_mention` (not even commented on), `style` (how text is written). |
 | `text` | The rule as the prompts number it. It may use `{short_name}`, `{taught_so_far}` and `{rule:<id>}` (that rule's number in the role's list); any other braces stay as written. |
 | `files` | Optional (rules and examples): the file types (suffixes, `[.html, .js]`) the item is limited to. It is in a prompt only when the prompt shows a file of one of them, and its `forbidden_text`, `forbidden_change`, detectors and approved notes apply only to edits in those files. Without it, every file type. |
+| `note_section` | Optional on `note_only` rules: `names` or `for_you`, the PR section for the rule's notes. The plan lists naming-convention languages only for shown file types covered by a `names` rule. |
 | `when_found` | Optional (rules and examples): requirement ids. The item is in a prompt only when one of them has a finding (the course's `repository-files` rule). |
 | `wordings` | Optional: `files` and `text`. In a prompt whose edited file types (those with a `comment_style`) are all in a wording's `files`, the first such wording replaces `text` (the `comments` rule keeps its `//` wording for C#-only prompts). |
 | `shown_in` | `rules` (default: numbered) or `fix_kind`: shown with the `fix` edit kind in the plan, not numbered; for a rule that applies to the `fixer` only (`property-declarations`). |

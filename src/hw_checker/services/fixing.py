@@ -240,11 +240,7 @@ class FixService:
         paths = self._files.list_files(root, frozenset(self._config.skip_dirs))
         selected = self._shown_paths(paths, assignments)
         shown = [{"path": path, "text": self._file_text(root, path)} for path in selected]
-        policy = role_policy(
-            self._course, assignment, assignments, ReviewRole.FIXER, selected, _failed(results)
-        )
-        styles = self._styles(selected)
-        values: dict[str, object] = policy.slots() | {
+        values: dict[str, object] = {
             "course": self._course.profile,
             "assignment": assignment,
             "requirements": [r for a in assignments for r in a.requirements],
@@ -259,14 +255,42 @@ class FixService:
             "max_edits": self._config.max_edits,
             "max_fix_lines": self._config.max_fix_lines,
             "data_files": sorted(self._data_files(paths)),
-            "edited_suffixes": list(styles),
-            "styles": _style_groups(styles),
-            "languages": joined(dict.fromkeys(style.language for style in styles.values())),
         }
         omitted: list[str] = []
         while True:
+            shown_paths = [file["path"] for file in shown]
+            policy = role_policy(
+                self._course,
+                assignment,
+                assignments,
+                ReviewRole.FIXER,
+                shown_paths,
+                _failed(results),
+            )
+            styles = self._styles(shown_paths)
+            naming_languages = (
+                style.language
+                for suffix, style in styles.items()
+                if any(
+                    path.endswith(suffix)
+                    and any(
+                        section.item is NoteSection.NAMES and section.covers(path)
+                        for section in policy.note_sections
+                    )
+                    for path in shown_paths
+                )
+            )
             prompt = self._templates.render(
-                PLAN_TEMPLATE, values | {"files": shown, "omitted": omitted}
+                PLAN_TEMPLATE,
+                values
+                | policy.slots()
+                | {
+                    "files": shown,
+                    "omitted": omitted,
+                    "edited_suffixes": list(styles),
+                    "styles": _style_groups(styles),
+                    "languages": joined(dict.fromkeys(naming_languages)),
+                },
             )
             if len(prompt) <= self._config.max_prompt_chars:
                 return prompt

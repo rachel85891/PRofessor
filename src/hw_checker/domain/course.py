@@ -14,6 +14,7 @@ from typing import Annotated, Self
 from pydantic import Field, StringConstraints, field_validator, model_validator
 
 from hw_checker.domain.base import DomainModel, Identifier, NonBlankStr
+from hw_checker.domain.fixes import NoteSection
 
 
 class ReviewRole(StrEnum):
@@ -215,6 +216,8 @@ class ReviewRule(PolicyItem):
 
     kind: RuleKind
     text: NonBlankStr
+    note_section: NoteSection | None = None
+    """For a note-only rule, the PR section its notes belong in."""
     wordings: tuple[RuleWording, ...] = ()
     """The rule's text in a prompt whose edited file types (those with a comment style) are
     all in one wording's `files`: the first such wording replaces `text`."""
@@ -240,6 +243,8 @@ class ReviewRule(PolicyItem):
             raise ValueError("only a fix_allowed rule names detectors")
         if self.named_by and not self.detectors:
             raise ValueError("named_by goes with the detectors it limits")
+        if self.note_section is not None and self.kind is not RuleKind.NOTE_ONLY:
+            raise ValueError("note_section is only for a note_only rule")
         return self
 
     @model_validator(mode="after")

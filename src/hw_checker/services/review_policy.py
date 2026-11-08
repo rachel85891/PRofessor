@@ -17,6 +17,7 @@ from hw_checker.domain import (
     Course,
     FixExample,
     ForbiddenText,
+    NoteSection,
     ReviewRole,
     SafeFix,
 )
@@ -84,6 +85,8 @@ class RolePolicy:
     """Text a fix must never remove or change."""
     fix_conditions: tuple[str, ...] = ()
     """For the fixer: the rules shown with the `fix` edit kind, not numbered."""
+    note_sections: tuple[Scoped[NoteSection], ...] = ()
+    """The PR sections of note-only rules and the file types they apply to."""
 
     def slots(self) -> dict[str, object]:
         """The values a prompt's frame shows."""
@@ -168,6 +171,11 @@ def role_policy(
             Scoped(text, rule.files) for rule in guarded for text in rule.forbidden_change
         ),
         fix_conditions=tuple(fill(rule.text_for(edited)) for rule in conditions),
+        note_sections=tuple(
+            Scoped(rule.note_section, rule.files)
+            for rule in guarded
+            if rule.note_section is not None
+        ),
     )
 
 

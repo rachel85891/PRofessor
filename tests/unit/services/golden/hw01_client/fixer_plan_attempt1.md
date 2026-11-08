@@ -34,7 +34,7 @@ Return a `FixPlan`: `edits` (at most 12) and `files_notes`. Each edit:
 - `finding_ids`: the requirement ids the edit addresses (from the requirements below); empty for a naming note or a question.
 - `reason`: one sentence.
 - `fallback_note`: for a `fix`, the comment to keep if the fix is dropped; otherwise null.
-- `note_section`: for a `note`, the PR section it belongs in: `names` for a naming note (C#, JavaScript and HTML conventions), `for_you` for a question or an instruction for the student. Each note belongs in exactly one section. Null for `fix` and `final_newline`.
+- `note_section`: for a `note`, the PR section it belongs in: `names` for a naming note (C# and JavaScript conventions), `for_you` for a question or an instruction for the student. Each note belongs in exactly one section. Null for `fix` and `final_newline`.
 
 Only add things the student can learn from. An empty plan is a valid answer.
 

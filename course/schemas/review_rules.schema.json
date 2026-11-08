@@ -159,6 +159,15 @@
       "title": "ItemStatus",
       "type": "string"
     },
+    "NoteSection": {
+      "description": "The PR section a note belongs in (docs/fix-pr-workflow.md §4); each note is in one.\nThe sections' headings are the course's data (`course.yaml`, ADR 0023).",
+      "enum": [
+        "names",
+        "for_you"
+      ],
+      "title": "NoteSection",
+      "type": "string"
+    },
     "Origin": {
       "additionalProperties": false,
       "description": "The source of an item, and the words it is based on.",
@@ -281,6 +290,17 @@
         "text": {
           "title": "Text",
           "type": "string"
+        },
+        "note_section": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/NoteSection"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "wordings": {
           "default": [],

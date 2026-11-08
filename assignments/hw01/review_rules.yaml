@@ -126,7 +126,8 @@ rules:
   - id: client-naming
     applies_to: [fixer, judge]
     kind: note_only
-    files: [.html, .js]
+    files: [.js]
+    note_section: names
     text: >-
       JavaScript names that are not camelCase get a naming note (`note_section`: `names`),
       never a change.

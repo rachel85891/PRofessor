@@ -53,6 +53,8 @@ def test_a_rule_stops_after_its_until_assignment() -> None:
         ({"applies_to": []}, "applies_to"),
         ({"kind": "always"}, "kind"),
         ({"detectors": ["missing_break"]}, "only a fix_allowed rule names detectors"),
+        ({"kind": "style", "note_section": "names"}, "note_section is only for a note_only rule"),
+        ({"kind": "note_only", "note_section": "fixed"}, "note_section"),
         ({"kind": "fix_allowed", "detectors": ["rename_everything"]}, "detectors"),
         ({"status": "maybe"}, "status"),
         ({"origin": {"source": "rumor"}}, "origin"),

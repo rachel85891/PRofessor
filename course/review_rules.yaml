@@ -86,6 +86,8 @@ rules:
     # Moved from code in stage 3f.
     applies_to: [fixer, judge]
     kind: note_only
+    files: [.cs]
+    note_section: names
     text: >-
       Naming (C# conventions) is in scope, as notes only: PascalCase types, properties and
       methods; camelCase locals; files named after their type; uncommon file names; unclear

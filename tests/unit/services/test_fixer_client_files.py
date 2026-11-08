@@ -396,7 +396,7 @@ def test_the_plan_lists_the_comment_style_of_every_file_type_shown(tmp_path: Pat
         "comment's start)"
     ) in prompt
     assert "Never change a property declaration (`{ get; set; }`)." in prompt
-    assert "a naming note (C#, JavaScript, HTML and CSS conventions)" in prompt
+    assert "a naming note (C# and JavaScript conventions)" in prompt
 
 
 def test_a_prompt_without_cs_files_has_no_cs_condition(tmp_path: Path) -> None:
@@ -410,6 +410,54 @@ def test_a_prompt_without_cs_files_has_no_cs_condition(tmp_path: Path) -> None:
 
     assert "{ get; set; }" not in prompt
     assert "Only `.js`, `.html`, `.css` files are edited" in prompt
+    assert "Naming (C# conventions) is in scope" not in prompt
+    assert "a naming note (JavaScript conventions)" in prompt
+
+
+@pytest.mark.parametrize(
+    ("paths", "naming"),
+    [
+        (("Controllers/UsersController.cs",), "C#"),
+        ((JS,), "JavaScript"),
+        (("Controllers/UsersController.cs", JS, HTML, CSS), "C# and JavaScript"),
+        ((HTML, CSS), ""),
+    ],
+)
+def test_plan_naming_conventions_follow_applicable_rules(
+    tmp_path: Path, paths: tuple[str, ...], naming: str
+) -> None:
+    files = {path: CLIENT_FILES[path] for path in paths}
+    setup = FixerSetup(tmp_path, files=files)
+    workspace = setup.service.prepare(RUN_ID, "hw01", REPO, setup.fetched)
+    prompt = setup.service.plan_prompt(
+        workspace, CLIENT_ASSIGNMENT, (CLIENT_ASSIGNMENT,), RESULTS, 1
+    )
+    expected = f"a naming note ({naming} conventions)" if naming else "a naming note,"
+    assert expected in prompt
+    assert ("Naming (C# conventions) is in scope" in prompt) == any(
+        path.endswith(".cs") for path in paths
+    )
+    assert ("JavaScript names that are not camelCase" in prompt) == (JS in paths)
+
+
+def test_omitted_client_files_do_not_contribute_policy_or_languages(tmp_path: Path) -> None:
+    files = {
+        "Controllers/UsersController.cs": FILES["Controllers/UsersController.cs"],
+        JS: UPDATE_JS,
+    }
+    full = FixerSetup(tmp_path / "full", files=files)
+    workspace = full.service.prepare(RUN_ID, "hw01", REPO, full.fetched)
+    full_prompt = full.service.plan_prompt(
+        workspace, CLIENT_ASSIGNMENT, (CLIENT_ASSIGNMENT,), RESULTS, 1
+    )
+    limited = FixerSetup(tmp_path / "limited", files=files, max_prompt_chars=len(full_prompt) - 1)
+    workspace = limited.service.prepare(RUN_ID, "hw01", REPO, limited.fetched)
+    prompt = limited.service.plan_prompt(
+        workspace, CLIENT_ASSIGNMENT, (CLIENT_ASSIGNMENT,), RESULTS, 1
+    )
+    assert _shown(prompt) == ["Controllers/UsersController.cs"]
+    assert "a naming note (C# conventions)" in prompt
+    assert "JavaScript names that are not camelCase" not in prompt
 
 
 # ---------------------------------------------------------------- §3: the PR text
