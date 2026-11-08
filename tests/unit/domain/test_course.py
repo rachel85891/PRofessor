@@ -93,6 +93,15 @@ def test_the_fix_marker_allows_spaces_and_any_case() -> None:
         CommentStyle(language="C#", line="#", fix_marker="//fix:")
 
 
+@pytest.mark.parametrize(("start", "end"), [("<!--", "-->"), ("/*", "*/")])
+def test_block_fix_marker_requires_its_closing_delimiter(start: str, end: str) -> None:
+    style = CommentStyle(language="test", line=start, fix_marker=f"{start}fix:", end=end)
+    assert style.marker_pattern.match(f"{start} FIX: added{end}")
+    assert not style.marker_pattern.match(f"{start}fix: added")
+    assert not style.marker_pattern.match(f"{start}fix: added{end} code")
+    assert not style.marker_pattern.match(f"{start}fix: added{end} code {end}")
+
+
 @pytest.mark.parametrize(
     ("change", "message"),
     [

@@ -236,6 +236,47 @@ def test_a_note_uses_the_files_own_comment_syntax() -> None:
     assert reasons == ["a note may only add <!-- comment lines and must leave the code unchanged"]
 
 
+@pytest.mark.parametrize(
+    ("path", "original", "valid", "invalid"),
+    [
+        (HTML, PAGE, "<!--A question-->", "<!--A question"),
+        (CSS, SHEET, "/*A question*/", "/*A question"),
+        (HTML, PAGE, "<!--A question-->", "<!--A question--> code"),
+        (CSS, SHEET, "/*A question*/", "/*A question*/ code"),
+        (HTML, PAGE, "<!--A question-->", "<!--A question--> code -->"),
+        (CSS, SHEET, "/*A question*/", "/*A question*/ code */"),
+    ],
+)
+def test_block_notes_require_a_complete_comment(
+    path: str, original: str, valid: str, invalid: str
+) -> None:
+    rules = _client_rules()
+    style = rules.style(path)
+    assert style is not None
+    assert _reasons({path: original}, [_note(path, original, valid)], rules) == []
+    assert _reasons({path: original}, [_note(path, original, invalid)], rules) == [
+        f"a note may only add {style.line} comment lines and must leave the code unchanged"
+    ]
+
+
+@pytest.mark.parametrize(
+    ("path", "original", "changed", "marker", "bad_marker"),
+    [
+        (HTML, PAGE, '<input id="firstname">\n', "<!--fix: id-->", "<!--fix: id"),
+        (CSS, SHEET, "form { display: block; }\n", "/*fix: show*/", "/*fix: show"),
+    ],
+)
+def test_block_fix_markers_require_a_complete_comment(
+    path: str, original: str, changed: str, marker: str, bad_marker: str
+) -> None:
+    rules = _client_rules()
+    assert _reasons({path: original}, [_fix(path, original, f"{marker}\n{changed}")], rules) == []
+    assert _reasons({path: original}, [_fix(path, original, f"{bad_marker}\n{changed}")], rules)
+    assert _reasons(
+        {path: original}, [_fix(path, original, f"{marker}\n{bad_marker}\n{changed}")], rules
+    )
+
+
 def test_a_fallback_note_is_written_in_the_files_comment_syntax() -> None:
     fix = _fix(HTML, PAGE, '<!--fix: x-->\n<input id="firstname">\n')
 
@@ -243,6 +284,17 @@ def test_a_fallback_note_is_written_in_the_files_comment_syntax() -> None:
 
     assert note is not None
     assert note.replace == "<!--Is this the input's id?-->\n" + PAGE
+
+
+@pytest.mark.parametrize(
+    ("path", "original", "marker"),
+    [(HTML, PAGE, "<!--fix: id-->"), (CSS, SHEET, "/*fix: show*/")],
+)
+def test_a_complete_block_fix_marker_cannot_be_used_as_a_note(
+    path: str, original: str, marker: str
+) -> None:
+    [reason] = _reasons({path: original}, [_note(path, original, marker)], _client_rules())
+    assert "a note must not carry a" in reason
 
 
 def test_a_cs_only_guard_is_not_applied_to_a_js_edit() -> None:

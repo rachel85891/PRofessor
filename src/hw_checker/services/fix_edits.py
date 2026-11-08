@@ -213,6 +213,10 @@ def _content_problem(
             return forbidden.item.message
     if kind is EditKind.NOTE:
         return _note_problem(opcodes, added, style)
+    if style.end and any(
+        line.strip().startswith(style.line) and not _is_comment(line, style) for line in added
+    ):
+        return f"an added {style.line} comment must end with {style.end} on the same line"
     for change in rules.forbidden_changes:
         if change.covers(path) and any(change.item.regex.search(line) for line in removed):
             return change.item.message
@@ -276,4 +280,10 @@ def _marked(segment: list[str], style: CommentStyle) -> bool:
 
 
 def _is_comment(line: str, style: CommentStyle) -> bool:
-    return line.strip().startswith(style.line)
+    stripped = line.strip()
+    if not stripped.startswith(style.line):
+        return False
+    return not style.end or (
+        stripped.endswith(style.end)
+        and stripped.find(style.end, len(style.line)) == len(stripped) - len(style.end)
+    )

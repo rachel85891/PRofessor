@@ -318,7 +318,11 @@ class CommentStyle(DomainModel):
         """The fix marker at the start of a stripped line, allowing spaces after the
         comment's start and ignoring case."""
         rest = self.fix_marker.removeprefix(self.line)
-        return re.compile(rf"^{re.escape(self.line)}\s*{re.escape(rest)}", re.IGNORECASE)
+        prefix = rf"^{re.escape(self.line)}\s*{re.escape(rest)}"
+        end = re.escape(self.end)
+        return re.compile(
+            prefix + (rf"(?:(?!{end}).)*{end}\s*$" if self.end else ""), re.IGNORECASE
+        )
 
     @property
     def marker_shown(self) -> str:
