@@ -632,8 +632,19 @@ class FixService:
         policy = role_policy(
             self._course, assignment, assignments, ReviewRole.WRITER, edited, _failed(results)
         )
-        # The writer is told each item's language when the edits are in more than one.
-        languages = {style.language for style in self._edited_styles(edited)}
+        styles = self._edited_styles(edited)
+        with_language = len({style.language for style in styles}) > 1 or any(
+            self._course.profile.style_for(path) is not None
+            and (
+                PurePosixPath(path).suffix not in self._config.source_suffixes
+                or any(
+                    assignment.reviewed_files is not None
+                    and assignment.reviewed_files.matches(path)
+                    for assignment in assignments
+                )
+            )
+            for path in edited
+        )
         prompt = self._templates.render(
             WRITER_TEMPLATE,
             {
@@ -644,10 +655,7 @@ class FixService:
                 "sections": [
                     (
                         label,
-                        [
-                            _described(edit, self._course, len(languages) > 1)
-                            for edit in groups[key]
-                        ],
+                        [_described(edit, self._course, with_language) for edit in groups[key]],
                     )
                     for key, label in labels.items()
                 ],

@@ -531,3 +531,31 @@ def test_the_writer_is_told_each_items_language_when_there_are_two(tmp_path: Pat
     assert "- In `UsersController.cs`: " in one
     assert "- In `UsersController.cs` (C#): " in two
     assert "- In `update.js` (JavaScript): " in two
+
+
+def test_the_writer_identifies_each_item_in_a_single_client_language(tmp_path: Path) -> None:
+    _, prompt = _body(tmp_path, JS_FIX, JS_NAMING)
+    assert prompt.count("- In `update.js` (JavaScript): ") == 2
+
+
+def test_the_writer_identifies_reviewed_client_files_also_listed_as_source(tmp_path: Path) -> None:
+    setup = FixerSetup(
+        tmp_path, replies={"writer": [TEXT]}, source_suffixes=(".cs", ".csproj", ".js")
+    )
+    application = EditApplication(applied=(JS_FIX, JS_NAMING), changed_files=())
+    setup.service.write_text(
+        RUN_ID, CLIENT_ASSIGNMENT, (CLIENT_ASSIGNMENT,), RESULTS, application, [], []
+    )
+    assert setup.llm.calls[0].prompt.count("- In `update.js` (JavaScript): ") == 2
+
+
+def test_the_writer_identifies_every_mixed_language_item(tmp_path: Path) -> None:
+    css_note = _named(NAMING_NOTE, CSS, NoteSection.NAMES)
+    _, prompt = _body(tmp_path, BREAK_FIX, HTML_FIX, JS_NAMING, css_note)
+    for file, language in (
+        ("UsersController.cs", "C#"),
+        ("update.js", "JavaScript"),
+        ("update.html", "HTML"),
+        ("site.css", "CSS"),
+    ):
+        assert f"- In `{file}` ({language}): " in prompt
