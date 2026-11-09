@@ -1,5 +1,8 @@
 """The committed assignments/ folder must always load and validate against the real checks."""
 
+import json
+import string
+
 from hw_checker.adapters.assignments_yaml import YamlAssignmentSource
 from hw_checker.checks.deterministic.builtin import builtin_checks
 from hw_checker.checks.registry import CheckRegistry
@@ -75,6 +78,40 @@ def test_hw01_content_checks_and_wrong_login_statuses() -> None:
         "probe.updated@example.com",
         "{user_id}",
     )
+
+
+def test_hw01_positive_passwords_and_dependencies() -> None:
+    _, hw01 = catalog().list_assignments()
+    requirements = {r.id: r for r in hw01.requirements}
+    positive = ("hw01-create", "hw01-login", "hw01-login-returns-user", "hw01-update")
+    wrong = ("hw01-login-wrong", "hw01-login-wrong-204")
+
+    def password(requirement_id: str) -> str:
+        body = requirements[requirement_id].http_probes[0].body
+        assert body is not None
+        value = json.loads(body)["password"]
+        assert isinstance(value, str)
+        return value
+
+    sample = password("hw01-create")
+    assert sample == "Probe9!Alpha"
+    assert all(password(requirement_id) == sample for requirement_id in positive)
+    assert any(char in string.ascii_uppercase for char in sample)
+    assert any(char in string.ascii_lowercase for char in sample)
+    assert any(char in string.digits for char in sample)
+    assert any(char in string.punctuation for char in sample)
+    assert all(password(requirement_id) != sample for requirement_id in wrong)
+    create = requirements["hw01-create"].http_probes[0]
+    assert create.expected_status == 201
+    assert create.allowed_statuses == (201, 200)
+    assert 400 not in create.allowed_statuses
+    assert {r.id: r.depends_on for r in hw01.requirements if r.depends_on} == {
+        "hw01-read-back": ("hw01-create",),
+        "hw01-login": ("hw01-create",),
+        "hw01-login-returns-user": ("hw01-create", "hw01-login"),
+        "hw01-update": ("hw01-create",),
+        "hw01-update-read-back": ("hw01-update", "hw01-read-back"),
+    }
 
 
 def test_committed_requirements_validate_against_the_builtin_checks() -> None:

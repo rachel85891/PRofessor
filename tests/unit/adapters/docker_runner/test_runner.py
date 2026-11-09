@@ -1,4 +1,5 @@
 import io
+import json
 import logging
 import tarfile
 from pathlib import Path
@@ -9,13 +10,17 @@ import pytest
 from hw_checker.adapters.docker_runner.engine import EngineError, ExecResult, Mount
 from hw_checker.adapters.docker_runner.runner import DockerCodeRunner
 from hw_checker.adapters.docker_runner.runner_config import DockerRunnerConfig
+from hw_checker.checks.deterministic.http import evaluate_http
 from hw_checker.domain import (
+    BodyFieldOutcome,
     CaptureFailure,
     CaptureResult,
+    CheckInput,
     ExecutionRequest,
     FailureKind,
     HttpMethod,
     HttpProbe,
+    NotEvaluatedReason,
     ResponseShape,
     RouteResolution,
     StepStatus,
@@ -24,6 +29,7 @@ from hw_checker.domain.errors import ExecutionEnvironmentError
 from tests.unit.adapters.docker_runner.fake_engine import FakeClock, FakeEngine
 from tests.unit.adapters.docker_runner.test_engine_and_config import DIGEST
 from tests.unit.adapters.docker_runner.test_engine_and_config import config as base_config
+from tests.unit.repo_content.test_assignments_folder import catalog
 
 WEB_PROJECT = (
     '<Project Sdk="Microsoft.NET.Sdk.Web"><PropertyGroup>'
@@ -416,6 +422,62 @@ def test_probe_body_is_adapted_to_the_students_model(repo: Path, tmp_path: Path)
         ("email", "unmatched"),
         ("Name", "filled"),
     ]
+
+
+@pytest.mark.parametrize("status", [400, 201])
+def test_hw01_numeric_password_adaptation_and_evaluation(
+    repo: Path, tmp_path: Path, status: int
+) -> None:
+    controller = (
+        '[Route("api/[controller]")]\npublic class UsersController : ControllerBase\n{\n'
+        "    [HttpPost]\n    public IActionResult Post([FromBody] Account a) => Ok();\n"
+        '    [HttpGet("{id}")]\n    public IActionResult Get(int id) => Ok();\n'
+        "}\npublic class Account\n{\n"
+        "    public string UserName { get; set; }\n"
+        "    public int Password { get; set; }\n}\n"
+    )
+    (repo / "Controllers" / "ProductsController.cs").write_text(controller, encoding="utf-8")
+    _, assignment = catalog().list_assignments()
+    requirements = {r.id: r for r in assignment.requirements}
+    create = requirements["hw01-create"]
+    read_back = requirements["hw01-read-back"]
+    engine = FakeEngine(
+        probe_responses={
+            ("POST", "/api/users"): (status, {}, '{"id":7}' if status == 201 else "{}"),
+            ("GET", "/api/users/7"): (200, {}, '{"userName":"probe.user@example.com"}'),
+        }
+    )
+    execution = runner(engine).execute(
+        request(
+            repo,
+            tmp_path,
+            repo_id="synthetic",
+            probes=(create.http_probes[0], read_back.http_probes[0]),
+        )
+    )
+
+    create_result, read_result = execution.probe_results
+    assert create_result.sent_body is not None
+    assert json.loads(create_result.sent_body)["password"] == 1
+    adaptation = create_result.body_adaptation
+    assert adaptation is not None and adaptation.mismatched
+    assert any(
+        note.field == "password" and note.outcome is BodyFieldOutcome.NOT_CONVERTIBLE
+        for note in adaptation.notes
+    )
+    create_outcome = evaluate_http(
+        CheckInput(repo_dir=repo, assignment=assignment, requirement=create, execution=execution)
+    )
+    read_outcome = evaluate_http(
+        CheckInput(repo_dir=repo, assignment=assignment, requirement=read_back, execution=execution)
+    )
+    if status == 400:
+        assert create_outcome is NotEvaluatedReason.BODY_MISMATCH
+        assert read_result.route_resolution is RouteResolution.DEPENDENCY_MISSING
+        assert read_outcome is NotEvaluatedReason.DEPENDENCY_FAILED
+    else:
+        assert create_outcome == ()
+        assert read_outcome == ()
 
 
 CHAIN_CONTROLLER = (
