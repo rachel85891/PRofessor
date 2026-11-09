@@ -53,7 +53,7 @@ requirements:
           - /api/user/signin
         body:
           userName|email|name: probe.user@example.com
-          password: "123456"
+          password: "Probe9!Alpha"  # pragma: allowlist secret
         expected_status: 201
         allowed_statuses: [201, 200]
         expect_json: object
@@ -94,7 +94,7 @@ requirements:
           - /users/loginpost
         body:
           userName|email|name: probe.user@example.com
-          password: "123456"
+          password: "Probe9!Alpha"  # pragma: allowlist secret
         expected_status: 200
         allowed_statuses: [200, 201]
 
@@ -116,7 +116,7 @@ requirements:
           - /users/loginpost
         body:
           userName|email|name: probe.user@example.com
-          password: "123456"
+          password: "Probe9!Alpha"  # pragma: allowlist secret
         expected_status: 200
         allowed_statuses: [200, 201]
         expect_json: object
@@ -179,7 +179,7 @@ requirements:
         body:
           id: "{user_id}"
           userName|email|name: probe.updated@example.com
-          password: "123456"
+          password: "Probe9!Alpha"  # pragma: allowlist secret
         expected_status: 200
         allowed_statuses: [200, 204]
 
