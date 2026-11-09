@@ -3,6 +3,18 @@
 May depend on: the standard library and Pydantic only.
 """
 
+from hw_checker.domain.architecture_evidence import (
+    ArchitectureEvidence,
+    ArchitectureSignal,
+    ArchitectureSignalKind,
+    EvidenceCoverage,
+    EvidenceCoverageIssue,
+    EvidenceCoverageStatus,
+    EvidenceIssueKind,
+    ProjectEvidence,
+    ProjectReferenceEvidence,
+    ProjectReferenceStatus,
+)
 from hw_checker.domain.assignment import (
     Assignment,
     ExpectedJson,
@@ -143,6 +155,9 @@ from hw_checker.domain.vcs import (
 
 __all__ = [
     "ApprovedNote",
+    "ArchitectureEvidence",
+    "ArchitectureSignal",
+    "ArchitectureSignalKind",
     "Assignment",
     "AssignmentResult",
     "AssignmentVersion",
@@ -166,6 +181,10 @@ __all__ = [
     "EditApplication",
     "EditKind",
     "Evidence",
+    "EvidenceCoverage",
+    "EvidenceCoverageIssue",
+    "EvidenceCoverageStatus",
+    "EvidenceIssueKind",
     "ExecutionRequest",
     "ExecutionResult",
     "ExpectedJson",
@@ -209,6 +228,9 @@ __all__ = [
     "PrSectionId",
     "ProbeCapture",
     "ProbeResult",
+    "ProjectEvidence",
+    "ProjectReferenceEvidence",
+    "ProjectReferenceStatus",
     "ProposalStatus",
     "PublishOutcome",
     "PublishRecord",

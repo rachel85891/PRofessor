@@ -1,12 +1,16 @@
 import importlib
 import inspect
+from pathlib import Path
 from typing import Protocol
 
 import pytest
 
 import hw_checker.ports
+from hw_checker.domain import EvidenceCoverageStatus, EvidenceIssueKind
+from tests.fakes.architecture_evidence import FakeArchitectureEvidenceReader
 
 EXPECTED_PORTS = {
+    "hw_checker.ports.architecture_evidence": ["ArchitectureEvidenceReader"],
     "hw_checker.ports.assignments": ["AssignmentSource"],
     "hw_checker.ports.checks": ["CheckCatalog", "RequirementChecker"],
     "hw_checker.ports.clock": ["Clock"],
@@ -48,3 +52,13 @@ def test_every_port_method_has_a_docstring(name: str) -> None:
 
     assert methods
     assert all(inspect.getdoc(method) for method in methods)
+
+
+def test_architecture_evidence_fake_marks_unknown_roots_unavailable(tmp_path: Path) -> None:
+    evidence = FakeArchitectureEvidenceReader().scan(tmp_path / "unknown")
+
+    assert evidence.inventory_coverage.status is EvidenceCoverageStatus.UNAVAILABLE
+    assert evidence.signal_coverage.status is EvidenceCoverageStatus.UNAVAILABLE
+    assert EvidenceIssueKind.REPOSITORY_UNAVAILABLE in {
+        issue.kind for issue in evidence.inventory_coverage.issues
+    }
