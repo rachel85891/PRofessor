@@ -9,6 +9,7 @@ from hw_checker.domain import (
     EvidenceCoverageStatus,
     EvidenceIssueKind,
     ProjectReferenceStatus,
+    ServiceLifetime,
 )
 
 
@@ -124,6 +125,44 @@ def test_duplicate_interface_name_still_matches_but_lowers_coverage(tmp_path: Pa
         if issue.kind is EvidenceIssueKind.DUPLICATE_TYPE_NAME
     ]
     assert duplicates == [("Timer.cs", 3)]
+
+
+def test_registrations_name_their_types_only_when_written_literally(tmp_path: Path) -> None:
+    write(
+        tmp_path,
+        "Program.cs",
+        "builder.Services.AddScoped<IUserRepository, UserRepository>();\n"
+        "builder.Services.AddSingleton<Clock>();\n"
+        "builder.Services.AddTransient(typeof(IRepository<>), typeof(Repository<>));\n"
+        "builder.Services.AddScoped(typeof(Audit));\n"
+        "builder.Services.AddScoped<IMailer>(provider => new Mailer());\n"
+        "builder.Services.AddKeyedSingleton<ICache, Cache>(1);\n"
+        "builder.Services.AddScoped(Factory.Create);\n",
+    )
+
+    evidence = LocalArchitectureEvidenceReader().scan(tmp_path)
+
+    assert [
+        (
+            signal.line,
+            signal.subject,
+            signal.related_subject,
+            signal.registration_method,
+            signal.lifetime,
+        )
+        for signal in evidence.signals
+    ] == [
+        (1, "IUserRepository", "UserRepository", "AddScoped", ServiceLifetime.SCOPED),
+        (2, "Clock", None, "AddSingleton", ServiceLifetime.SINGLETON),
+        (3, "IRepository<>", "Repository<>", "AddTransient", ServiceLifetime.TRANSIENT),
+        (4, "Audit", None, "AddScoped", ServiceLifetime.SCOPED),
+        (5, None, None, "AddScoped", ServiceLifetime.SCOPED),
+        (6, None, None, "AddKeyedSingleton", ServiceLifetime.SINGLETON),
+        (7, None, None, "AddScoped", ServiceLifetime.SCOPED),
+    ]
+    assert {signal.kind for signal in evidence.signals} == {
+        ArchitectureSignalKind.REGISTRATION_CANDIDATE
+    }
 
 
 def test_comments_and_strings_are_not_reported_as_active_di(tmp_path: Path) -> None:

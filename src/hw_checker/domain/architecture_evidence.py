@@ -1,9 +1,9 @@
 """Factual, repository-local project and dependency-injection evidence."""
 
 from enum import StrEnum
-from typing import Annotated
+from typing import Annotated, Self
 
-from pydantic import Field
+from pydantic import Field, model_validator
 
 from hw_checker.domain.base import DomainModel, NonBlankStr, RepoRelativePath
 
@@ -94,14 +94,45 @@ class ArchitectureSignalKind(StrEnum):
     REGISTRATION_CANDIDATE = "registration_candidate"
 
 
+class ServiceLifetime(StrEnum):
+    """The lifetime named by a registration method (`AddScoped` is scoped)."""
+
+    SINGLETON = "singleton"
+    SCOPED = "scoped"
+    TRANSIENT = "transient"
+
+
 class ArchitectureSignal(DomainModel):
-    """A source location and identifiers extracted from supported C# syntax."""
+    """A source location and identifiers extracted from supported C# syntax.
+
+    For a registration, `subject` is the service type and `related_subject` the
+    implementation type, both as written; `subject` is None when the call does not name
+    them literally (a factory lambda, an instance, an extension method's argument).
+    """
 
     kind: ArchitectureSignalKind
     file_path: EvidencePath
     line: int = Field(ge=1)
-    subject: EvidenceIdentifier
+    subject: EvidenceIdentifier | None = None
     related_subject: EvidenceIdentifier | None = None
+    registration_method: EvidenceIdentifier | None = None
+    """The registration method as written, such as `AddScoped` or `AddKeyedSingleton`."""
+    lifetime: ServiceLifetime | None = None
+
+    @model_validator(mode="after")
+    def _fields_match_kind(self) -> Self:
+        registration = self.kind is ArchitectureSignalKind.REGISTRATION_CANDIDATE
+        if registration and (self.registration_method is None or self.lifetime is None):
+            raise ValueError("a registration needs its method and lifetime")
+        if not registration and (
+            self.subject is None
+            or self.registration_method is not None
+            or self.lifetime is not None
+        ):
+            raise ValueError(f"a {self.kind} signal needs a subject and no registration fields")
+        if self.subject is None and self.related_subject is not None:
+            raise ValueError("a related subject needs a subject")
+        return self
 
 
 class ArchitectureEvidence(DomainModel):

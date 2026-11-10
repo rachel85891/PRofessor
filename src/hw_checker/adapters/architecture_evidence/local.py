@@ -20,6 +20,7 @@ from hw_checker.domain import (
     ProjectEvidence,
     ProjectReferenceEvidence,
     ProjectReferenceStatus,
+    ServiceLifetime,
     TypeKind,
 )
 from hw_checker.ports.architecture_evidence import ArchitectureEvidenceReader
@@ -60,7 +61,19 @@ _PARAMETER = re.compile(
 )
 _REGISTRATION = re.compile(
     r"\b(?P<name>Add(?:Singleton|Scoped|Transient)(?:Keyed)?|"
-    r"AddKeyed(?:Singleton|Scoped|Transient))\s*<"
+    r"AddKeyed(?:Singleton|Scoped|Transient))\s*(?=[<(])"
+)
+_LIFETIMES: Final = {
+    "Singleton": ServiceLifetime.SINGLETON,
+    "Scoped": ServiceLifetime.SCOPED,
+    "Transient": ServiceLifetime.TRANSIENT,
+}
+_TYPE_TEXT = r"[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*(?:\s*<[^()<>]*(?:<[^()<>]*>[^()<>]*)*>)?"
+_TYPE_ARGUMENT = re.compile(rf"{_TYPE_TEXT}\??")
+_EMPTY_CALL = re.compile(r"\s*\(\s*\)")
+_TYPEOF_CALL = re.compile(
+    rf"\(\s*typeof\s*\(\s*(?P<service>{_TYPE_TEXT})\s*\)\s*"
+    rf"(?:,\s*typeof\s*\(\s*(?P<implementation>{_TYPE_TEXT})\s*\)\s*)?\)"
 )
 _DOCTYPE = re.compile(r"<!\s*DOCTYPE\b", re.IGNORECASE)
 
@@ -480,12 +493,18 @@ def _signals_in_file(
     signals: list[ArchitectureSignal] = []
     issues: list[EvidenceCoverageIssue] = []
     for match in _REGISTRATION.finditer(masked):
+        service, implementation = _registered_types(masked, match.end())
         signals.append(
             ArchitectureSignal(
                 kind=ArchitectureSignalKind.REGISTRATION_CANDIDATE,
                 file_path=file_path,
                 line=masked.count("\n", 0, match.start("name")) + 1,
-                subject=match["name"],
+                subject=service,
+                related_subject=implementation,
+                registration_method=match["name"],
+                lifetime=next(
+                    lifetime for word, lifetime in _LIFETIMES.items() if word in match["name"]
+                ),
             )
         )
 
@@ -561,12 +580,51 @@ def _signals_in_file(
     return signals, issues
 
 
-def _parameter_types(parameters: str) -> tuple[str, ...] | None:
-    if not parameters.strip():
-        return ()
+def _registered_types(masked: str, position: int) -> tuple[str | None, str | None]:
+    """The service and implementation types of `<IX, X>()` or `(typeof(IX), typeof(X))`.
+
+    Any other call shape (a factory, an instance, a key) names no type here: (None, None).
+    """
+    if masked.startswith("<", position):
+        closing = _closing_angle(masked, position)
+        if closing is None or not _EMPTY_CALL.match(masked, closing + 1):
+            return None, None
+        arguments = _split_top_level(masked[position + 1 : closing])
+        if arguments is None or len(arguments) > 2:
+            return None, None
+        if any(not _TYPE_ARGUMENT.fullmatch(argument) for argument in arguments):
+            return None, None
+        types = arguments
+    else:
+        typed = _TYPEOF_CALL.match(masked, position)
+        if typed is None:
+            return None, None
+        types = [name for name in (typed["service"], typed["implementation"]) if name]
+    if any(len(name) > MAX_IDENTIFIER_CHARS for name in types):
+        return None, None
+    return types[0], types[1] if len(types) == 2 else None
+
+
+def _closing_angle(source: str, opening: int) -> int | None:
+    depth = 0
+    for index in range(opening, len(source)):
+        character = source[index]
+        if character == "<":
+            depth += 1
+        elif character == ">":
+            depth -= 1
+            if depth == 0:
+                return index
+        elif character in "(){};":
+            return None
+    return None
+
+
+def _split_top_level(text: str) -> list[str] | None:
+    """Split on commas outside `<>`; None when the angle brackets are unbalanced."""
     parts: list[str] = []
     start = depth = 0
-    for index, character in enumerate(parameters):
+    for index, character in enumerate(text):
         if character == "<":
             depth += 1
         elif character == ">":
@@ -574,11 +632,20 @@ def _parameter_types(parameters: str) -> tuple[str, ...] | None:
             if depth < 0:
                 return None
         elif character == "," and depth == 0:
-            parts.append(parameters[start:index].strip())
+            parts.append(text[start:index].strip())
             start = index + 1
     if depth:
         return None
-    parts.append(parameters[start:].strip())
+    parts.append(text[start:].strip())
+    return parts
+
+
+def _parameter_types(parameters: str) -> tuple[str, ...] | None:
+    if not parameters.strip():
+        return ()
+    parts = _split_top_level(parameters)
+    if parts is None:
+        return None
     result: list[str] = []
     for part in parts:
         match = _PARAMETER.fullmatch(part)
@@ -683,7 +750,7 @@ def _signal_sort_key(
         signal.file_path,
         signal.line,
         signal.kind.value,
-        signal.subject,
+        signal.subject or "",
     )
 
 

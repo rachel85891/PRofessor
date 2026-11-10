@@ -14,6 +14,7 @@ from hw_checker.domain.architecture_evidence import (
     ProjectEvidence,
     ProjectReferenceEvidence,
     ProjectReferenceStatus,
+    ServiceLifetime,
 )
 from hw_checker.domain.assignment import (
     Assignment,
@@ -266,6 +267,7 @@ __all__ = [
     "RunSummary",
     "SafeFix",
     "SelfReview",
+    "ServiceLifetime",
     "Severity",
     "StepStatus",
     "Student",
