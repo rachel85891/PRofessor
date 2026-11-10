@@ -3,6 +3,7 @@
 May depend on: domain.
 """
 
+from hw_checker.ports.architecture_evidence import ArchitectureEvidenceReader
 from hw_checker.ports.assignments import AssignmentSource
 from hw_checker.ports.checks import CheckCatalog, RequirementChecker
 from hw_checker.ports.clock import Clock
@@ -17,6 +18,7 @@ from hw_checker.ports.storage import FindingRepository, ProposalRepository, RunR
 from hw_checker.ports.templates import TextTemplates
 
 __all__ = [
+    "ArchitectureEvidenceReader",
     "AssignmentSource",
     "CheckCatalog",
     "Clock",

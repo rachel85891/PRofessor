@@ -1,0 +1,65 @@
+# Local architecture evidence
+
+`ArchitectureEvidenceReader.scan(root)` is a read-only, repository-local capability for
+collecting project inventory and a small set of C# syntax signals. It is not connected to
+the round graph, assignment selection, findings, severities, fixer, LLM or publishing.
+Call it with the root of one already-checked local repository; it does not fetch, build,
+execute, or transmit repository content.
+
+The immutable `ArchitectureEvidence` result contains:
+
+- relative `.csproj` paths and literal SDK references;
+- relative `ProjectReference` targets with a lexical match/missing/unsupported status;
+- signal kind, relative file, line, and only the identifier(s) supporting each candidate;
+- separate `inventory_coverage` and `signal_coverage` statuses and structured limitations.
+
+Source text, absolute repository paths, names of students and raw operating-system errors
+are not retained. Project references are normalized against the source project's directory,
+then compared only with the bounded local `.csproj` inventory. An absolute, escaping,
+wildcard or MSBuild-expression reference is not followed or opened. XML line numbers are
+not available from the current standard-library reader and are therefore omitted.
+Project files and C# source must decode as UTF-8 (an optional project-file BOM is accepted).
+
+The local adapter skips `bin/`, `obj/`, `.git/`, `.vs/`, generated C# suffixes, migration
+and properties source folders, symlinks and junctions. It bounds directory/file counts,
+per-file bytes, project-file bytes and total C# bytes. Unreadable, malformed, oversized,
+invalid-UTF-8, unsafe, unsupported and truncated inputs lower coverage rather than
+producing a clean empty result.
+
+## What signals mean
+
+An interface declaration, constructor candidate, constructor parameter whose simple name
+matches a discovered interface declaration, or `AddSingleton`/`AddScoped`/`AddTransient`
+call is only a lexical candidate. It does not prove that the names resolve, that the
+registration is active, that a constructor is used, that every dependency uses injection,
+or that any course requirement is met or violated.
+
+The scan runs in two passes. The first collects the interface declarations of every
+scanned `.cs` file, so a constructor in one project matches an interface declared in
+another. The second reads constructors and registrations:
+
+- a classic constructor (leading `[...]` attribute sections are skipped) and a primary
+  constructor (`class C(IX x)`, also on structs and records) give `constructor_candidate`,
+  and each parameter whose simple type name is a declared interface gives
+  `constructor_interface_parameter` (`subject` = the parameter type, `related_subject` =
+  the constructor's type). A simple name declared more than once still matches and adds a
+  `duplicate_type_name` issue at the constructor's line;
+- a registration gives `registration_candidate` with `registration_method` (as written)
+  and `lifetime`. For `AddScoped<IX, X>()` and `AddScoped(typeof(IX), typeof(X))`,
+  `subject` is the service type and `related_subject` the implementation type. Any other
+  call shape (a factory lambda, an instance, a key, a method group) has no types.
+
+This is a lexical scan, not a compiler, and that is a property of the reader, not a
+per-scan issue. It does not evaluate MSBuild, C# aliases, namespaces, overloads,
+conditional compilation, syntax trees, semantic types, generated source or runtime
+behavior. Signal coverage is `complete` when every C# file in scope was read and parsed
+with no issue; a preprocessor condition, a using alias, unbalanced brackets, an unreadable
+parameter list or a duplicate type name makes it `partial`. Even with complete coverage,
+the absence of a signal is not proof of absence.
+
+The reader reuses the existing C# comment/string masker and declaration reader. This stage
+makes zero LLM calls. It does not
+reuse the Web-project discovery operation as a classifier: that operation chooses a
+project for execution and does not represent a complete project-reference inventory.
+The existing general `SourceFiles` capability is for fixer working copies, has no bounded
+inventory result, and is not appropriate for this untrusted read-only scan.
