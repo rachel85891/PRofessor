@@ -7,7 +7,7 @@ import xml.etree.ElementTree as ElementTree
 from pathlib import Path
 from typing import Final
 
-from hw_checker.adapters.docker_runner.code_facts import facts_in_source
+from hw_checker.adapters.docker_runner.code_facts import CollectedFacts, facts_in_source
 from hw_checker.adapters.docker_runner.csharp_source import mask_source
 from hw_checker.domain import (
     ArchitectureEvidence,
@@ -20,6 +20,7 @@ from hw_checker.domain import (
     ProjectEvidence,
     ProjectReferenceEvidence,
     ProjectReferenceStatus,
+    TypeKind,
 )
 from hw_checker.ports.architecture_evidence import ArchitectureEvidenceReader
 
@@ -105,7 +106,7 @@ class LocalArchitectureEvidenceReader(ArchitectureEvidenceReader):
             for path in supported_files
             if path.lower().endswith(".cs") and not _generated_source_path(path)
         )
-        signals: list[ArchitectureSignal] = []
+        sources: list[tuple[str, str]] = []
         total_source_bytes = 0
         if not source_files:
             source_issues.append(EvidenceCoverageIssue(kind=EvidenceIssueKind.NO_CSHARP_SOURCE))
@@ -157,10 +158,10 @@ class LocalArchitectureEvidenceReader(ArchitectureEvidenceReader):
                     EvidenceCoverageIssue(kind=EvidenceIssueKind.INVALID_UTF8, file_path=relative)
                 )
                 continue
-            file_signals, issues = _signals_in_source(text, relative)
-            signals.extend(file_signals)
-            source_issues.extend(issues)
+            sources.append((relative, text))
 
+        signals, issues = _signals_in_sources(sources)
+        source_issues.extend(issues)
         if source_files:
             source_issues.append(
                 EvidenceCoverageIssue(kind=EvidenceIssueKind.HEURISTIC_CSHARP_SCAN)
@@ -401,10 +402,56 @@ def _project_reference_target(
     return target, ProjectReferenceStatus.MISSING
 
 
-def _signals_in_source(
-    text: str, file_path: str
+def _signals_in_sources(
+    sources: list[tuple[str, str]],
 ) -> tuple[tuple[ArchitectureSignal, ...], tuple[EvidenceCoverageIssue, ...]]:
-    masked = mask_source(text).text
+    """Two passes: interfaces from every file first, then constructors matched against them."""
+    issues: list[EvidenceCoverageIssue] = []
+    readable: list[tuple[str, str]] = []
+    collected = CollectedFacts()
+    for file_path, text in sources:
+        masked = mask_source(text).text
+        issues.extend(_lexical_issues(masked, file_path))
+        if not _balanced_csharp(masked):
+            issues.append(
+                EvidenceCoverageIssue(kind=EvidenceIssueKind.AMBIGUOUS_SYNTAX, file_path=file_path)
+            )
+            continue
+        facts_in_source(text, file_path, collected)
+        readable.append((file_path, masked))
+
+    signals: list[ArchitectureSignal] = []
+    declarations: dict[str, int] = {}
+    for fact in collected.types:
+        if fact.kind is not TypeKind.INTERFACE:
+            continue
+        if len(fact.name) > MAX_IDENTIFIER_CHARS:
+            issues.append(
+                EvidenceCoverageIssue(
+                    kind=EvidenceIssueKind.AMBIGUOUS_SYNTAX,
+                    file_path=fact.file_path,
+                    line=fact.line,
+                )
+            )
+            continue
+        declarations[fact.name] = declarations.get(fact.name, 0) + 1
+        signals.append(
+            ArchitectureSignal(
+                kind=ArchitectureSignalKind.INTERFACE_DECLARATION,
+                file_path=fact.file_path,
+                line=fact.line,
+                subject=fact.name,
+            )
+        )
+
+    for file_path, masked in readable:
+        file_signals, file_issues = _signals_in_file(masked, file_path, declarations)
+        signals.extend(file_signals)
+        issues.extend(file_issues)
+    return tuple(signals), tuple(issues)
+
+
+def _lexical_issues(masked: str, file_path: str) -> list[EvidenceCoverageIssue]:
     issues: list[EvidenceCoverageIssue] = []
     if _PREPROCESSOR.search(masked):
         issues.append(
@@ -424,35 +471,14 @@ def _signals_in_source(
                 line=masked.count("\n", 0, primary.start()) + 1,
             )
         )
-    if not _balanced_csharp(masked):
-        issues.append(
-            EvidenceCoverageIssue(kind=EvidenceIssueKind.AMBIGUOUS_SYNTAX, file_path=file_path)
-        )
-        return (), tuple(issues)
+    return issues
 
+
+def _signals_in_file(
+    masked: str, file_path: str, declarations: dict[str, int]
+) -> tuple[list[ArchitectureSignal], list[EvidenceCoverageIssue]]:
     signals: list[ArchitectureSignal] = []
-    declared_interfaces: set[str] = set()
-    for fact in facts_in_source(text, file_path).types:
-        if fact.kind.value == "interface":
-            if len(fact.name) > MAX_IDENTIFIER_CHARS:
-                issues.append(
-                    EvidenceCoverageIssue(
-                        kind=EvidenceIssueKind.AMBIGUOUS_SYNTAX,
-                        file_path=file_path,
-                        line=fact.line,
-                    )
-                )
-                continue
-            declared_interfaces.add(fact.name)
-            signals.append(
-                ArchitectureSignal(
-                    kind=ArchitectureSignalKind.INTERFACE_DECLARATION,
-                    file_path=file_path,
-                    line=fact.line,
-                    subject=fact.name,
-                )
-            )
-
+    issues: list[EvidenceCoverageIssue] = []
     for match in _REGISTRATION.finditer(masked):
         signals.append(
             ArchitectureSignal(
@@ -490,7 +516,7 @@ def _signals_in_source(
             constructor = _CONSTRUCTOR.fullmatch(header)
             if constructor is None or constructor["name"] != type_name:
                 continue
-            line = masked.count("\n", 0, opening + 1 + offset) + 1
+            line = masked.count("\n", 0, opening + 1 + offset + constructor.start("name")) + 1
             signals.append(
                 ArchitectureSignal(
                     kind=ArchitectureSignalKind.CONSTRUCTOR_CANDIDATE,
@@ -510,20 +536,29 @@ def _signals_in_source(
                 )
                 continue
             for parameter_type in parameter_types:
-                if (
-                    parameter_type.rstrip("?").split("<", 1)[0].split(".")[-1]
-                    in declared_interfaces
-                ):
-                    signals.append(
-                        ArchitectureSignal(
-                            kind=ArchitectureSignalKind.CONSTRUCTOR_INTERFACE_PARAMETER,
+                count = declarations.get(
+                    parameter_type.rstrip("?").split("<", 1)[0].split(".")[-1], 0
+                )
+                if not count:
+                    continue
+                signals.append(
+                    ArchitectureSignal(
+                        kind=ArchitectureSignalKind.CONSTRUCTOR_INTERFACE_PARAMETER,
+                        file_path=file_path,
+                        line=line,
+                        subject=parameter_type,
+                        related_subject=type_name,
+                    )
+                )
+                if count > 1:
+                    issues.append(
+                        EvidenceCoverageIssue(
+                            kind=EvidenceIssueKind.DUPLICATE_TYPE_NAME,
                             file_path=file_path,
                             line=line,
-                            subject=parameter_type,
-                            related_subject=type_name,
                         )
                     )
-    return tuple(signals), tuple(issues)
+    return signals, issues
 
 
 def _parameter_types(parameters: str) -> tuple[str, ...] | None:

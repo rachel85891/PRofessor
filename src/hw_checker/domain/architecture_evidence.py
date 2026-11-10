@@ -39,6 +39,8 @@ class EvidenceIssueKind(StrEnum):
     PREPROCESSOR_CONDITION = "preprocessor_condition"
     USING_ALIAS = "using_alias"
     AMBIGUOUS_SYNTAX = "ambiguous_syntax"
+    DUPLICATE_TYPE_NAME = "duplicate_type_name"
+    """A matched simple type name is declared more than once in the repository."""
     HEURISTIC_CSHARP_SCAN = "heuristic_csharp_scan"
 
 

@@ -82,11 +82,48 @@ def test_inventory_references_and_di_candidates_are_factual(tmp_path: Path) -> N
         "UserService",
     )
     assert parameter_signal.file_path == "Api/Services/UserService.cs"
-    assert parameter_signal.line == 4
+    assert parameter_signal.line == 5
     assert all(not hasattr(signal, "source") for signal in evidence.signals)
     serialized = evidence.model_dump_json()
     assert "public interface" not in serialized
     assert str(tmp_path) not in serialized
+
+
+def test_constructor_parameter_matches_an_interface_declared_in_another_project(
+    tmp_path: Path,
+) -> None:
+    write(tmp_path, "Core/IClock.cs", "namespace Core;\npublic interface IClock { }\n")
+    write(
+        tmp_path,
+        "Api/Timer.cs",
+        "namespace Api;\npublic class Timer\n{\n    public Timer(Core.IClock clock) { }\n}\n",
+    )
+
+    evidence = LocalArchitectureEvidenceReader().scan(tmp_path)
+
+    parameters = [
+        (signal.subject, signal.related_subject, signal.file_path)
+        for signal in evidence.signals
+        if signal.kind is ArchitectureSignalKind.CONSTRUCTOR_INTERFACE_PARAMETER
+    ]
+    assert parameters == [("Core.IClock", "Timer", "Api/Timer.cs")]
+
+
+def test_duplicate_interface_name_still_matches_but_lowers_coverage(tmp_path: Path) -> None:
+    write(tmp_path, "A/IClock.cs", "public interface IClock { }\n")
+    write(tmp_path, "B/IClock.cs", "public interface IClock { }\n")
+    write(tmp_path, "Timer.cs", "public class Timer\n{\n    public Timer(IClock clock) { }\n}\n")
+
+    evidence = LocalArchitectureEvidenceReader().scan(tmp_path)
+
+    assert ArchitectureSignalKind.CONSTRUCTOR_INTERFACE_PARAMETER in signal_kinds(evidence)
+    assert evidence.signal_coverage.status is EvidenceCoverageStatus.PARTIAL
+    duplicates = [
+        (issue.file_path, issue.line)
+        for issue in evidence.signal_coverage.issues
+        if issue.kind is EvidenceIssueKind.DUPLICATE_TYPE_NAME
+    ]
+    assert duplicates == [("Timer.cs", 3)]
 
 
 def test_comments_and_strings_are_not_reported_as_active_di(tmp_path: Path) -> None:
