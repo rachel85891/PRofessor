@@ -48,7 +48,8 @@ requirements:
 
   # Stage 21, approved by the developer on 2026-11-10 (planner/tasks/hw02-hw03-layers-di-draft.md)
   # The draft's hw03-service-interfaces has two conditions, one check each: this
-  # requirement and hw03-service-interfaces-taken.
+  # requirement and hw03-service-interfaces-taken (split approved by the developer on
+  # 2026-11-10).
   - id: hw03-service-interfaces
     kind: custom
     title: Every service class implements an interface
@@ -74,7 +75,8 @@ requirements:
       dependency: services
 
   # Stage 21, approved by the developer on 2026-11-10 (planner/tasks/hw02-hw03-layers-di-draft.md)
-  # The draft's hw03-repository-interfaces, split the same way.
+  # The draft's hw03-repository-interfaces, split the same way (approved by the developer
+  # on 2026-11-10).
   - id: hw03-repository-interfaces
     kind: custom
     title: Every repository class implements an interface
