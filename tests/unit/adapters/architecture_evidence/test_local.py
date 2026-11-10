@@ -352,11 +352,11 @@ def test_invalid_utf8_and_missing_sources_are_not_success_shaped(tmp_path: Path)
 def test_size_and_inventory_limits_are_reported(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from hw_checker.adapters.architecture_evidence import local
+    from hw_checker.adapters.architecture_evidence import inventory, local
 
     write(tmp_path, "A.cs", "class A { }")
     write(tmp_path, "B.cs", "class B { }")
-    monkeypatch.setattr(local, "MAX_INVENTORY_FILES", 1)
+    monkeypatch.setattr(inventory, "MAX_INVENTORY_FILES", 1)
 
     evidence = LocalArchitectureEvidenceReader().scan(tmp_path)
 
@@ -365,7 +365,7 @@ def test_size_and_inventory_limits_are_reported(
         issue.kind for issue in evidence.signal_coverage.issues
     }
 
-    monkeypatch.setattr(local, "MAX_INVENTORY_FILES", 10)
+    monkeypatch.setattr(inventory, "MAX_INVENTORY_FILES", 10)
     monkeypatch.setattr(local, "MAX_SOURCE_FILE_BYTES", 3)
     large = LocalArchitectureEvidenceReader().scan(tmp_path)
     assert EvidenceIssueKind.FILE_TOO_LARGE in {
