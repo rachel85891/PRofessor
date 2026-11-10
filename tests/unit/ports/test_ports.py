@@ -12,6 +12,7 @@ from tests.fakes.architecture_evidence import FakeArchitectureEvidenceReader
 EXPECTED_PORTS = {
     "hw_checker.ports.architecture_evidence": ["ArchitectureEvidenceReader"],
     "hw_checker.ports.assignments": ["AssignmentSource"],
+    "hw_checker.ports.authoring": ["AuthoringFiles"],
     "hw_checker.ports.checks": ["CheckCatalog", "RequirementChecker"],
     "hw_checker.ports.clock": ["Clock"],
     "hw_checker.ports.code_host": ["CodeHost"],

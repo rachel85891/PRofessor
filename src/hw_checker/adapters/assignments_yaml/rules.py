@@ -15,6 +15,7 @@ from pydantic import BaseModel, ValidationError
 from pydantic_core import ErrorDetails
 
 from hw_checker.domain import Assignment, CourseProfile, FixExample, ReviewRule, ReviewRuleSet
+from hw_checker.domain.authoring import AssignmentIntake
 from hw_checker.domain.course import RULE_REFERENCE, PolicyItem
 
 COURSE_FILE = "course.yaml"
@@ -196,6 +197,7 @@ def yaml_location(error: yaml.YAMLError) -> str:
 SCHEMA_FILES: dict[str, type[BaseModel]] = {
     "course.schema.json": CourseProfile,
     "review_rules.schema.json": ReviewRuleSet,
+    "intake.schema.json": AssignmentIntake,
 }
 """The JSON Schema of each file, by its name in `course/schemas/` (ADR 0023)."""
 

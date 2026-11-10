@@ -1,0 +1,56 @@
+{#- A new assignment's intake.yaml, made by `python -m hw_checker assignment new <id>`.
+    Context: id, order, previous (the previous assignment's id, or ""), taught and
+    not_yet_taught (lists of JSON-quoted texts). -#}
+# yaml-language-server: $schema=../../course/schemas/intake.schema.json
+# The intake of {{ id }}: what you give for the new assignment, in your own words.
+# Fill it in, write the task's text in task.md (and optionally put a reference solution in
+# reference/), then run: python -m hw_checker assignment draft {{ id }}
+# The format: assignments/README.md, "Adding an assignment".
+
+# 1. The basics.
+id: {{ id }}
+order: {{ order }}
+title: "TODO: the assignment's title"
+# short_name is derived from the id; give it only to confirm it.
+# short_name: HW1
+# The commit to check: latest, or the last one before the next task starts:
+#   check_commit:
+#     ends_when: {check: project_count, params: {min: 2}}
+check_commit: latest
+
+# 2. What has been taught so far, and what has not been taught yet.
+{% if previous %}
+# Carried over from {{ previous }}'s intake: add what this assignment teaches.
+{% endif %}
+{% if taught %}
+taught:
+{% for item in taught %}
+  - {{ item }}
+{% endfor %}
+{% else %}
+taught: []
+{% endif %}
+{% if not_yet_taught %}
+not_yet_taught:
+{% for item in not_yet_taught %}
+  - {{ item }}
+{% endfor %}
+{% else %}
+not_yet_taught: []
+{% endif %}
+
+# 3. The lecturer's decisions.
+lecturer_decisions:
+  accepted_alternatives: []   # for example: "Returning 204 from DELETE is fine"
+  not_to_mention: []          # for example: "Do not mention async/await"
+  required_statuses: []       # for example: "POST returns 201 with the new user"
+
+# 4. The task's requirements, by heading. Each item is a short text in your words, with an
+#    optional severity (critical, major or minor):
+#      - text: "GET by id returns 404 for an unknown user"
+#        severity: major
+requirements:
+  return_values: []   # return values and statuses: checked with HTTP requests
+  clean_code: []      # clean code: names, and code read by the code reviewer
+  architecture: []    # architecture: projects, layers, interfaces, registrations
+  general: []         # anything else

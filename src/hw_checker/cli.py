@@ -17,6 +17,7 @@ from langgraph.types import Command
 from pydantic import BaseModel
 
 from hw_checker.bootstrap import (
+    build_authoring_service,
     build_round_graph_from_settings,
     open_checkpointer,
     open_fixer_llm,
@@ -112,7 +113,22 @@ def build_parser() -> argparse.ArgumentParser:
         "llm-check",
         help="send one synthetic prompt to each LLM role's model (checks key, models, network)",
     )
+    _add_assignment_commands(commands)
     return parser
+
+
+def _add_assignment_commands(commands: "argparse._SubParsersAction[Any]") -> None:
+    assignment = commands.add_parser(
+        "assignment", help="add a new assignment: intake, draft, validation and approval"
+    )
+    actions = assignment.add_subparsers(dest="action", required=True)
+    new_parser = actions.add_parser(
+        "new", help="create assignments/<id>/ with an intake.yaml template and an empty task.md"
+    )
+    new_parser.add_argument("assignment_id", help="the new assignment's id, e.g. hw02")
+    new_parser.add_argument(
+        "--order", type=_positive_int, help="its order (default: after the last assignment)"
+    )
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -128,6 +144,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             return review_round(settings, args.run_id, sys.stdout)
         if args.command == "approve":
             return approve_round(settings, args, sys.stdout)
+        if args.command == "assignment":
+            return run_assignment_command(settings, args, sys.stdout)
         return run_round(settings, args, sys.stdout)
     except HwCheckerError as error:
         print(f"Error: {error}", file=sys.stderr)
@@ -206,6 +224,18 @@ def approve_round(settings: Settings, args: argparse.Namespace, out: TextIO) -> 
     print_gate(args.run_id, interrupts, out)
     failed = any(record.outcome is PublishOutcome.FAILED for record in records)
     return EXIT_FAILED if failed else EXIT_OK
+
+
+def run_assignment_command(settings: Settings, args: argparse.Namespace, out: TextIO) -> int:
+    """Run one `assignment` command (design §8.3).
+
+    Raises:
+        HwCheckerError: the command could not be carried out.
+    """
+    folder = build_authoring_service(settings).new_assignment(args.assignment_id, args.order)
+    print(f"Created {folder}: fill in intake.yaml and task.md, then run:", file=out)
+    print(f"  python -m hw_checker assignment draft {args.assignment_id}", file=out)
+    return EXIT_OK
 
 
 def llm_check(

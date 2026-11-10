@@ -27,6 +27,7 @@ from pydantic import BaseModel
 import hw_checker.domain
 from hw_checker.adapters.architecture_evidence.local import LocalArchitectureEvidenceReader
 from hw_checker.adapters.assignments_yaml import YamlAssignmentSource
+from hw_checker.adapters.assignments_yaml.authoring import YamlAuthoringFiles
 from hw_checker.adapters.docker_runner.engine import EngineError, SdkDockerEngine
 from hw_checker.adapters.docker_runner.runner import DockerCodeRunner
 from hw_checker.adapters.docker_runner.runner_config import (
@@ -66,6 +67,7 @@ from hw_checker.ports.llm import OutputT, TokenUsage
 from hw_checker.prompts import TEMPLATES_DIR
 from hw_checker.reporting.writer import MarkdownReportWriter
 from hw_checker.services.assignments import AssignmentCatalogService
+from hw_checker.services.authoring import AuthoringService
 from hw_checker.services.deterministic_checks import DeterministicCheckService
 from hw_checker.services.execution import ExecutionService
 from hw_checker.services.fixing import FixerConfig, FixService
@@ -173,6 +175,15 @@ def build_graph_services(settings: Settings, fixer_llm: LLMClient | None = None)
             commit_author_configured=bool(git.commit_author_name and git.commit_author_email),
         ),
         fixing=fixing,
+    )
+
+
+def build_authoring_service(settings: Settings) -> AuthoringService:
+    """The authoring service over the assignments and course folders (design §8.3)."""
+    return AuthoringService(
+        YamlAuthoringFiles(settings.assignments_dir),
+        YamlAssignmentSource(settings.assignments_dir, settings.course_dir),
+        JinjaTextTemplates(TEMPLATES_DIR, settings.course_dir / COURSE_PROMPTS),
     )
 
 

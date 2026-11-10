@@ -15,6 +15,7 @@ DOMAIN_ERRORS = [
     errors.InvalidAssignmentError,
     errors.StorageError,
     errors.NotFoundError,
+    errors.AuthoringError,
 ]
 
 

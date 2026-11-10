@@ -66,3 +66,7 @@ class NotFoundError(HwCheckerError):
 
 class CheckRegistrationError(HwCheckerError):
     """The set of registered checks is inconsistent (duplicate name, unmarked function)."""
+
+
+class AuthoringError(HwCheckerError):
+    """A new assignment cannot be created, drafted, approved or stopped (design §8.3)."""
