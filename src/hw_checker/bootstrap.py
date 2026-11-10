@@ -61,13 +61,20 @@ from hw_checker.config.settings import (
     load_settings,
 )
 from hw_checker.domain.errors import ExecutionEnvironmentError
-from hw_checker.graph import GraphServices, RoundGraph, build_round_graph
+from hw_checker.graph import (
+    AuthoringGraph,
+    GraphServices,
+    RoundGraph,
+    build_authoring_graph,
+    build_round_graph,
+)
 from hw_checker.ports import LLMClient
 from hw_checker.ports.llm import OutputT, TokenUsage
 from hw_checker.prompts import TEMPLATES_DIR
 from hw_checker.reporting.writer import MarkdownReportWriter
 from hw_checker.services.assignments import AssignmentCatalogService
 from hw_checker.services.authoring import AuthoringService
+from hw_checker.services.authoring_validation import DraftValidator
 from hw_checker.services.deterministic_checks import DeterministicCheckService
 from hw_checker.services.execution import ExecutionService
 from hw_checker.services.fixing import FixerConfig, FixService
@@ -83,6 +90,8 @@ CLONES_FOLDER = "clones"
 RUNS_FOLDER = "runs"
 CHECKPOINTS_FILE = "checkpoints.sqlite"
 FIXER_CACHE_FILE = "fixer_cache.sqlite"
+AUTHORING_FOLDER = "authoring"
+"""`<workspace>/authoring/<id>/`: the authoring reports and drafts (private)."""
 COURSE_PROMPTS = "prompts"
 """A course's own prompt frames, used instead of the package's (ADR 0023)."""
 
@@ -113,20 +122,8 @@ def build_graph_services(settings: Settings, fixer_llm: LLMClient | None = None)
     git = settings.git
     report_writer = MarkdownReportWriter(workspace / RUNS_FOLDER)
     clock = SystemClock()
-    git_client = LocalGitClient(
-        git.executable,
-        git.timeout_seconds,
-        git.commit_author_name,
-        git.commit_author_email,
-        ssl_backend=git.ssl_backend,
-        network_retries=git.network_retries,
-        retry_backoff_seconds=git.retry_backoff_seconds,
-    )
-    execution = ExecutionService(
-        DockerCodeRunner(runner_config(settings.runner), _connect_docker(settings.runner)),
-        workspace / RUNS_FOLDER,
-        settings.runner.logs_root,
-    )
+    git_client = build_git_client(settings)
+    execution = build_execution(settings)
     checker = DeterministicRequirementChecker(registry)
     checks = DeterministicCheckService(checker, git_client, LocalArchitectureEvidenceReader())
     assignment_source = YamlAssignmentSource(settings.assignments_dir, settings.course_dir)
@@ -178,17 +175,82 @@ def build_graph_services(settings: Settings, fixer_llm: LLMClient | None = None)
     )
 
 
+def build_git_client(settings: Settings) -> LocalGitClient:
+    """The git client of the round's fetches (no push token)."""
+    git = settings.git
+    return LocalGitClient(
+        git.executable,
+        git.timeout_seconds,
+        git.commit_author_name,
+        git.commit_author_email,
+        ssl_backend=git.ssl_backend,
+        network_retries=git.network_retries,
+        retry_backoff_seconds=git.retry_backoff_seconds,
+    )
+
+
+def build_execution(settings: Settings) -> ExecutionService:
+    """The execution service over Docker.
+
+    Raises:
+        ExecutionEnvironmentError: Docker cannot be reached.
+    """
+    return ExecutionService(
+        DockerCodeRunner(runner_config(settings.runner), _connect_docker(settings.runner)),
+        settings.workspace_dir.resolve() / RUNS_FOLDER,
+        settings.runner.logs_root,
+    )
+
+
 def build_authoring_service(settings: Settings, author_llm: LLMClient) -> AuthoringService:
     """The authoring service over the assignments and course folders (design §8.3).
 
-    `author_llm` (from `open_author_llm`) is the `author` role's client; its caller closes it.
+    `author_llm` (from `open_author_llm`) is the `author` role's client; its caller closes
+    it. Docker is connected only when the draft is built and run (a dry run on a reference
+    solution, or a preview with execution).
     """
+    workspace = settings.workspace_dir.resolve()
+    files = YamlAuthoringFiles(
+        settings.assignments_dir,
+        settings.course_dir,
+        workspace / AUTHORING_FOLDER,
+        workspace / CLONES_FOLDER,
+    )
+    registry = CheckRegistry(builtin_checks())
+    checks = DeterministicCheckService(
+        DeterministicRequirementChecker(registry),
+        build_git_client(settings),
+        LocalArchitectureEvidenceReader(),
+    )
+    clock = SystemClock()
+    validator = DraftValidator(
+        files,
+        registry,
+        checks,
+        functools.cache(lambda: build_execution(settings)),
+        clock,
+        settings.authoring.preview_flag_share,
+    )
     return AuthoringService(
-        YamlAuthoringFiles(settings.assignments_dir, settings.course_dir),
+        files,
         YamlAssignmentSource(settings.assignments_dir, settings.course_dir),
         JinjaTextTemplates(TEMPLATES_DIR, settings.course_dir / COURSE_PROMPTS),
-        CheckRegistry(builtin_checks()),
+        registry,
         author_llm,
+        validator,
+        clock,
+    )
+
+
+def build_authoring_graph_from_settings(
+    settings: Settings, author_llm: LLMClient, checkpointer: Checkpointer = None
+) -> AuthoringGraph:
+    """Build the authoring graph (design §7); `author_llm` is from `open_author_llm`."""
+    return build_authoring_graph(
+        build_authoring_service(settings, author_llm),
+        settings.authoring.max_attempts,
+        settings.authoring.reply_attempts,
+        checkpointer,
     )
 
 
@@ -264,6 +326,23 @@ def build_round_graph_from_settings(
         checkpointer,
         fixer_cache(settings),
     )
+
+
+@functools.cache
+def studio_authoring_graph() -> AuthoringGraph:
+    """The `authoring` graph for LangGraph Studio (`langgraph.json`), next to `round`.
+
+    It has no checkpointer: the dev server supplies its own. The author's LLM client opens
+    on its first call and closes when the server process exits.
+
+    Raises:
+        ConfigurationError: the settings are invalid, or LangSmith tracing is on.
+    """
+    require_tracing_off()
+    settings = load_settings()
+    configure_logging(settings)
+    author_llm = _STUDIO_RESOURCES.enter_context(open_author_llm(settings))
+    return build_authoring_graph_from_settings(settings, author_llm)
 
 
 @functools.cache

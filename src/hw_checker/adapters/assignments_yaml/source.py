@@ -118,7 +118,8 @@ class YamlAssignmentSource:
             count = f"{len(problems)} problem{'' if len(problems) == 1 else 's'}"
             raise InvalidAssignmentError(
                 f"Invalid assignment data in {self._dir} ({count}). {README_HINT}\n"
-                + "\n".join(f"- {problem}" for problem in problems)
+                + "\n".join(f"- {problem}" for problem in problems),
+                tuple(problems),
             )
         assignments = tuple(sorted((item.assignment for item in loaded), key=lambda a: a.order))
         return Course(profile=profile, rules=course_rules), assignments

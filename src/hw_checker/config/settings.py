@@ -341,6 +341,20 @@ class FixerSettings(BaseModel):
     skip_dirs: tuple[NonBlankText, ...] = ("bin", "obj", ".git", ".vs", ".vscode", "node_modules")
 
 
+class AuthoringSettings(BaseModel):
+    """Adding an assignment (stage 16, design §8.3)."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    max_attempts: int = Field(default=3, ge=1, le=10)
+    """Drafts per run while validation fails; then the run stops with the report."""
+    reply_attempts: int = Field(default=2, ge=1, le=5)
+    """Calls per draft when the author's reply cannot be read (RetryPolicy)."""
+    preview_flag_share: float = Field(default=0.9, gt=0, le=1)
+    """A drafted requirement that fails at least this share of the repos it could evaluate
+    in the preview is flagged in the report."""
+
+
 class Settings(BaseSettings):
     """All runtime settings.
 
@@ -373,6 +387,7 @@ class Settings(BaseSettings):
     github_token: SecretStr | None = None
     fixer: FixerSettings = FixerSettings()
     """The publishing account's token: a classic PAT with the `public_repo` scope only."""
+    authoring: AuthoringSettings = AuthoringSettings()
 
     @model_validator(mode="after")
     def _fixer_needs_the_lecturers_approval(self) -> Self:

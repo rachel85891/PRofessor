@@ -227,3 +227,14 @@ fixer:
   data_suffixes: [.txt, .json]
   ignored_globs: [launchSettings.json, "*.deps.json", "*.runtimeconfig.json", global.json]
   skip_dirs: [bin, obj, .git, .vs, .vscode, node_modules]
+
+authoring:
+  # Adding an assignment (stage 16, assignments/README.md "Adding an assignment"). The author
+  # role sees the task text, the intake and the course's files, never students' code.
+  # Drafts per run while validation fails; then the run stops with its report.
+  max_attempts: 3
+  # Calls per draft when the author's reply cannot be read.
+  reply_attempts: 2
+  # The preview flags a drafted requirement that fails at least this share of the
+  # workspace clones it could evaluate.
+  preview_flag_share: 0.9

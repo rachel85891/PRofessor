@@ -13,8 +13,13 @@ from hw_checker.domain.authoring import AssignmentIntake
 from hw_checker.domain.errors import AuthoringError, InvalidAssignmentError
 from hw_checker.prompts import TEMPLATES_DIR
 from hw_checker.services.authoring import AuthoringService
+from hw_checker.services.authoring_validation import DraftValidator
+from hw_checker.services.deterministic_checks import DeterministicCheckService
+from hw_checker.services.execution import ExecutionService
 from tests.fakes.assignments import FakeAssignmentSource
-from tests.fakes.checks import FakeCheckCatalog
+from tests.fakes.checks import FakeCheckCatalog, FakeRequirementChecker
+from tests.fakes.clock import FakeClock
+from tests.fakes.execution import FakeCodeRunner
 from tests.fakes.llm import FakeLLMClient
 
 GENERAL = Assignment(id="_general", order=0, title="General", requirements=())
@@ -28,6 +33,15 @@ def _service(assignments_dir: Path) -> AuthoringService:
         JinjaTextTemplates(TEMPLATES_DIR),
         FakeCheckCatalog(),
         FakeLLMClient(),
+        DraftValidator(
+            YamlAuthoringFiles(assignments_dir, assignments_dir.parent / "course"),
+            FakeCheckCatalog(),
+            DeterministicCheckService(FakeRequirementChecker()),
+            lambda: ExecutionService(FakeCodeRunner(), assignments_dir, Path("logs")),
+            FakeClock(),
+            0.9,
+        ),
+        FakeClock(),
     )
 
 

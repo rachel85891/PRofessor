@@ -6,17 +6,13 @@ from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict
 
-from hw_checker.adapters.assignments_yaml import YamlAssignmentSource
-from hw_checker.adapters.assignments_yaml.authoring import YamlAuthoringFiles
-from hw_checker.adapters.jinja_templates import JinjaTextTemplates
 from hw_checker.checks.deterministic.builtin import builtin_checks
 from hw_checker.checks.registry import CheckFunction, CheckRegistry, CheckResult, check
 from hw_checker.domain import CheckInput, ItemStatus
 from hw_checker.domain.authoring import AuthorReply
-from hw_checker.prompts import TEMPLATES_DIR
 from hw_checker.services.authoring import AuthoringService
 from tests.fakes.llm import FakeLLMClient
-from tests.unit.services.authoring_data import make_folders, valid_reply
+from tests.unit.services.authoring_data import build_service, valid_reply
 
 
 class _OnlyLetters(BaseModel):
@@ -35,14 +31,7 @@ def _short_names(check_input: CheckInput, params: _OnlyLetters) -> CheckResult:
 def service(
     root: Path, llm: FakeLLMClient | None = None, checks: tuple[CheckFunction, ...] = ()
 ) -> AuthoringService:
-    assignments, course = make_folders(root)
-    return AuthoringService(
-        YamlAuthoringFiles(assignments, course),
-        YamlAssignmentSource(assignments, course),
-        JinjaTextTemplates(TEMPLATES_DIR),
-        CheckRegistry((*builtin_checks(), *checks)),
-        llm or FakeLLMClient(),
-    )
+    return build_service(root, llm, checks=checks)
 
 
 def test_the_prompt_lists_every_registered_check_with_its_params_schema(tmp_path: Path) -> None:

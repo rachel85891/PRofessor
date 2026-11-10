@@ -5,6 +5,7 @@ The developer writes `assignments/<id>/intake.yaml` (`AssignmentIntake`) and `ta
 the `author` role drafts the requirements and review rules from them (`AuthorReply`).
 """
 
+from enum import StrEnum
 from typing import Annotated, Literal, Self
 
 from pydantic import Field, StringConstraints, model_validator
@@ -215,3 +216,182 @@ class DataFile(DomainModel):
 
     label: NonBlankStr
     text: str
+
+
+class DraftFiles(DomainModel):
+    """A drafted assignment's two files, as the text written to its folder."""
+
+    requirements: str
+    review_rules: str
+
+
+class DryRunStatus(StrEnum):
+    """What the dry run on the reference solution found."""
+
+    PASSED = "passed"
+    FAILED = "failed"
+    SKIPPED = "skipped"
+    """There is no `reference/` folder."""
+    NOT_RUN = "not_run"
+    """The draft is invalid, so it was not run."""
+
+
+class DryRun(DomainModel):
+    """The drafted requirements on the reference solution: every one must pass.
+
+    `failures` and `not_evaluated` are `<requirement id>: <what happened>` lines; a
+    requirement that cannot be evaluated there is shown, but is not a failure.
+    """
+
+    status: DryRunStatus
+    failures: tuple[str, ...] = ()
+    not_evaluated: tuple[str, ...] = ()
+
+    def failed(self, requirement_id: str) -> bool:
+        """Whether `requirement_id` failed on the reference solution."""
+        return any(line.startswith(f"{requirement_id}: ") for line in self.failures)
+
+
+class PreviewCount(DomainModel):
+    """One drafted requirement over the workspace clones: how many repos fail, pass or
+    could not be evaluated. Counts only, never names."""
+
+    requirement_id: Identifier
+    failed: int = Field(ge=0)
+    passed: int = Field(ge=0)
+    not_evaluated: int = Field(ge=0)
+    flagged: bool = False
+    """It fails at least the configured share of the repos it could evaluate."""
+
+
+class PreviewStatus(StrEnum):
+    """Whether the preview ran."""
+
+    RAN = "ran"
+    NO_REPOS = "no_repos"
+    NOT_RUN = "not_run"
+    """The draft is invalid, so it was not run."""
+
+
+class Preview(DomainModel):
+    """The drafted deterministic requirements on the workspace clones' working copies.
+
+    Without execution, only the requirements whose checks read files (`structure` and
+    `custom`) are run; `left_out` lists the others.
+    """
+
+    status: PreviewStatus
+    with_execution: bool = False
+    repos: int = Field(default=0, ge=0)
+    errors: int = Field(default=0, ge=0)
+    """Repos that could not be previewed at all."""
+    counts: tuple[PreviewCount, ...] = ()
+    left_out: tuple[Identifier, ...] = ()
+
+    def count(self, requirement_id: str) -> PreviewCount | None:
+        """The counts of `requirement_id`; None when it was not previewed."""
+        return next((c for c in self.counts if c.requirement_id == requirement_id), None)
+
+
+class RuleChanges(DomainModel):
+    """The review rules and examples in effect for the new assignment, against the
+    previous assignment's: new, replacing an earlier one (`new (replaces old)`), and ended."""
+
+    new: tuple[str, ...] = ()
+    replaced: tuple[str, ...] = ()
+    ended: tuple[str, ...] = ()
+
+
+class Coverage(DomainModel):
+    """One intake item and the drafted items that cover it."""
+
+    key: NonBlankStr
+    text: NonBlankStr
+    covered_by: tuple[Identifier, ...] = ()
+
+
+class ValidationReport(DomainModel):
+    """What the deterministic validation found (design §8.3, stage 6)."""
+
+    problems: tuple[str, ...] = ()
+    """Schema, catalog and origin problems, all listed together."""
+    coverage: tuple[Coverage, ...] = ()
+    dry_run: DryRun
+    preview: Preview
+    changes: RuleChanges = RuleChanges()
+
+    @property
+    def uncovered(self) -> tuple[Coverage, ...]:
+        """The intake items no drafted item covers."""
+        return tuple(item for item in self.coverage if not item.covered_by)
+
+    @property
+    def passed(self) -> bool:
+        """No problem, every intake item covered, and nothing failed the reference solution."""
+        return (
+            not self.problems
+            and not self.uncovered
+            and self.dry_run.status is not DryRunStatus.FAILED
+        )
+
+    @property
+    def reasons(self) -> tuple[str, ...]:
+        """Why the draft goes back to the author: every problem, uncovered item and failure
+        on the reference solution."""
+        uncovered = tuple(
+            f"intake item `{item.key}` is not covered by any requirement, rule or example: "
+            f"{item.text}"
+            for item in self.uncovered
+        )
+        failures = tuple(
+            f"fails the reference solution, which must pass it: {line}"
+            for line in self.dry_run.failures
+        )
+        return self.problems + uncovered + failures
+
+
+class AuthoringAction(StrEnum):
+    """The developer's answer at the authoring graph's approval."""
+
+    APPROVE = "approve"
+    REVISE = "revise"
+    STOP = "stop"
+
+
+class AuthoringDecision(DomainModel):
+    """The resume value of the approval interrupt: approve, revise with notes, or stop."""
+
+    action: AuthoringAction
+    notes: tuple[NonBlankStr, ...] = ()
+
+    @model_validator(mode="after")
+    def _notes_go_with_revise(self) -> Self:
+        if self.action is AuthoringAction.REVISE and not self.notes:
+            raise ValueError("revise needs at least one note: what must change")
+        if self.action is not AuthoringAction.REVISE and self.notes:
+            raise ValueError("notes go with revise only")
+        return self
+
+
+class AuthoringPrompt(DomainModel):
+    """The approval interrupt's payload: where the report is and how to answer."""
+
+    assignment_id: Identifier
+    report_path: str
+    attempt: int = Field(ge=1)
+    message: str = ""
+    """Why the last answer was not applied; empty when there was none."""
+    answer: str = (
+        '{"action": "approve"}, {"action": "revise", "notes": ["what must change"]} '
+        'or {"action": "stop"}'
+    )
+
+
+class AuthoringOutcome(StrEnum):
+    """How an authoring run ended."""
+
+    APPROVED = "approved"
+    STOPPED = "stopped"
+    FAILED = "failed"
+    """Validation still failed after `authoring.max_attempts` drafts; nothing was written
+    to the assignment's folder."""

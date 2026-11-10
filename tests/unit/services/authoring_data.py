@@ -6,7 +6,21 @@ from typing import Any
 
 import yaml
 
+from hw_checker.adapters.assignments_yaml import YamlAssignmentSource
+from hw_checker.adapters.assignments_yaml.authoring import YamlAuthoringFiles
+from hw_checker.adapters.jinja_templates import JinjaTextTemplates
+from hw_checker.checks.deterministic.builtin import builtin_checks
+from hw_checker.checks.deterministic.checker import DeterministicRequirementChecker
+from hw_checker.checks.registry import CheckFunction, CheckRegistry
 from hw_checker.domain.authoring import AuthorReply, DraftedRequirement, DraftedRule
+from hw_checker.prompts import TEMPLATES_DIR
+from hw_checker.services.authoring import AuthoringService
+from hw_checker.services.authoring_validation import DraftValidator
+from hw_checker.services.deterministic_checks import DeterministicCheckService
+from hw_checker.services.execution import ExecutionService
+from tests.fakes.clock import FakeClock
+from tests.fakes.execution import FakeCodeRunner
+from tests.fakes.llm import FakeLLMClient
 from tests.unit.domain import builders
 
 TASK_TEXT = (
@@ -149,3 +163,47 @@ def valid_reply() -> AuthorReply:
         requirements=(post_requirement(), projects_requirement()),
         rules=(not_yet_taught_rule(),),
     )
+
+
+def build_service(
+    root: Path,
+    llm: FakeLLMClient | None = None,
+    runner: FakeCodeRunner | None = None,
+    checks: tuple[CheckFunction, ...] = (),
+    flag_share: float = 0.9,
+) -> AuthoringService:
+    """The authoring service over the synthetic folders under `root` (written first when
+    they are missing), with the real check registry and checker, a fake runner, LLM and
+    clock. Clones go in `root/workspace/clones`, reports in `root/workspace/authoring`."""
+    assignments, course = root / "assignments", root / "course"
+    if not assignments.exists():
+        make_folders(root)
+    workspace = root / "workspace"
+    files = YamlAuthoringFiles(assignments, course, workspace / "authoring", workspace / "clones")
+    registry = CheckRegistry((*builtin_checks(), *checks))
+    execution = ExecutionService(runner or FakeCodeRunner(), workspace / "runs", Path("logs"))
+    validator = DraftValidator(
+        files,
+        registry,
+        DeterministicCheckService(DeterministicRequirementChecker(registry)),
+        lambda: execution,
+        FakeClock(),
+        flag_share,
+    )
+    return AuthoringService(
+        files,
+        YamlAssignmentSource(assignments, course),
+        JinjaTextTemplates(TEMPLATES_DIR),
+        registry,
+        llm or FakeLLMClient(),
+        validator,
+        FakeClock(),
+    )
+
+
+def make_repo(folder: Path, projects: int) -> Path:
+    """A synthetic working copy with `projects` `.csproj` files (and a `.git` folder)."""
+    (folder / ".git").mkdir(parents=True, exist_ok=True)
+    for number in range(projects):
+        write(folder / f"P{number}" / f"P{number}.csproj", "<Project />\n")
+    return folder

@@ -5,22 +5,34 @@ import logging
 import re
 from pathlib import Path
 
-from hw_checker.domain import Assignment
-from hw_checker.domain.authoring import AssignmentIntake, AuthorReply, DataFile
+from hw_checker.domain import Assignment, OriginSource
+from hw_checker.domain.authoring import (
+    AssignmentIntake,
+    AuthorReply,
+    DataFile,
+    DraftedExample,
+    DraftedRequirement,
+    DraftedRule,
+    DraftFiles,
+    ValidationReport,
+)
 from hw_checker.domain.course import ItemStatus
 from hw_checker.domain.errors import AuthoringError
 from hw_checker.ports import (
     AssignmentSource,
     AuthoringFiles,
     CheckCatalog,
+    Clock,
     LLMClient,
     TextTemplates,
 )
+from hw_checker.services.authoring_validation import DraftValidator
 
 logger = logging.getLogger(__name__)
 
 INTAKE_TEMPLATE = "intake.yaml.j2"
 AUTHOR_TEMPLATE = "author.md.j2"
+REPORT_TEMPLATE = "authoring_report.md.j2"
 AUTHOR_ROLE = "author"
 _COMMENT_LINE = re.compile(r"^[ \t]*#(?: .*)?(?:\n|\Z)", re.MULTILINE)
 """A YAML comment line (`# ...` or a bare `#`), left out of the files shown to the author."""
@@ -30,8 +42,9 @@ ASSIGNMENT_ID = re.compile(r"^[A-Za-z][A-Za-z0-9_-]*$")
 
 
 class AuthoringService:
-    """Creates a new assignment's folder from the intake template, and drafts its
-    requirements and review rules with the `author` role.
+    """Adds an assignment (design §8.3): creates its folder from the intake template,
+    drafts its requirements and review rules with the `author` role, validates the draft,
+    writes the developer's report, and writes the files as a draft, then approved.
 
     The author sees the task text, the intake, the course's and the earlier assignments'
     files and the check catalog; never a student's code (ADR 0023).
@@ -44,12 +57,16 @@ class AuthoringService:
         templates: TextTemplates,
         catalog: CheckCatalog,
         llm: LLMClient,
+        validator: DraftValidator,
+        clock: Clock,
     ) -> None:
         self._files = files
         self._source = source
         self._templates = templates
         self._catalog = catalog
         self._llm = llm
+        self._validator = validator
+        self._clock = clock
 
     def load_intake(self, assignment_id: str) -> AssignmentIntake:
         """The intake of `assignment_id`, after checking its task text is there.
@@ -87,6 +104,102 @@ class AuthoringService:
             intake.id,
         )
         return as_drafts(reply)
+
+    def validate(
+        self, intake: AssignmentIntake, reply: AuthorReply, with_execution: bool = False
+    ) -> ValidationReport:
+        """Validate the draft deterministically (`DraftValidator.validate`).
+
+        Raises:
+            AuthoringError: the task text cannot be read.
+            ExecutionEnvironmentError: Docker cannot be reached for the dry run.
+        """
+        return self._validator.validate(intake, reply, with_execution)
+
+    def write_report(
+        self,
+        intake: AssignmentIntake,
+        reply: AuthorReply,
+        report: ValidationReport,
+        attempt: int,
+        max_attempts: int,
+        failed: bool = False,
+    ) -> Path:
+        """Write `authoring_report.md` (and the draft as JSON) to the private authoring
+        folder; return the report's path. `failed` says the last attempt still failed.
+
+        Raises:
+            AuthoringError: the report cannot be written.
+        """
+        assignment = Assignment(
+            id=intake.id, order=intake.order, title=intake.title, requirements=()
+        )
+        text = self._templates.render(
+            REPORT_TEMPLATE,
+            {
+                "assignment": assignment,
+                "attempt": attempt,
+                "max_attempts": max_attempts,
+                "stopped": failed,
+                "report": report,
+                "items": _report_items(reply, report),
+                "suggestions": list(reply.frame_suggestions),
+            },
+        )
+        path = self._files.write_report(intake.id, text, reply)
+        logger.info("The authoring report of %s is at %s", intake.id, path)
+        return path
+
+    def stage(self, intake: AssignmentIntake, reply: AuthorReply) -> DraftFiles:
+        """Write the validated draft to the assignment's folder with `status: draft`, so a
+        round refuses the assignment until it is approved; return what was written.
+
+        Raises:
+            AuthoringError: the files cannot be written.
+        """
+        files = self._files.draft_files(intake, as_drafts(reply), None)
+        self._files.write_files(intake.id, files)
+        return files
+
+    def approve(
+        self, intake: AssignmentIntake, reply: AuthorReply, staged: DraftFiles
+    ) -> tuple[Path, ...]:
+        """Write the draft with every item `status: approved`, the origins kept and the
+        approval day in the first comment line; return the paths written.
+
+        Raises:
+            AuthoringError: the drafted files were changed by hand since they were
+                written (nothing is approved), or cannot be written.
+        """
+        if self._files.read_files(intake.id) != staged:
+            raise AuthoringError(
+                f"The drafted files of {intake.id} were changed since the report was "
+                "written, so they were not approved. Say what to change with `revise "
+                "--note`, or restore the files and approve again."
+            )
+        files = self._files.draft_files(
+            intake, with_status(reply, ItemStatus.APPROVED), self._clock.now().date()
+        )
+        written = self._files.write_files(intake.id, files)
+        logger.info("Approved %s: %s", intake.id, ", ".join(str(path) for path in written))
+        return written
+
+    def stop(self, assignment_id: str, staged: DraftFiles | None) -> bool:
+        """Remove the drafted files written for the approval (`staged`), so nothing of the
+        draft stays in the assignment's folder. Files changed by hand since are left as
+        they are; return False then.
+
+        Raises:
+            AuthoringError: the files cannot be read or removed.
+        """
+        current = self._files.read_files(assignment_id)
+        if staged is None or current is None:
+            return True
+        if current != staged:
+            logger.warning("The drafted files of %s were changed by hand; kept", assignment_id)
+            return False
+        self._files.remove_files(assignment_id)
+        return True
 
     def author_prompt(
         self,
@@ -164,14 +277,63 @@ class AuthoringService:
 def as_drafts(reply: AuthorReply) -> AuthorReply:
     """`reply` with every requirement, rule and example a draft: only the developer
     approves."""
-    draft = {"status": ItemStatus.DRAFT}
+    return with_status(reply, ItemStatus.DRAFT)
+
+
+def with_status(reply: AuthorReply, status: ItemStatus) -> AuthorReply:
+    """`reply` with every requirement, rule and example in `status`."""
+    update = {"status": status}
     return reply.model_copy(
         update={
-            "requirements": tuple(r.model_copy(update=draft) for r in reply.requirements),
-            "rules": tuple(r.model_copy(update=draft) for r in reply.rules),
-            "examples": tuple(e.model_copy(update=draft) for e in reply.examples),
+            "requirements": tuple(r.model_copy(update=update) for r in reply.requirements),
+            "rules": tuple(r.model_copy(update=update) for r in reply.rules),
+            "examples": tuple(e.model_copy(update=update) for e in reply.examples),
         }
     )
+
+
+def _report_items(reply: AuthorReply, report: ValidationReport) -> list[dict[str, object]]:
+    """Every drafted item for the report, the inferred ones first, with its flags."""
+    rows: list[dict[str, object]] = []
+    for item in reply.items:
+        inferred = item.origin.source is OriginSource.INFERRED
+        flags = ["inferred: confirm with the lecturer"] if inferred else []
+        if report.dry_run.failed(item.id):
+            flags.append("fails the reference solution")
+        count = report.preview.count(item.id)
+        if count is not None and count.flagged:
+            flags.append(f"fails {count.failed} of {count.failed + count.passed} repos")
+        rows.append(
+            {
+                "id": item.id,
+                "what": _what(item),
+                "summary": item.summary,
+                "origin": _origin_text(item),
+                "flags": flags,
+                "inferred": inferred,
+            }
+        )
+    return sorted(rows, key=lambda row: not row["inferred"])
+
+
+def _what(item: DraftedRequirement | DraftedRule | DraftedExample) -> str:
+    if isinstance(item, DraftedRequirement):
+        return f"a {item.severity.value} {item.kind.value} requirement"
+    if isinstance(item, DraftedRule):
+        roles = " and ".join(role.value for role in item.applies_to)
+        return f"a {item.kind.value} rule for the {roles}"
+    return "a fixer example"
+
+
+def _origin_text(item: DraftedRequirement | DraftedRule | DraftedExample) -> str:
+    origin = item.origin
+    if origin.source is OriginSource.TASK_TEXT:
+        return f'the task text: "{origin.quote}"'
+    if origin.source is OriginSource.INTAKE:
+        quote = f': "{origin.quote}"' if origin.quote else ""
+        return f"the intake, `{origin.item}`{quote}"
+    reason = f" ({origin.quote})" if origin.quote else ""
+    return f"inferred by the author{reason}"
 
 
 def _shown(file: DataFile) -> DataFile:
