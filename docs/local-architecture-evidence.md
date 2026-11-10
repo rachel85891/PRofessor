@@ -63,12 +63,3 @@ reuse the Web-project discovery operation as a classifier: that operation choose
 project for execution and does not represent a complete project-reference inventory.
 The existing general `SourceFiles` capability is for fixer working copies, has no bounded
 inventory result, and is not appropriate for this untrusted read-only scan.
-
-## Later pilot and cost measurement
-
-Keep the first pilot local, deterministic, and without a fixer or new LLM role. After
-separate approval of a small sample, record by stage and role: request/call count, input
-and output tokens, cache hits where observable, real premium requests or billing when
-available, and adjudicated signal accuracy plus coverage and ambiguity rates. Compare
-one versus two fixer attempts only in a separately approved follow-up. Token counts are
-not dollar estimates, and cache hits or future savings must not be assumed.
