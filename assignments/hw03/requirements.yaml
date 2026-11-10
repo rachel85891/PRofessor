@@ -1,0 +1,130 @@
+# Assignment 3: dependency injection over the layer projects.
+# Stage 21, approved by the developer on 2026-11-10 (planner/tasks/hw02-hw03-layers-di-draft.md).
+# The lecturer's text isn't available: drafted from the developer's memory and a survey of
+# the repos. One path per repo: HW03 once DI has started (`applies_when`, the same params as
+# hw02's `skip_when`). HW03 repeats hw02's two structure checks, so a DI repo with a broken
+# layer hears about it (design §7). Every requirement is major and notes only, and needs the
+# layer projects (`depends_on`). The short name is HW3.
+id: hw03
+order: 3
+title: Dependency injection over the layer projects
+applies_when:
+  check: di_started
+  params:
+    min_registrations: 0
+    min_interface_constructors: 1
+requirements:
+  # Stage 21, approved by the developer on 2026-11-10 (planner/tasks/hw02-hw03-layers-di-draft.md)
+  - id: hw03-layer-projects
+    kind: structure
+    title: The code is split into the four layer projects (API, Entities, Services, Repositories)
+    severity: major
+    feedback: notes_only
+    check: layer_projects
+    params:
+      # The roles, defined once in this file (the anchor) and the same as in hw02.
+      roles: &roles
+        api: {sdk: Microsoft.NET.Sdk.Web, name: "api|web"}
+        entities: {name: "entit|model|dto|domain"}
+        services: {name: "servic|business|\\bbl\\b|logic"}
+        repositories: {name: "repositor|\\bdal\\b|data|access"}
+      required: [api, entities, services, repositories]
+
+  # Stage 21, approved by the developer on 2026-11-10 (planner/tasks/hw02-hw03-layers-di-draft.md)
+  - id: hw03-references
+    kind: structure
+    title: The projects reference each other by the layers (API → Services → Repositories, all → Entities)
+    description: >-
+      No reference skips or reverses a layer: not API → Repositories, not Repositories →
+      Services, and Entities references no layer.
+    severity: major
+    feedback: notes_only
+    depends_on: [hw03-layer-projects]
+    check: layer_references
+    params:
+      roles: *roles
+      required: [[api, services], [services, repositories], [services, entities], [repositories, entities]]
+      forbidden: [[api, repositories], [repositories, services], [services, api], [entities, "*"]]
+
+  # Stage 21, approved by the developer on 2026-11-10 (planner/tasks/hw02-hw03-layers-di-draft.md)
+  # The draft's hw03-service-interfaces has two conditions, one check each: this
+  # requirement and hw03-service-interfaces-taken.
+  - id: hw03-service-interfaces
+    kind: custom
+    title: Every service class implements an interface
+    severity: major
+    feedback: notes_only
+    depends_on: [hw03-layer-projects]
+    check: implements_interface
+    params:
+      roles: *roles
+      role: services
+
+  # Stage 21, approved by the developer on 2026-11-10 (planner/tasks/hw02-hw03-layers-di-draft.md)
+  - id: hw03-service-interfaces-taken
+    kind: custom
+    title: Every controller constructor that takes a service takes its interface, not the class
+    severity: major
+    feedback: notes_only
+    depends_on: [hw03-layer-projects]
+    check: constructor_takes_interface
+    params:
+      roles: *roles
+      consumer: api
+      dependency: services
+
+  # Stage 21, approved by the developer on 2026-11-10 (planner/tasks/hw02-hw03-layers-di-draft.md)
+  # The draft's hw03-repository-interfaces, split the same way.
+  - id: hw03-repository-interfaces
+    kind: custom
+    title: Every repository class implements an interface
+    severity: major
+    feedback: notes_only
+    depends_on: [hw03-layer-projects]
+    check: implements_interface
+    params:
+      roles: *roles
+      role: repositories
+
+  # Stage 21, approved by the developer on 2026-11-10 (planner/tasks/hw02-hw03-layers-di-draft.md)
+  - id: hw03-repository-interfaces-taken
+    kind: custom
+    title: Every service constructor that takes a repository takes its interface, not the class
+    severity: major
+    feedback: notes_only
+    depends_on: [hw03-layer-projects]
+    check: constructor_takes_interface
+    params:
+      roles: *roles
+      consumer: services
+      dependency: repositories
+
+  # Stage 21, approved by the developer on 2026-11-10 (planner/tasks/hw02-hw03-layers-di-draft.md)
+  - id: hw03-registered
+    kind: custom
+    title: Every interface a constructor in the API or services project takes is registered
+    description: >-
+      With `AddScoped`, `AddTransient` or `AddSingleton` (either form) and that interface as
+      the service type.
+    severity: major
+    feedback: notes_only
+    depends_on: [hw03-layer-projects]
+    check: interfaces_registered
+    params:
+      roles: *roles
+      consumers: [api, services]
+
+  # Stage 21, approved by the developer on 2026-11-10 (planner/tasks/hw02-hw03-layers-di-draft.md)
+  - id: hw03-no-new-dependencies
+    kind: custom
+    title: Controllers and services never create a service or repository class with new
+    description: >-
+      The DI container creates them. Creating models, DTOs and lists with `new` is fine.
+    severity: major
+    feedback: notes_only
+    depends_on: [hw03-layer-projects]
+    check: no_concrete_construction
+    params:
+      roles: *roles
+      in: [api, services]
+      of: [services, repositories]

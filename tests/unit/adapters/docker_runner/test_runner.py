@@ -437,7 +437,7 @@ def test_hw01_numeric_password_adaptation_and_evaluation(
         "    public int Password { get; set; }\n}\n"
     )
     (repo / "Controllers" / "ProductsController.cs").write_text(controller, encoding="utf-8")
-    _, assignment = catalog().list_assignments()
+    _, assignment, *_ = catalog().list_assignments()
     requirements = {r.id: r for r in assignment.requirements}
     create = requirements["hw01-create"]
     read_back = requirements["hw01-read-back"]

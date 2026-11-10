@@ -1,0 +1,62 @@
+# Assignment 2: the users API split into layer projects.
+# Stage 21, approved by the developer on 2026-11-10 (planner/tasks/hw02-hw03-layers-di-draft.md).
+# The lecturer's text isn't available: drafted from the developer's memory and a survey of
+# the repos. One path per repo: HW02 until DI has started, then HW03 (`skip_when`). Every
+# requirement is major and notes only (architecture feedback, design §7). The hw01 HTTP
+# requirements still run on the same commit (regression); the short name is HW2.
+id: hw02
+order: 2
+title: Users API split into layer projects
+skip_when:
+  check: di_started
+  params:
+    min_registrations: 0
+    min_interface_constructors: 1
+requirements:
+  # Stage 21, approved by the developer on 2026-11-10 (planner/tasks/hw02-hw03-layers-di-draft.md)
+  - id: hw02-layer-projects
+    kind: structure
+    title: The code is split into the four layer projects (API, Entities, Services, Repositories)
+    severity: major
+    feedback: notes_only
+    check: layer_projects
+    params:
+      # The roles, defined once in this file (the anchor) and the same in hw03.
+      roles: &roles
+        api: {sdk: Microsoft.NET.Sdk.Web, name: "api|web"}
+        entities: {name: "entit|model|dto|domain"}
+        services: {name: "servic|business|\\bbl\\b|logic"}
+        repositories: {name: "repositor|\\bdal\\b|data|access"}
+      required: [api, entities, services, repositories]
+
+  # Stage 21, approved by the developer on 2026-11-10 (planner/tasks/hw02-hw03-layers-di-draft.md)
+  - id: hw02-references
+    kind: structure
+    title: The projects reference each other by the layers (API → Services → Repositories, all → Entities)
+    description: >-
+      No reference skips or reverses a layer: not API → Repositories, not Repositories →
+      Services, and Entities references no layer.
+    severity: major
+    feedback: notes_only
+    depends_on: [hw02-layer-projects]
+    check: layer_references
+    params:
+      roles: *roles
+      required: [[api, services], [services, repositories], [services, entities], [repositories, entities]]
+      forbidden: [[api, repositories], [repositories, services], [services, api], [entities, "*"]]
+
+  # Stage 21, approved by the developer on 2026-11-10 (planner/tasks/hw02-hw03-layers-di-draft.md)
+  - id: hw02-file-access-in-repositories
+    kind: custom
+    title: The data file is read and written only in the repositories project
+    description: >-
+      `File.*`, `StreamReader`/`StreamWriter` and `FileStream` appear only in the
+      repositories project, not in controllers or services.
+    severity: major
+    feedback: notes_only
+    depends_on: [hw02-layer-projects]
+    check: code_only_in_layer
+    params:
+      roles: *roles
+      patterns: ['\bFile\.\w+', '\bStreamReader\b', '\bStreamWriter\b', '\bFileStream\b']
+      allowed: [repositories]

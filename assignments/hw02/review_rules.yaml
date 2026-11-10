@@ -1,0 +1,100 @@
+# yaml-language-server: $schema=../../course/schemas/review_rules.schema.json
+# hw02's own review rules (stage 21, approved by the developer on 2026-11-10,
+# planner/tasks/hw02-hw03-layers-di-draft.md). Architecture feedback is notes only
+# (`feedback: notes_only`, enforced in code since stage 20); these rules give each group of
+# requirements its note, in the approved style. The layer notes also cover hw03's repeated
+# layer checks (`when_found` names both), and every rule here applies to hw03 too.
+rules:
+  - id: layer-projects-note
+    applies_to: [fixer, judge]
+    kind: note_only
+    when_found: [hw02-layer-projects, hw03-layer-projects]
+    text: >-
+      When the code is not split into the four layer projects (the API, Entities, Services
+      and Repositories), add one note above the controller class, in the wording of this
+      rule's example; never create, move or rename a project or a file.
+    example:
+      file: Controllers/UsersController.cs
+      find: "    public class UsersController : ControllerBase"
+      replace: "    //The assignment asks to split the code into four projects: the API, Entities, Services and Repositories\n    public class UsersController : ControllerBase"
+    approved_notes:
+      - words: The assignment asks to split the code into four projects
+        what: the note about the four layer projects
+    never_a_violation: >-
+      The note of rule {rule:layer-projects-note} about splitting the code into the four
+      layer projects.
+    origin:
+      source: developer
+      quote: "developer decision 2026-11-10 (planner/tasks/hw02-hw03-layers-di-draft.md)"
+    status: approved
+
+  - id: layer-references-note
+    applies_to: [fixer, judge]
+    kind: note_only
+    when_found: [hw02-references, hw03-references]
+    text: >-
+      When a project reference skips or reverses a layer (the API uses Repositories
+      directly, Repositories uses Services), add a note where the code uses the wrong layer,
+      in the wording of this rule's example; never change a project reference or a `using`.
+    example:
+      file: Controllers/UsersController.cs
+      find: "        private readonly UserRepository _repository;"
+      replace: "        //The assignment asks the controller to use the service, not the repository: the API project references Services, and Services references Repositories\n        private readonly UserRepository _repository;"
+    approved_notes:
+      - words: The assignment asks the controller to use the service, not the repository
+        what: the note about a reference that skips a layer
+    never_a_violation: >-
+      The note of rule {rule:layer-references-note} about a reference that skips or reverses
+      a layer.
+    origin:
+      source: developer
+      quote: "developer decision 2026-11-10 (planner/tasks/hw02-hw03-layers-di-draft.md)"
+    status: approved
+
+  - id: file-access-note
+    applies_to: [fixer, judge]
+    kind: note_only
+    when_found: [hw02-file-access-in-repositories]
+    text: >-
+      When the data file is read or written outside the repositories project (in a
+      controller or a service), add a note above that code, in the wording of this rule's
+      example; never move the code.
+    example:
+      file: Services/UserService.cs
+      find: "            var lines = File.ReadAllLines(_filePath);"
+      replace: "            //The assignment asks to read and write the data file only in the repositories project: the service calls the repository\n            var lines = File.ReadAllLines(_filePath);"
+    approved_notes:
+      - words: The assignment asks to read and write the data file only in the repositories project
+        what: the note about file access outside the repositories project
+    never_a_violation: >-
+      The note of rule {rule:file-access-note} about reading or writing the data file
+      outside the repositories project.
+    origin:
+      source: developer
+      quote: "developer decision 2026-11-10 (planner/tasks/hw02-hw03-layers-di-draft.md)"
+    status: approved
+
+  - id: no-new-structure
+    # Enforced in code (stage 3f's forbidden_text): stage 20's guard blocks only fixes that
+    # claim a notes-only finding or sit in a file only those findings point to, so an
+    # unclaimed fix could still add a registration. Comment lines are not matched, so a
+    # note may still name AddScoped or an interface. hw03 inherits this rule.
+    applies_to: [fixer, judge]
+    kind: never_do
+    text: >-
+      Never add an interface, a project, a constructor parameter or a registration
+      (`AddScoped`, `AddTransient`, `AddSingleton`); ask the student in a note instead.
+    forbidden_text:
+      - pattern: '(?m)^(?!\s*//).*\bAdd(?:Scoped|Transient|Singleton)\b'
+        new_only: true
+        message: added code must never register a service (AddScoped, AddTransient, AddSingleton); ask in a note instead
+      - pattern: '(?m)^(?!\s*//).*\binterface\s+I'
+        new_only: true
+        message: added code must never declare an interface; ask in a note instead
+      - pattern: '(?m)^(?!\s*//).*\bProjectReference\b'
+        new_only: true
+        message: added text must never add a ProjectReference; ask in a note instead
+    origin:
+      source: developer
+      quote: "developer decision 2026-11-10 (planner/tasks/hw02-hw03-layers-di-draft.md)"
+    status: approved
