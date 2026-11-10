@@ -424,6 +424,25 @@ def test_the_repo_report_words_a_windows_path_with_the_path(tmp_path: Path) -> N
     ) in text
 
 
+def test_the_repo_report_names_the_failed_requirement_a_check_needs(tmp_path: Path) -> None:
+    report = data.full_report()
+    [first, *rest] = report.repo_run.assignment_results
+    skipped = NotEvaluated(
+        requirement_id="hw01-r9",
+        reason=NotEvaluatedReason.DEPENDENCY_FAILED,
+        detail="`hw02-layer-projects`",
+    )
+    result = first.model_copy(update={"not_evaluated": (*first.not_evaluated, skipped)})
+    repo_run = report.repo_run.model_copy(update={"assignment_results": (result, *rest)})
+
+    path = MarkdownReportWriter(tmp_path).write_repo_report(
+        report.model_copy(update={"repo_run": repo_run})
+    )
+
+    text = path.read_text(encoding="utf-8")
+    assert "It needs `hw02-layer-projects`, which failed, so it was not checked." in text
+
+
 def _skipped(assignment_id: str, reason: NotEvaluatedReason, detail: str) -> AssignmentResult:
     return AssignmentResult(
         assignment_id=assignment_id,

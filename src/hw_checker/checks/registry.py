@@ -131,7 +131,7 @@ class CheckRegistry:
                 name=name,
                 description=registered.spec.description,
                 params=tuple(
-                    _describe_field(field_name, field)
+                    _describe_field(field.alias or field_name, field)
                     for field_name, field in registered.spec.params_model.model_fields.items()
                 ),
                 reads_file_list=registered.spec.reads_file_list,

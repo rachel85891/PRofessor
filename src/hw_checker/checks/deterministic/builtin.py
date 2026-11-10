@@ -6,6 +6,7 @@ from hw_checker.checks.deterministic.client import (
     client_fetch_routes,
     client_file_refs,
 )
+from hw_checker.checks.deterministic.layer_checks import LAYER_CHECKS
 from hw_checker.checks.deterministic.naming import NAMING_CHECKS
 from hw_checker.checks.deterministic.repository import (
     gitignore_covers,
@@ -25,12 +26,13 @@ CLIENT_CHECKS: tuple[CheckFunction, ...] = (
     client_element_ids,
     client_fetch_routes,
 )
-ARCHITECTURE_CHECKS: tuple[CheckFunction, ...] = (di_started,)
+ARCHITECTURE_CHECKS: tuple[CheckFunction, ...] = (di_started, *LAYER_CHECKS)
 
 
 def builtin_checks() -> tuple[CheckFunction, ...]:
     """Every built-in registered check: the structure checks, the six naming checks, the
-    repository checks, the client-file checks and the architecture-evidence checks."""
+    repository checks, the client-file checks and the architecture-evidence checks (DI
+    started, and the layer and DI checks)."""
     return (
         file_exists,
         folder_exists,

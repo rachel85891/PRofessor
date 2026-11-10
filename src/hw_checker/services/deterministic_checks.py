@@ -28,6 +28,8 @@ logger = logging.getLogger(__name__)
 DETERMINISTIC_KINDS = frozenset(
     {RequirementKind.STRUCTURE, RequirementKind.CUSTOM, RequirementKind.BUILD, RequirementKind.HTTP}
 )
+REGISTERED_KINDS = frozenset({RequirementKind.STRUCTURE, RequirementKind.CUSTOM})
+"""The kinds that run a registered check; one whose `depends_on` failed is not run."""
 
 
 class DeterministicCheckService:
@@ -37,7 +39,10 @@ class DeterministicCheckService:
     is listed as not evaluated, with its reason, instead of becoming a finding. An
     assignment's `applies_when` or `skip_when` is evaluated first: when the assignment does
     not apply to the repo, or the condition cannot be evaluated, none of its requirements
-    is (ADR 0023: the path per repo is data). With a
+    is (ADR 0023: the path per repo is data). A structure or custom requirement whose
+    `depends_on` names a requirement of the assignment checked before it that failed (or
+    was not run for the same reason) is not run: it is not evaluated, with
+    `dependency_failed` and the requirements it needs as the detail. With a
     `git` client, the working copy's tracked files are read once per evaluation for the
     checks that look at git's state; without one, those checks are not evaluated. With an
     `architecture` reader, the working copy's architecture evidence is read at most once
@@ -89,8 +94,20 @@ class DeterministicCheckService:
                 ),
             )
         paths = ", ".join(execution.windows_paths) if execution else ""
+        blocked: set[str] = set()  # failed, or not run because one they need failed
         for requirement in assignment.requirements:
             if requirement.kind not in DETERMINISTIC_KINDS:
+                continue
+            needed = [item for item in requirement.depends_on if item in blocked]
+            if needed and requirement.kind in REGISTERED_KINDS:
+                blocked.add(requirement.id)
+                not_evaluated.append(
+                    NotEvaluated(
+                        requirement_id=requirement.id,
+                        reason=NotEvaluatedReason.DEPENDENCY_FAILED,
+                        detail=_bounded(", ".join(f"`{item}`" for item in needed)),
+                    )
+                )
                 continue
             outcome = self._check(requirement, inputs.for_requirement(requirement))
             if isinstance(outcome, NotEvaluatedReason):
@@ -100,6 +117,8 @@ class DeterministicCheckService:
                 )
             else:
                 findings.extend(outcome)
+                if outcome:
+                    blocked.add(requirement.id)
         return _windows_path_dependents(
             assignment,
             AssignmentResult(
