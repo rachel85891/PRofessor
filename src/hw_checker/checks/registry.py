@@ -189,6 +189,8 @@ def _type_name(annotation: object) -> str:
     arguments = [argument for argument in get_args(annotation) if argument is not type(None)]
     if origin in (tuple, list) and arguments:
         return f"list of {_type_name(arguments[0])}"
+    if origin in (dict, Mapping) and len(arguments) == 2:
+        return f"mapping of {_type_name(arguments[1])}"
     if origin in (Union, types.UnionType) and len(arguments) == 1:
         return _type_name(arguments[0])
     return getattr(annotation, "__name__", str(annotation))
