@@ -54,6 +54,8 @@ _CONSTRUCTOR = re.compile(
     r"(?P<name>[A-Za-z_]\w*)\s*\((?P<parameters>[^(){}]*)\)"
     r"\s*(?::\s*(?:base|this)\s*\([^{}]*\)\s*)?$"
 )
+_ATTRIBUTE_SECTIONS = re.compile(r"^\s*(?:\[[^\[\]]*\]\s*)+")
+"""Leading `[...]` attribute sections; their strings are already masked."""
 _PARAMETER = re.compile(
     r"(?:(?:this|params|ref|in|out|scoped)\s+)*"
     r"(?P<type>[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*(?:<[^<>]*>)?(?:\[\])?\??)"
@@ -531,7 +533,9 @@ def _signals_in_file(
             )
             continue
         body = masked[opening + 1 : closing]
-        for header, offset in _top_level_member_headers(body):
+        for raw_header, raw_offset in _top_level_member_headers(body):
+            header = _ATTRIBUTE_SECTIONS.sub("", raw_header, count=1)
+            offset = raw_offset + len(raw_header) - len(header)
             constructor = _CONSTRUCTOR.fullmatch(header)
             if constructor is None or constructor["name"] != type_name:
                 continue
@@ -648,7 +652,7 @@ def _parameter_types(parameters: str) -> tuple[str, ...] | None:
         return None
     result: list[str] = []
     for part in parts:
-        match = _PARAMETER.fullmatch(part)
+        match = _PARAMETER.fullmatch(_ATTRIBUTE_SECTIONS.sub("", part, count=1))
         if match is None:
             return None
         if len(match["type"]) > MAX_IDENTIFIER_CHARS:

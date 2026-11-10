@@ -127,6 +127,31 @@ def test_duplicate_interface_name_still_matches_but_lowers_coverage(tmp_path: Pa
     assert duplicates == [("Timer.cs", 3)]
 
 
+def test_constructor_with_attributes_is_still_a_constructor(tmp_path: Path) -> None:
+    write(
+        tmp_path,
+        "Timer.cs",
+        "public interface IClock { }\n"
+        "public class Timer\n"
+        "{\n"
+        '    [Obsolete("Use the other one")]\n'
+        "    [ActivatorUtilitiesConstructor]\n"
+        "    public Timer([FromServices] IClock clock) { }\n"
+        "}\n",
+    )
+
+    evidence = LocalArchitectureEvidenceReader().scan(tmp_path)
+
+    assert [
+        (signal.kind, signal.line, signal.subject)
+        for signal in evidence.signals
+        if signal.kind is not ArchitectureSignalKind.INTERFACE_DECLARATION
+    ] == [
+        (ArchitectureSignalKind.CONSTRUCTOR_CANDIDATE, 6, "Timer"),
+        (ArchitectureSignalKind.CONSTRUCTOR_INTERFACE_PARAMETER, 6, "IClock"),
+    ]
+
+
 def test_registrations_name_their_types_only_when_written_literally(tmp_path: Path) -> None:
     write(
         tmp_path,
