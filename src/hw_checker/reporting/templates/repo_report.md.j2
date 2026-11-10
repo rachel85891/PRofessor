@@ -27,6 +27,20 @@ The repo was not built or run.
 {% endif %}
 {% endif %}
 
+{% if assignments %}
+## Assignments
+
+{% for item in assignments %}
+{% if item.reason_id == "assignment_not_applicable" %}
+- {{ item.assignment_id }}: not checked: it does not apply to this repo ({{ item.detail }}).
+{% elif item.reason_id == "assignment_condition_unknown" %}
+- {{ item.assignment_id }}: not checked: whether it applies to this repo could not be decided ({{ item.detail }}). Review this repo first.
+{% else %}
+- {{ item.assignment_id }}: checked
+{% endif %}
+{% endfor %}
+
+{% endif %}
 {% if not sections and not not_evaluated and not report.repo_run.errors %}
 Nothing to report: every checked requirement passed.
 {% else %}

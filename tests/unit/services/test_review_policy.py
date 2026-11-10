@@ -65,7 +65,7 @@ def test_hw02_sees_the_replaced_and_added_rules_and_not_hw01s_until_rules() -> N
 
 def test_hw02s_fixer_prompt_has_the_replaced_and_added_rules(tmp_path: Path) -> None:
     setup = FixerSetup(tmp_path)
-    workspace = setup.service.prepare(RUN_ID, "hw02", REPO, setup.fetched)
+    workspace = setup.service.prepare(RUN_ID, (HW01, HW02), (), REPO, setup.fetched)
 
     prompt = setup.service.plan_prompt(workspace, HW02, (HW01, HW02), RESULTS, 1)
 
@@ -111,7 +111,7 @@ def test_a_rules_own_example_is_shown_after_the_examples(tmp_path: Path) -> None
     rule = builders.review_rule(id="with-example", example=example)
     hw = HW02.model_copy(update={"review_rules": ReviewRuleSet(rules=(rule,))})
     setup = FixerSetup(tmp_path)
-    workspace = setup.service.prepare(RUN_ID, "hw02", REPO, setup.fetched)
+    workspace = setup.service.prepare(RUN_ID, (HW01, HW02), (), REPO, setup.fetched)
 
     prompt = setup.service.plan_prompt(workspace, hw, (HW01, hw), RESULTS, 1)
 

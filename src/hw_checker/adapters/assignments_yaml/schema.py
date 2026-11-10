@@ -51,8 +51,9 @@ class RequirementEntry(_FileModel):
     depends_on: list[str] = []
 
 
-class EndsWhenEntry(_FileModel):
-    """When the student has started the next task: a structure check and its params."""
+class CheckConditionEntry(_FileModel):
+    """A condition on a repo: a registered check and its params (`ends_when`,
+    `applies_when`, `skip_when`)."""
 
     check: str
     params: dict[str, Any] = {}
@@ -78,5 +79,7 @@ class AssignmentFile(_FileModel):
     taught_techniques: list[str] = []
     lenient_notes: list[str] = []
     reviewed_files: ReviewedFilesEntry | None = None
-    ends_when: EndsWhenEntry | None = None
+    ends_when: CheckConditionEntry | None = None
+    applies_when: CheckConditionEntry | None = None
+    skip_when: CheckConditionEntry | None = None
     requirements: list[Any] = []

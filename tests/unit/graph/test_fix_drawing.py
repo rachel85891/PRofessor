@@ -33,7 +33,10 @@ FULL_STATE: dict[str, Any] = {
     "selected_assignment_ids": ["_general", "hw01"],
     "assignment_results": list(RESULTS),
     "workspace": FixWorkspace(
-        working_copy=Path("fixes/dana__api"), base_sha="ab" * 20, branch_name="hw-review/x"
+        working_copy=Path("fixes/dana__api"),
+        base_sha="ab" * 20,
+        assignment_id="hw01",
+        branch_name="hw-review/x",
     ),
     "attempt": 2,
     "feedback": ["Rejected fix in x.cs: too long"],

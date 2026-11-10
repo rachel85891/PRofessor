@@ -152,6 +152,9 @@ class FixWorkspace(DomainModel):
 
     working_copy: Path
     base_sha: Identifier
+    assignment_id: Identifier
+    """The assignment the review is for: the highest-order selected one that applies to
+    the repo (its `applies_when` or `skip_when` did not rule it out)."""
     branch_name: NonBlankStr
     """The review branch, created when there is something to commit."""
     branch_head_sha: Identifier | None = None

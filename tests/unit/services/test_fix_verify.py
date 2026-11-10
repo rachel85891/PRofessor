@@ -40,7 +40,7 @@ BROKEN = ExecutionResult(
 
 
 def verified(setup: FixerSetup, *edits: object) -> tuple[VerifyResult, EditApplication, object]:
-    workspace = setup.service.prepare(RUN_ID, "hw01", REPO, setup.fetched)
+    workspace = setup.service.prepare(RUN_ID, (ASSIGNMENT,), (), REPO, setup.fetched)
     application = setup.service.apply(workspace, list(edits), ASSIGNMENT, (ASSIGNMENT,))  # type: ignore[arg-type]
     result = setup.service.verify(
         RUN_ID, REPO, workspace, (ASSIGNMENT,), SUCCEEDED, RESULTS, application, 1
@@ -104,7 +104,7 @@ BOTH_FAILING = (AssignmentResult(assignment_id="hw01", findings=(FINDING, NAMING
 def verified_with_dependency(
     setup: FixerSetup, results: tuple[AssignmentResult, ...], *edits: object
 ) -> VerifyResult:
-    workspace = setup.service.prepare(RUN_ID, "hw01", REPO, setup.fetched)
+    workspace = setup.service.prepare(RUN_ID, (ASSIGNMENT,), (), REPO, setup.fetched)
     application = setup.service.apply(workspace, list(edits), ASSIGNMENT, (ASSIGNMENT,))  # type: ignore[arg-type]
     return setup.service.verify(
         RUN_ID, REPO, workspace, (DEPENDENT,), SUCCEEDED, results, application, 1
@@ -223,7 +223,7 @@ CRITICAL_ASSIGNMENT = ASSIGNMENT.model_copy(
 def title_after_verify(
     setup: FixerSetup, results: tuple[AssignmentResult, ...], *edits: object
 ) -> str:
-    workspace = setup.service.prepare(RUN_ID, "hw01", REPO, setup.fetched)
+    workspace = setup.service.prepare(RUN_ID, (ASSIGNMENT,), (), REPO, setup.fetched)
     application = setup.service.apply(workspace, list(edits), ASSIGNMENT, (ASSIGNMENT,))  # type: ignore[arg-type]
     verification = setup.service.verify(
         RUN_ID, REPO, workspace, (CRITICAL_ASSIGNMENT,), SUCCEEDED, results, application, 1

@@ -134,7 +134,7 @@ def _golden(name: str) -> str:
 
 def test_the_fixer_plan_prompt_of_the_first_attempt_is_unchanged(tmp_path: Path) -> None:
     setup = FixerSetup(tmp_path)
-    workspace = setup.service.prepare(RUN_ID, "hw01", REPO, setup.fetched)
+    workspace = setup.service.prepare(RUN_ID, (HW01,), (), REPO, setup.fetched)
 
     prompt = setup.service.plan_prompt(workspace, HW01, ASSIGNMENTS, RESULTS, 1)
 
@@ -143,7 +143,7 @@ def test_the_fixer_plan_prompt_of_the_first_attempt_is_unchanged(tmp_path: Path)
 
 def test_the_fixer_plan_prompt_of_a_retry_with_kept_edits_is_unchanged(tmp_path: Path) -> None:
     setup = FixerSetup(tmp_path)
-    workspace = setup.service.prepare(RUN_ID, "hw01", REPO, setup.fetched)
+    workspace = setup.service.prepare(RUN_ID, (HW01,), (), REPO, setup.fetched)
 
     prompt = setup.service.plan_prompt(
         workspace,
@@ -160,7 +160,7 @@ def test_the_fixer_plan_prompt_of_a_retry_with_kept_edits_is_unchanged(tmp_path:
 
 def test_the_self_review_prompt_is_unchanged(tmp_path: Path) -> None:
     setup = FixerSetup(tmp_path)
-    workspace = setup.service.prepare(RUN_ID, "hw01", REPO, setup.fetched)
+    workspace = setup.service.prepare(RUN_ID, (HW01,), (), REPO, setup.fetched)
     application = setup.service.apply(workspace, EDITS, HW01, ASSIGNMENTS)
 
     setup.service.self_review(
@@ -331,7 +331,7 @@ def _client_golden(name: str) -> str:
 
 def test_the_client_plan_prompt_is_the_golden_one(tmp_path: Path) -> None:
     setup = FixerSetup(tmp_path, files=CLIENT_FILES)
-    workspace = setup.service.prepare(RUN_ID, "hw01", REPO, setup.fetched)
+    workspace = setup.service.prepare(RUN_ID, (HW01,), (), REPO, setup.fetched)
 
     prompt = setup.service.plan_prompt(
         workspace, HW01_CLIENT, CLIENT_ASSIGNMENTS, CLIENT_RESULTS, 1
@@ -342,7 +342,7 @@ def test_the_client_plan_prompt_is_the_golden_one(tmp_path: Path) -> None:
 
 def test_the_client_self_review_prompt_is_the_golden_one(tmp_path: Path) -> None:
     setup = FixerSetup(tmp_path, files=CLIENT_FILES)
-    workspace = setup.service.prepare(RUN_ID, "hw01", REPO, setup.fetched)
+    workspace = setup.service.prepare(RUN_ID, (HW01,), (), REPO, setup.fetched)
     application = setup.service.apply(
         workspace, CLIENT_EDITS, HW01_CLIENT, CLIENT_ASSIGNMENTS, CLIENT_RESULTS
     )

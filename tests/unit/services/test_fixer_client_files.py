@@ -78,7 +78,7 @@ def test_the_prompt_shows_the_code_then_the_client_files_then_configuration_and_
     tmp_path: Path,
 ) -> None:
     setup = FixerSetup(tmp_path, files=CLIENT_FILES)
-    workspace = setup.service.prepare(RUN_ID, "hw01", REPO, setup.fetched)
+    workspace = setup.service.prepare(RUN_ID, (ASSIGNMENT,), (), REPO, setup.fetched)
 
     prompt = setup.service.plan_prompt(
         workspace, CLIENT_ASSIGNMENT, (CLIENT_ASSIGNMENT,), RESULTS, 1
@@ -98,7 +98,7 @@ def test_the_prompt_shows_the_code_then_the_client_files_then_configuration_and_
 
 def test_without_reviewed_files_only_the_code_is_shown_as_before(tmp_path: Path) -> None:
     setup = FixerSetup(tmp_path, files=CLIENT_FILES)
-    workspace = setup.service.prepare(RUN_ID, "hw01", REPO, setup.fetched)
+    workspace = setup.service.prepare(RUN_ID, (ASSIGNMENT,), (), REPO, setup.fetched)
 
     prompt = setup.service.plan_prompt(workspace, ASSIGNMENT, (ASSIGNMENT,), RESULTS, 1)
 
@@ -121,7 +121,7 @@ def _note(file: str, find: str, comment: str) -> PlannedEdit:
 
 def test_only_the_files_shown_with_a_comment_style_are_edited(tmp_path: Path) -> None:
     setup = FixerSetup(tmp_path, files=CLIENT_FILES)
-    workspace = setup.service.prepare(RUN_ID, "hw01", REPO, setup.fetched)
+    workspace = setup.service.prepare(RUN_ID, (ASSIGNMENT,), (), REPO, setup.fetched)
     shown_script = _note("Api/wwwroot/update.js", UPDATE_JS, "//Is this the input's id?")
     library = _note("Api/wwwroot/js/site.min.js", "var a=1;\n", "//A question")
     outside = _note("tools/build.js", "// not in wwwroot\n", "//A question")
@@ -378,7 +378,7 @@ def test_the_comments_rule_keeps_its_cs_wording_only_when_only_cs_is_edited() ->
 
 def test_the_plan_lists_the_comment_style_of_every_file_type_shown(tmp_path: Path) -> None:
     setup = FixerSetup(tmp_path, files=CLIENT_FILES)
-    workspace = setup.service.prepare(RUN_ID, "hw01", REPO, setup.fetched)
+    workspace = setup.service.prepare(RUN_ID, (ASSIGNMENT,), (), REPO, setup.fetched)
 
     prompt = setup.service.plan_prompt(
         workspace, CLIENT_ASSIGNMENT, (CLIENT_ASSIGNMENT,), RESULTS, 1
@@ -402,7 +402,7 @@ def test_the_plan_lists_the_comment_style_of_every_file_type_shown(tmp_path: Pat
 def test_a_prompt_without_cs_files_has_no_cs_condition(tmp_path: Path) -> None:
     client_only = {path: text for path, text in CLIENT_FILES.items() if not path.endswith(".cs")}
     setup = FixerSetup(tmp_path, files=client_only)
-    workspace = setup.service.prepare(RUN_ID, "hw01", REPO, setup.fetched)
+    workspace = setup.service.prepare(RUN_ID, (ASSIGNMENT,), (), REPO, setup.fetched)
 
     prompt = setup.service.plan_prompt(
         workspace, CLIENT_ASSIGNMENT, (CLIENT_ASSIGNMENT,), RESULTS, 1
@@ -428,7 +428,7 @@ def test_plan_naming_conventions_follow_applicable_rules(
 ) -> None:
     files = {path: CLIENT_FILES[path] for path in paths}
     setup = FixerSetup(tmp_path, files=files)
-    workspace = setup.service.prepare(RUN_ID, "hw01", REPO, setup.fetched)
+    workspace = setup.service.prepare(RUN_ID, (ASSIGNMENT,), (), REPO, setup.fetched)
     prompt = setup.service.plan_prompt(
         workspace, CLIENT_ASSIGNMENT, (CLIENT_ASSIGNMENT,), RESULTS, 1
     )
@@ -446,12 +446,12 @@ def test_omitted_client_files_do_not_contribute_policy_or_languages(tmp_path: Pa
         JS: UPDATE_JS,
     }
     full = FixerSetup(tmp_path / "full", files=files)
-    workspace = full.service.prepare(RUN_ID, "hw01", REPO, full.fetched)
+    workspace = full.service.prepare(RUN_ID, (ASSIGNMENT,), (), REPO, full.fetched)
     full_prompt = full.service.plan_prompt(
         workspace, CLIENT_ASSIGNMENT, (CLIENT_ASSIGNMENT,), RESULTS, 1
     )
     limited = FixerSetup(tmp_path / "limited", files=files, max_prompt_chars=len(full_prompt) - 1)
-    workspace = limited.service.prepare(RUN_ID, "hw01", REPO, limited.fetched)
+    workspace = limited.service.prepare(RUN_ID, (ASSIGNMENT,), (), REPO, limited.fetched)
     prompt = limited.service.plan_prompt(
         workspace, CLIENT_ASSIGNMENT, (CLIENT_ASSIGNMENT,), RESULTS, 1
     )

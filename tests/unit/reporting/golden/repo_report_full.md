@@ -14,6 +14,11 @@
 - Prepare: succeeded; build: succeeded; run: failed
 - Failure: The app built but crashed or exited while starting.
 
+## Assignments
+
+- _general: checked
+- hw01: checked
+
 ## Findings
 
 ### Critical (1)

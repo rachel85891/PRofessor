@@ -2,7 +2,15 @@
 
 from collections.abc import Iterable, Mapping
 
-from hw_checker.domain import CheckDescription, CheckInput, Finding, NotEvaluatedReason, ParamValue
+from hw_checker.domain import (
+    CheckDescription,
+    CheckInput,
+    CheckPassed,
+    ConditionOutcome,
+    Finding,
+    NotEvaluatedReason,
+    ParamValue,
+)
 
 
 class FakeCheckCatalog:
@@ -33,7 +41,7 @@ class FakeCheckCatalog:
         )
 
 
-Outcome = tuple[Finding, ...] | NotEvaluatedReason | Exception
+Outcome = tuple[Finding, ...] | NotEvaluatedReason | CheckPassed | Exception
 
 
 class FakeRequirementChecker:
@@ -44,6 +52,22 @@ class FakeRequirementChecker:
         self.checked: list[CheckInput] = []
 
     def check(self, check_input: CheckInput) -> tuple[Finding, ...] | NotEvaluatedReason:
+        outcome = self._outcome(check_input)
+        return () if isinstance(outcome, CheckPassed) else outcome
+
+    def condition(self, check_input: CheckInput) -> ConditionOutcome:
+        outcome = self._outcome(check_input)
+        if isinstance(outcome, NotEvaluatedReason):
+            return ConditionOutcome(holds=None, reason=outcome)
+        if isinstance(outcome, CheckPassed):
+            return ConditionOutcome(holds=True, message=outcome.message)
+        return ConditionOutcome(
+            holds=not outcome, message="; ".join(finding.message_en for finding in outcome)
+        )
+
+    def _outcome(
+        self, check_input: CheckInput
+    ) -> tuple[Finding, ...] | NotEvaluatedReason | CheckPassed:
         self.checked.append(check_input)
         outcome = self._outcomes.get(check_input.requirement.id, ())
         if isinstance(outcome, Exception):

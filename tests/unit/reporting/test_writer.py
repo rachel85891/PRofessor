@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 from hw_checker.domain import (
+    AssignmentResult,
     CheckedCommit,
     CommitChoice,
     FailureKind,
@@ -16,6 +17,7 @@ from hw_checker.domain import (
     PublishOutcome,
     PublishRecord,
     ResponseEvidence,
+    UnknownCondition,
 )
 from hw_checker.domain.errors import StorageError
 from hw_checker.reporting.wording import (
@@ -413,3 +415,84 @@ def test_the_repo_report_words_a_windows_path_with_the_path(tmp_path: Path) -> N
         "A request it needs answered with a server error after the app could not open "
         "`/app/..\\data\\users.txt`: a path written with `\\` as the folder separator"
     ) in text
+
+
+def _skipped(assignment_id: str, reason: NotEvaluatedReason, detail: str) -> AssignmentResult:
+    return AssignmentResult(
+        assignment_id=assignment_id,
+        not_evaluated=tuple(
+            NotEvaluated(requirement_id=f"{assignment_id}-r{n}", reason=reason, detail=detail)
+            for n in (1, 2)
+        ),
+    )
+
+
+def test_the_repo_report_says_per_assignment_whether_it_was_checked(tmp_path: Path) -> None:
+    report = data.clean_report()
+    results = (
+        *report.repo_run.assignment_results,
+        _skipped(
+            "hw02",
+            NotEvaluatedReason.ASSIGNMENT_NOT_APPLICABLE,
+            "skip_when di_started: DI has started (3 registrations)",
+        ),
+        _skipped(
+            "hw03",
+            NotEvaluatedReason.ASSIGNMENT_CONDITION_UNKNOWN,
+            "applies_when di_started could not be evaluated (environment_issue)",
+        ),
+    )
+    repo_run = report.repo_run.model_copy(update={"assignment_results": results})
+
+    path = MarkdownReportWriter(tmp_path).write_repo_report(
+        report.model_copy(update={"repo_run": repo_run})
+    )
+
+    text = path.read_text(encoding="utf-8")
+    assert (
+        "## Assignments\n\n"
+        "- hw01: checked\n"
+        "- hw02: not checked: it does not apply to this repo (skip_when di_started: DI has "
+        "started (3 registrations)).\n"
+        "- hw03: not checked: whether it applies to this repo could not be decided "
+        "(applies_when di_started could not be evaluated (environment_issue)). Review this "
+        "repo first.\n"
+    ) in text
+    # The skipped requirements are not listed one by one.
+    assert "## Not evaluated" not in text
+    assert "Nothing to report: every checked requirement passed." in text
+
+
+def test_the_round_report_lists_the_repos_to_review_first(tmp_path: Path) -> None:
+    report = data.round_report(reports_dir(tmp_path))
+    unknown = UnknownCondition(
+        repo_id="noa__webapi", assignment_id="hw03", detail="applies_when x could not be evaluated"
+    )
+    lines = tuple(
+        line.model_copy(update={"unknown_conditions": (unknown,)})
+        if line.repo_id == "noa__webapi"
+        else line
+        for line in report.summary.repos
+    )
+    summary = report.summary.model_copy(update={"repos": lines})
+
+    files = MarkdownReportWriter(tmp_path).write_round_report(
+        report.model_copy(update={"summary": summary})
+    )
+
+    text = files.round_report.read_text(encoding="utf-8")
+    assert (
+        "## Review first (1)\n\n"
+        "Whether an assignment applies to these repos could not be decided, so none of its "
+        "requirements was checked:\n\n"
+        "- noa__webapi: hw03 (applies_when x could not be evaluated)\n"
+    ) in text
+    assert text.index("## Review first") < text.index("| Student |")
+
+
+def test_a_round_without_unknown_conditions_has_no_review_first_section(tmp_path: Path) -> None:
+    files = MarkdownReportWriter(tmp_path).write_round_report(
+        data.round_report(reports_dir(tmp_path))
+    )
+
+    assert "Review first" not in files.round_report.read_text(encoding="utf-8")

@@ -23,6 +23,7 @@ from hw_checker.domain import (
     RosterWarningKind,
     RunStatus,
     RunSummary,
+    UnknownCondition,
 )
 from hw_checker.domain.errors import LLMError, PublishError, RepoUnavailableError
 from hw_checker.graph import RoundGraph, build_round_graph
@@ -473,3 +474,30 @@ def test_the_gate_says_when_the_pull_request_is_based_on_an_earlier_commit() -> 
         "`bbbbbbb`. The repo has 1 later commit; the pull request is based on this older "
         "commit.\n"
     ) in out.getvalue()
+
+
+def test_the_gate_lists_first_the_repos_whose_path_is_unknown() -> None:
+    review = PendingReview(
+        repo_id="dana__api",
+        repo_run_id="run-1/dana__api",
+        student="Dana Test",
+        branch_name="hw-review/hw01-2026-11-05",
+        pr_title="HW1 review: small fixes",
+    )
+    unknown = UnknownCondition(
+        repo_id="dana__api", assignment_id="hw03", detail="applies_when x could not be evaluated"
+    )
+    out = io.StringIO()
+
+    cli.print_prompt(
+        ReviewPrompt(
+            run_id="run-1", unknown_conditions=(unknown,), pending=(review,), how_to_answer="a"
+        ),
+        out,
+    )
+
+    assert out.getvalue().startswith(
+        "Review first: whether an assignment applies could not be decided in\n"
+        "  dana__api: hw03 (applies_when x could not be evaluated)\n"
+        "Round run-1: 1 repos waiting for approval\n"
+    )

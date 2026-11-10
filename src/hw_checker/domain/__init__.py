@@ -18,6 +18,9 @@ from hw_checker.domain.architecture_evidence import (
 )
 from hw_checker.domain.assignment import (
     Assignment,
+    AssignmentCondition,
+    CheckCondition,
+    ConditionKind,
     ExpectedJson,
     HttpMethod,
     HttpProbe,
@@ -33,6 +36,8 @@ from hw_checker.domain.checks import (
     CheckDescription,
     CheckInput,
     CheckParamDescription,
+    CheckPassed,
+    ConditionOutcome,
     TrackedFiles,
 )
 from hw_checker.domain.course import (
@@ -118,6 +123,7 @@ from hw_checker.domain.publishing import (
     PublishOutcome,
     PublishRecord,
     ReviewPrompt,
+    UnknownCondition,
 )
 from hw_checker.domain.roster import (
     GitHubRepo,
@@ -160,6 +166,7 @@ __all__ = [
     "ArchitectureSignal",
     "ArchitectureSignalKind",
     "Assignment",
+    "AssignmentCondition",
     "AssignmentResult",
     "AssignmentVersion",
     "BodyAdaptation",
@@ -168,14 +175,18 @@ __all__ = [
     "BranchHead",
     "CaptureFailure",
     "CaptureResult",
+    "CheckCondition",
     "CheckDescription",
     "CheckInput",
     "CheckParamDescription",
+    "CheckPassed",
     "CheckedCommit",
     "CodeFacts",
     "CommentStyle",
     "CommitChoice",
     "CommitInfo",
+    "ConditionKind",
+    "ConditionOutcome",
     "Course",
     "CourseProfile",
     "DeclaredRoute",
@@ -276,6 +287,7 @@ __all__ = [
     "TrackedFiles",
     "TypeFact",
     "TypeKind",
+    "UnknownCondition",
     "UnsupportedRouting",
     "Verdict",
     "VerifyResult",

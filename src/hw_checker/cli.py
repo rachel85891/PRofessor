@@ -294,6 +294,10 @@ def print_prompt(prompt: ReviewPrompt, out: TextIO) -> None:
     """Print each repo waiting at the gate, with its counts, branch, title and files."""
     if prompt.message:
         print(f"Approval error: {prompt.message}", file=out)
+    if prompt.unknown_conditions:
+        print("Review first: whether an assignment applies could not be decided in", file=out)
+        for item in prompt.unknown_conditions:
+            print(f"  {item.repo_id}: {item.assignment_id} ({item.detail})", file=out)
     print(f"Round {prompt.run_id}: {len(prompt.pending)} repos waiting for approval", file=out)
     for review in prompt.pending:
         print(f"  {review.repo_id}  ({review.student})", file=out)

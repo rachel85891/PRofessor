@@ -13,12 +13,14 @@ from pathlib import Path
 from jinja2 import Environment, FileSystemLoader, StrictUndefined
 
 from hw_checker.domain import (
+    AssignmentResult,
     Finding,
     RepoRunResult,
     RepoSummary,
     RepoTarget,
 )
 from hw_checker.domain.errors import StorageError
+from hw_checker.domain.run import CONDITION_REASONS
 from hw_checker.ports.reporting import RepoReport, RoundReport, RoundReportFiles
 from hw_checker.reporting.wording import (
     FAILURE_KINDS,
@@ -68,6 +70,14 @@ class _NotEvaluatedItem:
     title: str
     reason: str
     reason_id: str
+    detail: str
+
+
+@dataclass(frozen=True)
+class _AssignmentLine:
+    assignment_id: str
+    reason_id: str
+    """Empty when the assignment was checked."""
     detail: str
 
 
@@ -123,6 +133,7 @@ class MarkdownReportWriter:
             ),
             failure=_failure(repo_run),
             sections=_sections(report),
+            assignments=[_assignment_line(result) for result in repo_run.assignment_results],
             not_evaluated=_not_evaluated(report),
         )
         path = self._reports_dir(report.run_id) / f"{repo_run.repo.repo_id}.md"
@@ -151,6 +162,9 @@ class MarkdownReportWriter:
             rows=rows,
             roster_warnings=report.roster_warnings,
             publications=[row for row in rows if row.line and row.line.publication],
+            unknown_conditions=[
+                item for row in rows if row.line for item in row.line.unknown_conditions
+            ],
         )
         reports_dir = self._reports_dir(summary.run_id)
         round_report = reports_dir / ROUND_REPORT
@@ -213,7 +227,16 @@ def _sections(report: RepoReport) -> list[_SeveritySection]:
     return sections
 
 
+def _assignment_line(result: AssignmentResult) -> _AssignmentLine:
+    entry = result.not_checked
+    if entry is None:
+        return _AssignmentLine(result.assignment_id, "", "")
+    return _AssignmentLine(result.assignment_id, entry.reason.value, entry.detail)
+
+
 def _not_evaluated(report: RepoReport) -> list[_NotEvaluatedItem]:
+    """The requirements not evaluated, except those of an assignment that was not checked
+    at all (the assignments' list says why)."""
     return [
         _NotEvaluatedItem(
             entry.requirement_id,
@@ -224,6 +247,7 @@ def _not_evaluated(report: RepoReport) -> list[_NotEvaluatedItem]:
         )
         for result in report.repo_run.assignment_results
         for entry in result.not_evaluated
+        if entry.reason not in CONDITION_REASONS
     ]
 
 

@@ -168,15 +168,23 @@ class FixService:
         ).hexdigest()
 
     def prepare(
-        self, run_id: str, assignment_id: str, repo: RepoTarget, fetched: FetchedRepo
+        self,
+        run_id: str,
+        assignments: Sequence[Assignment],
+        results: Sequence[AssignmentResult],
+        repo: RepoTarget,
+        fetched: FetchedRepo,
     ) -> FixWorkspace:
         """Clone the checked working copy into `<runs>/<run_id>/fixes/<repo_id>`, at the
-        checked commit. The checked working copy is never changed.
+        checked commit, for the review of the repo's own target (`fix_target`): the branch
+        is named after it. The checked working copy is never changed.
 
         Raises:
             GitOperationError: the clone failed.
-            FixError: the clone is not at the checked commit.
+            FixError: the clone is not at the checked commit, or no selected assignment
+                applies to the repo.
         """
+        target = fix_target(assignments, results)
         copy = self._runs_dir / run_id / FIXES_FOLDER / repo.repo_id
         self._git.clone_local(fetched.working_copy, copy)
         head = self._git.head_sha(copy)
@@ -185,13 +193,15 @@ class FixService:
                 f"The fix working copy is at {head[:12]}, not the checked commit "
                 f"{fetched.commit_sha[:12]}."
             )
+        logger.info("Fix target: %s", target.id, extra={"assignment_id": target.id})
         return FixWorkspace(
             working_copy=copy,
             base_sha=fetched.commit_sha,
+            assignment_id=target.id,
             branch_head_sha=None
             if fetched.latest_sha == fetched.commit_sha
             else fetched.latest_sha,
-            branch_name=f"{BRANCH_PREFIX}{assignment_id}-{self._clock.now():%Y-%m-%d}",
+            branch_name=f"{BRANCH_PREFIX}{target.id}-{self._clock.now():%Y-%m-%d}",
         )
 
     def plan(
@@ -240,11 +250,12 @@ class FixService:
         paths = self._files.list_files(root, frozenset(self._config.skip_dirs))
         selected = self._shown_paths(paths, assignments)
         shown = [{"path": path, "text": self._file_text(root, path)} for path in selected]
+        applying = applying_assignments(assignments, results)
         values: dict[str, object] = {
             "course": self._course.profile,
             "assignment": assignment,
-            "requirements": [r for a in assignments for r in a.requirements],
-            "lenient_notes": [note for a in assignments for note in a.lenient_notes],
+            "requirements": [r for a in applying for r in a.requirements],
+            "lenient_notes": [note for a in applying for note in a.lenient_notes],
             "findings": _findings(results),
             "responses": _responses(results),
             "windows_paths": _windows_paths(results),
@@ -859,6 +870,31 @@ class FixService:
             input_tokens=tokens.input_tokens,
             output_tokens=tokens.output_tokens,
         )
+
+
+def applying_assignments(
+    assignments: Sequence[Assignment], results: Sequence[AssignmentResult]
+) -> list[Assignment]:
+    """The `assignments` that apply to the repo: those its `results` do not mark as not
+    checked (by an `applies_when` or `skip_when`)."""
+    skipped = {result.assignment_id for result in results if result.not_checked is not None}
+    return [assignment for assignment in assignments if assignment.id not in skipped]
+
+
+def fix_target(
+    assignments: Sequence[Assignment], results: Sequence[AssignmentResult]
+) -> Assignment:
+    """The assignment a repo's review is for: the highest-order of `assignments` (the
+    round's selection) that applies to the repo (`applying_assignments`). A repo on the layers
+    path gets the layers review even in a round whose target is a later assignment.
+
+    Raises:
+        FixError: no selected assignment applies to the repo.
+    """
+    applying = applying_assignments(assignments, results)
+    if not applying:
+        raise FixError("No selected assignment applies to the repo.")
+    return max(applying, key=lambda assignment: assignment.order)
 
 
 def best_attempt(tried: Sequence[FixAttempt]) -> FixAttempt | None:

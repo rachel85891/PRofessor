@@ -27,6 +27,7 @@ from hw_checker.checks.registry import CheckFunction
 from hw_checker.domain import (
     Assignment,
     CheckInput,
+    CheckPassed,
     CodeFacts,
     ExecutionResult,
     FailureKind,
@@ -61,7 +62,9 @@ def run(
     check_input = CheckInput(
         repo_dir=repo, assignment=ASSIGNMENT, requirement=REQUIREMENT, execution=execution
     )
-    return function(check_input, NoParams())
+    outcome = function(check_input, NoParams())
+    assert not isinstance(outcome, CheckPassed)  # naming checks never pass with a message
+    return outcome
 
 
 def only_finding(outcome: tuple[Finding, ...] | NotEvaluatedReason) -> Finding:

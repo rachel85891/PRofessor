@@ -216,6 +216,8 @@ def test_not_evaluated_reasons() -> None:
         "body_mismatch",
         "dependency_failed",
         "windows_path",
+        "assignment_not_applicable",
+        "assignment_condition_unknown",
     }
 
 
@@ -406,3 +408,32 @@ def test_finding_brief_is_the_first_line_of_the_english_message() -> None:
     [line] = RunSummary.from_run(run).repos
 
     assert [brief.message for brief in line.findings] == ["POST /api/users: expected 201, got 500."]
+
+
+def test_a_repo_summary_lists_the_assignments_whose_condition_is_unknown() -> None:
+    def skipped(assignment_id: str, reason: NotEvaluatedReason) -> AssignmentResult:
+        return AssignmentResult(
+            assignment_id=assignment_id,
+            not_evaluated=(
+                NotEvaluated(requirement_id=f"{assignment_id}-r1", reason=reason, detail="why"),
+            ),
+        )
+
+    results = (
+        AssignmentResult(assignment_id="hw01"),
+        skipped("hw02", NotEvaluatedReason.ASSIGNMENT_NOT_APPLICABLE),
+        skipped("hw03", NotEvaluatedReason.ASSIGNMENT_CONDITION_UNKNOWN),
+    )
+    repo_run = RepoRunResult(
+        repo_run_id="run-1/dana-api",
+        repo=builders.repo_target(),
+        status=RepoRunStatus.DONE,
+        assignment_results=results,
+    )
+
+    line = RepoSummary.from_repo_run(repo_run)
+
+    assert [r.not_checked is None for r in results] == [True, False, False]
+    assert [(u.repo_id, u.assignment_id, u.detail) for u in line.unknown_conditions] == [
+        ("dana-api", "hw03", "why")
+    ]

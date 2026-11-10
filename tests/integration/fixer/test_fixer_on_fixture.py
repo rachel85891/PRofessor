@@ -154,7 +154,6 @@ def test_the_fixer_proposes_a_verified_review_branch_that_fixes_the_data_file(
         output: dict[str, Any] = graph.invoke(
             FixInput(
                 run_id=RUN_ID,
-                assignment_id="hw01",
                 repo=REPO,
                 selected_assignment_ids=[assignment.id for assignment in assignments],
                 fetched=FetchedRepo(working_copy=copy, commit_sha=sha),

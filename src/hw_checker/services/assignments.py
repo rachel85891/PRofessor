@@ -89,7 +89,21 @@ class AssignmentCatalogService:
         ]
         for assignment in assignments:
             problems.extend(self._end_problems(assignment))
+            problems.extend(self._condition_problems(assignment))
         return tuple(problems)
+
+    def _condition_problems(self, assignment: Assignment) -> list[str]:
+        """`applies_when` or `skip_when` names a known check with valid params. Unlike
+        `ends_when`, it may read file contents: it runs on the checked working copy."""
+        condition = assignment.condition
+        if condition is None:
+            return []
+        check = condition.condition
+        prefix = f"{assignment.id}: {condition.kind.value}, check '{check.check}'"
+        return [
+            f"{prefix}: {problem}"
+            for problem in self._catalog.validate_params(check.check, check.params)
+        ]
 
     def _end_problems(self, assignment: Assignment) -> list[str]:
         """`ends_when` names a known check that reads file names only, with valid params."""

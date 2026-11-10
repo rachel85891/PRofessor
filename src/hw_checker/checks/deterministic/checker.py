@@ -4,8 +4,15 @@ from pydantic import ValidationError
 
 from hw_checker.checks.deterministic.build import evaluate_build
 from hw_checker.checks.deterministic.http import evaluate_http
-from hw_checker.checks.registry import CheckRegistry
-from hw_checker.domain import CheckInput, Finding, NotEvaluatedReason, RequirementKind
+from hw_checker.checks.registry import CheckRegistry, CheckResult
+from hw_checker.domain import (
+    CheckInput,
+    CheckPassed,
+    ConditionOutcome,
+    Finding,
+    NotEvaluatedReason,
+    RequirementKind,
+)
 from hw_checker.domain.errors import InvalidAssignmentError, NotFoundError
 
 
@@ -30,13 +37,29 @@ class DeterministicRequirementChecker:
             case RequirementKind.HTTP:
                 return evaluate_http(check_input)
             case RequirementKind.STRUCTURE | RequirementKind.CUSTOM:
-                return self._run_registered(check_input)
+                outcome = self._run_registered(check_input)
+                return () if isinstance(outcome, CheckPassed) else outcome
             case RequirementKind.CODE:
                 raise InvalidAssignmentError(
                     f"requirement {requirement.id!r} is a code requirement, not a deterministic one"
                 )
 
-    def _run_registered(self, check_input: CheckInput) -> tuple[Finding, ...] | NotEvaluatedReason:
+    def condition(self, check_input: CheckInput) -> ConditionOutcome:
+        """Run the requirement's registered check as a condition; it holds when it passes.
+
+        Raises:
+            InvalidAssignmentError: an unknown check, invalid params, or a file list given
+                to a check that reads file contents.
+        """
+        outcome = self._run_registered(check_input)
+        if isinstance(outcome, NotEvaluatedReason):
+            return ConditionOutcome(holds=None, reason=outcome)
+        if isinstance(outcome, CheckPassed):
+            return ConditionOutcome(holds=True, message=outcome.message)
+        messages = (finding.message_en.strip() for finding in outcome)
+        return ConditionOutcome(holds=not outcome, message="; ".join(messages))
+
+    def _run_registered(self, check_input: CheckInput) -> CheckResult:
         requirement = check_input.requirement
         if requirement.check is None:
             raise InvalidAssignmentError(f"requirement {requirement.id!r} names no check")

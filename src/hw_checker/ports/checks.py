@@ -3,7 +3,14 @@
 from collections.abc import Mapping
 from typing import Protocol
 
-from hw_checker.domain import CheckDescription, CheckInput, Finding, NotEvaluatedReason, ParamValue
+from hw_checker.domain import (
+    CheckDescription,
+    CheckInput,
+    ConditionOutcome,
+    Finding,
+    NotEvaluatedReason,
+    ParamValue,
+)
 
 
 class CheckCatalog(Protocol):
@@ -36,5 +43,17 @@ class RequirementChecker(Protocol):
         Raises:
             InvalidAssignmentError: the requirement is a `code` requirement, names an unknown
                 check, or gives it invalid params.
+        """
+        ...
+
+    def condition(self, check_input: CheckInput) -> ConditionOutcome:
+        """Evaluate `check_input.requirement` as a condition: it holds when its check passes.
+
+        The outcome carries the check's own words: what it saw when it passed, or its
+        findings' messages. Only reads the working copy.
+
+        Raises:
+            InvalidAssignmentError: the requirement names an unknown check, or gives it
+                invalid params.
         """
         ...

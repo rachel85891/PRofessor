@@ -12,6 +12,7 @@ from hw_checker.domain import (
     PublishRecord,
     ReviewOutcome,
     RunSummary,
+    UnknownCondition,
 )
 from hw_checker.domain.errors import GitOperationError, PublishError, ReviewError
 from hw_checker.services.publishing import PublishService
@@ -338,3 +339,38 @@ def test_a_proposal_on_an_earlier_commit_is_stale_when_the_head_moved_again() ->
 
     assert record.outcome is PublishOutcome.STALE
     assert record.message.startswith("avi/api moved from 9999999 to 8888888")
+
+
+def test_repos_whose_path_is_unknown_are_listed_and_shown_first() -> None:
+    setup = Setup()
+    avi = setup.save(ProposalStatus.PENDING_REVIEW)
+    noa_run = setup.storage.runs.get("run-1").repo_runs[1]
+    setup.storage.proposals.save(
+        avi.model_copy(
+            update={
+                "proposal_id": "p-noa",
+                "repo_run_id": noa_run.repo_run_id,
+                "repo": noa_run.repo,
+            }
+        )
+    )
+    unknown = UnknownCondition(
+        repo_id=REPO_ID, assignment_id="hw03", detail="applies_when x could not be evaluated"
+    )
+    plain = summary(setup)
+    lines = tuple(
+        line.model_copy(update={"unknown_conditions": (unknown,)})
+        if line.repo_id == REPO_ID
+        else line
+        for line in plain.repos
+    )
+
+    prompt = setup.service.review_prompt("run-1", plain.model_copy(update={"repos": lines}))
+    without = setup.service.review_prompt("run-1", plain)
+
+    assert prompt is not None and without is not None
+    assert prompt.unknown_conditions == (unknown,)
+    assert [review.repo_id for review in prompt.pending] == [REPO_ID, noa_run.repo.repo_id]
+    assert [review.repo_id for review in without.pending] == [noa_run.repo.repo_id, REPO_ID]
+    assert without.unknown_conditions == ()
+    assert list(prompt.model_dump(mode="json"))[:3] == ["run_id", "unknown_conditions", "pending"]

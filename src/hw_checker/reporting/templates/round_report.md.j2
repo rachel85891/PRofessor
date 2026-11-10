@@ -8,6 +8,16 @@
 - Proposals waiting for review: {{ summary.proposals }}
 - LLM: {{ summary.llm_calls }} calls, {{ summary.llm_input_tokens }} input and {{ summary.llm_output_tokens }} output tokens
 
+{% if unknown_conditions %}
+## Review first ({{ unknown_conditions | length }})
+
+Whether an assignment applies to these repos could not be decided, so none of its requirements was checked:
+
+{% for item in unknown_conditions %}
+- {{ item.repo_id }}: {{ item.assignment_id }} ({{ item.detail }})
+{% endfor %}
+
+{% endif %}
 {% if rows %}
 | Student | Repo | Status | Critical | Major | Minor | Not evaluated | Report |
 | --- | --- | --- | --- | --- | --- | --- | --- |

@@ -234,26 +234,70 @@ TASK_END_SUFFIX = "-ends-when"
 """Appended to the assignment id to name its `ends_when` condition as a requirement."""
 
 
-class TaskEnd(DomainModel):
+class CheckCondition(DomainModel):
+    """A condition on a repo: a registered check (with its params) that holds when it
+    passes (ADR 0023: policy as data)."""
+
+    check: Identifier
+    params: CheckParams = Field(default_factory=lambda: MappingProxyType({}))
+
+    def as_requirement(self, requirement_id: str, title: str) -> Requirement:
+        """The condition as a structure requirement, so the registered checks can run it."""
+        return Requirement(
+            id=requirement_id,
+            title=title,
+            severity=Severity.MINOR,
+            kind=RequirementKind.STRUCTURE,
+            check=self.check,
+            params=self.params,
+        )
+
+
+class TaskEnd(CheckCondition):
     """When a student has moved on to the next task: a structure check (with its params)
-    that becomes true on the first commit of the next task (ADR 0023: policy as data).
+    that becomes true on the first commit of the next task.
 
     The round checks the last commit before that one, so later work does not change the
     result of this assignment.
     """
 
-    check: Identifier
-    params: CheckParams = Field(default_factory=lambda: MappingProxyType({}))
+    def as_end_requirement(self, assignment_id: str) -> Requirement:
+        """The condition as the assignment's `<id>-ends-when` requirement."""
+        return self.as_requirement(f"{assignment_id}{TASK_END_SUFFIX}", "The next task has started")
+
+
+class ConditionKind(StrEnum):
+    """Whether an assignment applies to a repo when its condition holds, or is skipped."""
+
+    APPLIES_WHEN = "applies_when"
+    SKIP_WHEN = "skip_when"
+
+    @property
+    def suffix(self) -> str:
+        """Appended to the assignment id to name the condition as a requirement."""
+        return "-" + self.value.replace("_", "-")
+
+
+class AssignmentCondition(DomainModel):
+    """An assignment's `applies_when` or `skip_when`, evaluated for each repo on the checked
+    commit before the assignment's requirements."""
+
+    kind: ConditionKind
+    condition: CheckCondition
+
+    def applies(self, holds: bool) -> bool:
+        """Whether the assignment applies when the condition `holds` (or does not)."""
+        return holds if self.kind is ConditionKind.APPLIES_WHEN else not holds
+
+    def describe(self) -> str:
+        """`applies_when di_started`: the condition as the YAML names it."""
+        return f"{self.kind.value} {self.condition.check}"
 
     def as_requirement(self, assignment_id: str) -> Requirement:
-        """The condition as a structure requirement, so the registered checks can run it."""
-        return Requirement(
-            id=f"{assignment_id}{TASK_END_SUFFIX}",
-            title="The next task has started",
-            severity=Severity.MINOR,
-            kind=RequirementKind.STRUCTURE,
-            check=self.check,
-            params=self.params,
+        """The condition as the assignment's `<id>-applies-when` (or `-skip-when`)
+        requirement."""
+        return self.condition.as_requirement(
+            f"{assignment_id}{self.kind.suffix}", f"The assignment's {self.describe()}"
         )
 
 
@@ -318,6 +362,10 @@ class Assignment(DomainModel):
     files); without it, only the code."""
     ends_when: TaskEnd | None = None
     """When the student has started the next task; the round checks the commit before it."""
+    applies_when: CheckCondition | None = None
+    """The assignment applies to a repo only when this holds on the checked commit."""
+    skip_when: CheckCondition | None = None
+    """The assignment does not apply to a repo when this holds on the checked commit."""
     source_hash: str | None = Field(default=None, pattern=SHA256_HEX_PATTERN)
     """SHA-256 of the requirements file, so results show which version they were checked against."""
 
@@ -332,7 +380,28 @@ class Assignment(DomainModel):
     @property
     def end_requirement(self) -> Requirement | None:
         """`ends_when` as a structure requirement; None when the assignment has none."""
-        return None if self.ends_when is None else self.ends_when.as_requirement(self.id)
+        return None if self.ends_when is None else self.ends_when.as_end_requirement(self.id)
+
+    @property
+    def condition(self) -> AssignmentCondition | None:
+        """`applies_when` or `skip_when`; None when the assignment applies to every repo."""
+        if self.applies_when is not None:
+            return AssignmentCondition(kind=ConditionKind.APPLIES_WHEN, condition=self.applies_when)
+        if self.skip_when is not None:
+            return AssignmentCondition(kind=ConditionKind.SKIP_WHEN, condition=self.skip_when)
+        return None
+
+    @property
+    def condition_requirement(self) -> Requirement | None:
+        """`applies_when` or `skip_when` as a structure requirement; None without one."""
+        condition = self.condition
+        return None if condition is None else condition.as_requirement(self.id)
+
+    @model_validator(mode="after")
+    def _one_condition(self) -> Self:
+        if self.applies_when is not None and self.skip_when is not None:
+            raise ValueError("give applies_when or skip_when, not both")
+        return self
 
     @model_validator(mode="after")
     def _requirement_ids_are_unique(self) -> Self:
