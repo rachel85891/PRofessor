@@ -1,10 +1,13 @@
 # Local architecture evidence
 
 `ArchitectureEvidenceReader.scan(root)` is a read-only, repository-local capability for
-collecting project inventory and a small set of C# syntax signals. It is not connected to
-the round graph, assignment selection, findings, severities, fixer, LLM or publishing.
-Call it with the root of one already-checked local repository; it does not fetch, build,
-execute, or transmit repository content.
+collecting project inventory and a small set of C# syntax signals. Since stage 20 the
+round's check service reads it once per assignment evaluation, through the port, when a
+selected requirement or condition uses a check that reads it (`CheckInput.architecture`):
+`di_started` and the layer and DI checks of stage 21. The evidence itself holds facts only;
+the checks decide findings from the assignment's data. Call it with the root of one
+already-checked local repository; it does not fetch, build, execute, or transmit
+repository content.
 
 The immutable `ArchitectureEvidence` result contains:
 
