@@ -8,7 +8,8 @@ Each assignment's requirements live in a YAML file that HW Checker reads at the 
 assignments/
 ├── _general/requirements.yaml   general requirements, checked in every round
 ├── hw01/requirements.yaml       assignment 1
-└── hw02/requirements.yaml       assignment 2 ...
+├── hw02/requirements.yaml       assignment 2 (layers)
+└── hw03/requirements.yaml       assignment 3 (dependency injection) ...
 ```
 
 - One folder per assignment. The folder name must be exactly the `id` written inside the file.
@@ -102,9 +103,9 @@ skip_when:                    # hw02: not this assignment once DI has started
 | `description` | no | More detail for the reviewer and the checker. |
 | `allowed_alternatives` | no | A list of answers that are also correct, for example "Returning 204 is acceptable". |
 | `check` | `structure` and `custom` only | The name of the deterministic check to run. |
-| `params` | no | Named values for the check, for example a file pattern. Only together with `check`. Values may be text, numbers, `true`/`false`, or a list of those. |
+| `params` | no | Named values for the check, for example a file pattern. Only together with `check`. Values may be text, numbers, `true`/`false`, a list of those, or a mapping of named values (such as the layer `roles`), nested to any depth. |
 | `probes` | `http` only, at least one | HTTP requests to send to the running app (see below). |
-| `depends_on` | no | Ids of requirements that must pass before this one can, for example reading back an updated user needs GET by id. Each id must exist (in any assignment), and a requirement cannot depend on itself, also not through others. The fixer's recheck does not hold a fix's claim on this requirement against it while one of these still fails. |
+| `depends_on` | no | Ids of requirements that must pass before this one can, for example reading back an updated user needs GET by id. Each id must exist (in any assignment), and a requirement cannot depend on itself, also not through others. The fixer's recheck does not hold a fix's claim on this requirement against it while one of these still fails. A `structure` or `custom` requirement whose dependency, checked before it in the same file, failed (or was itself not run for this reason) is not run: it is "not evaluated" (`dependency_failed`), and the report names the requirement it needs. List the dependency first. |
 | `feedback` | no | `fixes_allowed` (the default) or `notes_only`: the fixer may only leave notes about this requirement's findings (architecture feedback). This is enforced in code: a `fix` that claims the requirement (or one of its findings) is rejected with "<id> allows notes only", and so is a `fix` that claims nothing in a file only notes-only findings point to; notes and `final_newline` edits are not affected. The rejection goes back to the fixer like any other, and the course rule `notes-only-requirements` names the failing notes-only requirements in the fixer's prompt. |
 
 Unknown fields are rejected, so a typo such as `chek` is reported instead of being silently ignored.
@@ -353,7 +354,7 @@ JavaScript is read with regexes over the code, with comments and strings masked,
 
 ### Architecture-evidence checks (stage 20)
 
-These read the repo's local architecture evidence (stage 19): the `.csproj` inventory and project references, and C# signals (interface declarations, constructors and their interface parameters, service registrations) read lexically, never compiled or run. A signal is a candidate and a missing one is not proof, so these checks only count signals against thresholds that are the assignment's data. The evidence is read at most once per assignment evaluation, and only when a selected requirement or condition uses a check that reads it (`di_started` today); when it cannot be read, those checks are "not evaluated" (`environment_issue`).
+These read the repo's local architecture evidence (stage 19): the `.csproj` inventory and project references, and C# signals (interface declarations, constructors and their interface parameters, service registrations) read lexically, never compiled or run. A signal is a candidate and a missing one is not proof, so these checks only count signals against thresholds that are the assignment's data. The evidence is read at most once per assignment evaluation, and only when a selected requirement or condition uses a check that reads it (`di_started` and the layer checks below); when it cannot be read, or the coverage a check needs is unavailable, those checks are "not evaluated" (`evidence_unavailable`: the report says the repo's projects or C# code could not be read).
 
 ```yaml
 applies_when:
@@ -366,6 +367,54 @@ applies_when:
 | Check | Params | Passes when |
 | --- | --- | --- |
 | `di_started` | `min_registrations`, `min_interface_constructors` (both required, 0 or more) | Both counts are reached. It passes saying what it counted ("DI has started (3 registrations, 2 constructors taking an interface)."); otherwise its finding gives both counts and thresholds. When the C# signals are unavailable (no C# source could be read) it is "not evaluated". Meant as the condition of `applies_when` / `skip_when`. |
+
+### Layer and DI checks (stage 21, in `hw02` and `hw03`)
+
+These are generic: the code holds the mechanism, and each requirement's params say which layers, patterns and pairs count (ADR 0023). They read the same evidence, plus three more signals of the reader: each class or record with its base list, every constructor parameter, and each `new T(…)` / `new T { … }` with its enclosing type.
+
+**Roles.** Every layer check takes `roles`: a role name (lowercase, such as `services`) and how its project is recognized.
+
+```yaml
+roles:
+  api:          {sdk: Microsoft.NET.Sdk.Web, name: "api|web"}
+  entities:     {name: "entit|model|dto|domain"}
+  services:     {name: "servic|business|\\bbl\\b|logic"}
+  repositories: {name: "repositor|\\bdal\\b|data|access"}
+```
+
+- `sdk` is an SDK the `.csproj` names; it wins over `name`.
+- `name` is a regular expression searched in the project file's name without `.csproj` (`Shop.Services`), ignoring case. In double quotes, write `\\b` for the regex `\b`.
+- A project matching no role, or more than one (by SDK, or else by name), is **unassigned**: it is listed, never guessed.
+- A file belongs to the project whose folder is its nearest parent. A file in no project, or in an unassigned one, is not judged.
+- Every role a check's other params name must be defined in `roles`.
+
+**Write the roles once per file.** Define them with a YAML anchor at their first use and reuse them with an alias. hw02 and hw03 each do this, with the same roles:
+
+```yaml
+    params:
+      roles: &roles            # the first requirement: define them
+        api: {sdk: Microsoft.NET.Sdk.Web, name: "api|web"}
+        ...
+  - id: hw02-references
+    params:
+      roles: *roles            # every later requirement: reuse them
+```
+
+**Results.** A finding gives up to five examples and the total. A check is "not evaluated" when the coverage it reads is unavailable (`evidence_unavailable`), or when a role it names has no project (`dependency_failed`: the `layer_projects` requirement reports that, and the other requirements `depends_on` it). Type names are matched by their simple name (`Data.IUserService<T>` is `IUserService`). A name declared more than once (two classes, or a class and an interface; the parts of one partial class count once) is never guessed: it is left out, and the finding says "Not checked, because the name is declared more than once".
+
+| Check | Params (besides `roles`) | Finding when |
+| --- | --- | --- |
+| `layer_projects` | `required`: roles | A required role has no project. It names the missing roles, the projects found and the unassigned ones. It reads the project inventory only. |
+| `layer_references` | `required`, `forbidden`: `[source, target]` role pairs; a forbidden target may be `*` (any other role) | No project of a required pair's source references a project of its target, or a project references one of a forbidden pair. It says which project references which ("`Api` references `Repositories` (api → repositories is not allowed)"). Only references that match a project of the repo count. It reads the project inventory only. |
+| `code_only_in_layer` | `patterns`: C# regular expressions; `allowed`: roles | A pattern matches, on code with comments and strings masked, in a `.cs` file of a project whose role is not allowed. It gives the match, file and line. |
+| `implements_interface` | `role`; `exclude`: class name patterns (searched, case-sensitive) | A public class of the role's projects implements no interface declared in the repo, directly or through a base class declared in the repo. Static classes (which cannot) and records are not read. |
+| `constructor_takes_interface` | `consumer`, `dependency`: roles | A constructor in a consumer project takes a class of the dependency role that implements an interface: "`UsersController` takes `UserService`; take `IUserService`". A class with no interface is left to `implements_interface`. |
+| `interfaces_registered` | `consumers`: roles | An interface declared in the repo that a constructor in a consumer project takes has no registration (`AddScoped`, `AddTransient`, `AddSingleton`, either form) with it as the service type. A registration whose types are not written literally (a factory, a key) names no type; the finding then says how many there are, to check by hand. |
+| `no_concrete_construction` | `in`, `of`: roles | A class in an `in` project creates a class of an `of` role with `new`. Creating entities, DTOs and lists is fine, and so is `new` in top-level statements (`Program.cs`, where a factory registration may create a class). |
+
+**HW02 and HW03.** `hw02` has `skip_when` and `hw03` has `applies_when`, both `di_started` with `min_registrations: 0` and `min_interface_constructors: 1`: a repo is on the HW02 path until a constructor takes an interface declared in the repo, then on the HW03 path. HW03 repeats HW02's two layer checks. Every requirement is `major` and `feedback: notes_only`, and every one but the layer projects `depends_on` it, so a repo still in one project gets one finding. The draft's two interface requirements of HW03 each have two conditions, so each is two requirements (`hw03-service-interfaces` and `hw03-service-interfaces-taken`, the same for repositories).
+
+The notes come from `hw02/review_rules.yaml` and `hw03/review_rules.yaml`: one `note_only` rule per group of requirements, with its note as the example (hw02's layer notes also name hw03's repeated layer requirements in `when_found`). hw02's `no-new-structure` rule (never add an interface, a project, a constructor parameter or a registration; ask instead) applies to hw03 too and is enforced in code: an added code line (not a `//` comment) with `AddScoped`, `AddTransient`, `AddSingleton`, `interface I` or `ProjectReference` is rejected, even in a `fix` that claims nothing.
 
 **How results are decided.** A `build` requirement gives a finding only when the build failed because of the code, or when the project built but crashed on startup; a build or run that failed because of the environment, or timed out, is not evaluated. An `http` requirement is judged only when the app built and started; a status listed in `allowed_statuses` always counts as correct. A requirement that could not be checked, for example every `http` requirement when the build failed, is shown as "not evaluated" with the reason, and never counts against the student.
 
