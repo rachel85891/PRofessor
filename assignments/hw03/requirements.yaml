@@ -45,6 +45,9 @@ requirements:
       roles: *roles
       required: [[api, services], [services, repositories], [services, entities], [repositories, entities]]
       forbidden: [[api, repositories], [repositories, services], [services, api], [entities, "*"]]
+      # A required reference may go through another layer (SDK-style references flow
+      # through); a forbidden one counts only when direct. Developer decision 2026-11-10.
+      transitive_required: true
 
   # Stage 21, approved by the developer on 2026-11-10 (planner/tasks/hw02-hw03-layers-di-draft.md)
   # The draft's hw03-service-interfaces has two conditions, one check each: this

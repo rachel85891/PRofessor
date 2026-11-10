@@ -170,6 +170,8 @@ def test_hw02_and_hw03_are_major_notes_only_and_need_the_layer_projects() -> Non
         assert all(r.feedback is Feedback.NOTES_ONLY for r in assignment.requirements)
         assert first.depends_on == ()
         assert all(r.depends_on == (first.id,) for r in rest)
+        references = next(r for r in assignment.requirements if r.check == "layer_references")
+        assert references.params["transitive_required"] is True
 
 
 def test_hw02_skips_and_hw03_applies_on_the_same_di_condition_and_roles() -> None:

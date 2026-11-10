@@ -246,6 +246,46 @@ def test_a_reference_in_other_letter_case_is_a_reference(tmp_path: Path) -> None
     assert run("layer_references", root, evidence, **REFERENCES) == ()
 
 
+TRANSITIVE = {**REFERENCES, "transitive_required": True}
+
+
+def test_a_required_reference_may_go_through_another_layer(tmp_path: Path) -> None:
+    files = variant({"Services/Services.csproj": references("Repositories")})
+    root = solution(tmp_path, files)
+
+    assert run("layer_references", root, **TRANSITIVE) == ()
+    assert message(run("layer_references", root, **REFERENCES)) == (
+        "The project references do not follow the layers: `Services` does not reference "
+        "`Entities` (services → entities is required). Total: 1."
+    )
+
+
+def test_a_transitive_required_reference_still_needs_a_path(tmp_path: Path) -> None:
+    files = variant(
+        {
+            "Services/Services.csproj": references("Repositories"),
+            "Repositories/Repositories.csproj": LIBRARY,
+        }
+    )
+
+    outcome = run("layer_references", solution(tmp_path, files), **TRANSITIVE)
+
+    assert "`Services` does not reference `Entities`" in message(outcome)
+    assert "`Repositories` does not reference `Entities`" in message(outcome)
+
+
+def test_a_forbidden_reference_counts_only_when_direct(tmp_path: Path) -> None:
+    through_services = run("layer_references", solution(tmp_path / "through"), **TRANSITIVE)
+    files = variant({"Api/Api.csproj": references("Services", "Entities", "Repositories")})
+    direct = run("layer_references", solution(tmp_path / "direct", files), **TRANSITIVE)
+
+    assert through_services == ()
+    assert message(direct) == (
+        "The project references do not follow the layers: `Api` references `Repositories` "
+        "(api → repositories is not allowed). Total: 1."
+    )
+
+
 def test_layer_references_cannot_tell_when_a_layer_has_no_project(tmp_path: Path) -> None:
     outcome = run("layer_references", solution(tmp_path, SINGLE_PROJECT), **REFERENCES)
 

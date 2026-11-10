@@ -111,11 +111,12 @@ class LayerProjectsParams(_RolesParams):
 
 class LayerReferencesParams(_RolesParams):
     """`required`: [source, target] role pairs some project of the source must reference
-    a project of the target; `forbidden`: pairs no project may reference (target `*`: any
-    other role)."""
+    a project of the target (with `transitive_required`, also through other projects);
+    `forbidden`: pairs no project may reference directly (target `*`: any other role)."""
 
     required: tuple[RolePair, ...] = ()
     forbidden: tuple[tuple[Role, Role | Literal["*"]], ...] = ()
+    transitive_required: bool = False
 
     def named_roles(self) -> tuple[str, ...]:
         pairs = (*self.required, *self.forbidden)
@@ -228,7 +229,8 @@ def layer_projects(check_input: CheckInput, params: LayerProjectsParams) -> Chec
     "layer_references",
     LayerReferencesParams,
     "The project references follow the layers: each required [source, target] role pair is "
-    "referenced, and no forbidden pair is (target * is any other role).",
+    "referenced (with transitive_required, also through other projects), and no forbidden "
+    "pair is referenced directly (target * is any other role).",
     reads_architecture=True,
 )
 def layer_references(check_input: CheckInput, params: LayerReferencesParams) -> CheckResult:
@@ -240,10 +242,11 @@ def layer_references(check_input: CheckInput, params: LayerReferencesParams) -> 
     edges = _reference_edges(evidence)
     problems: list[_Problem] = []
     for source_role, target_role in params.required:
-        if not any(
-            roles.role_of_project.get(source) == source_role
-            and roles.role_of_project.get(target) == target_role
-            for source, target in edges
+        if not _references(
+            edges,
+            roles.projects(source_role),
+            roles.projects(target_role),
+            transitive=params.transitive_required,
         ):
             problems.append(
                 _Problem(
@@ -585,6 +588,32 @@ def _finding(
     examples = joined_examples(problem.example() for problem in problems[:MAX_EXAMPLES])
     message = template.render(examples=examples, count=len(problems), **fields)
     return (deterministic_finding(check_input, message, [p.fact for p in problems]),)
+
+
+def _references(
+    edges: list[tuple[str, str]],
+    sources: tuple[str, ...],
+    targets: tuple[str, ...],
+    *,
+    transitive: bool,
+) -> bool:
+    """Whether a project of `sources` references one of `targets`: directly, or with
+    `transitive` through other projects (SDK-style references flow through)."""
+    following: dict[str, set[str]] = {}
+    for source, target in edges:
+        following.setdefault(source, set()).add(target)
+    reached: set[str] = set()
+    frontier = {target for source in sources for target in following.get(source, ())}
+    while frontier:
+        if frontier & set(targets):
+            return True
+        if not transitive:
+            return False
+        reached |= frontier
+        frontier = {
+            target for project in frontier for target in following.get(project, ())
+        } - reached
+    return False
 
 
 def _reference_edges(evidence: ArchitectureEvidence) -> list[tuple[str, str]]:
