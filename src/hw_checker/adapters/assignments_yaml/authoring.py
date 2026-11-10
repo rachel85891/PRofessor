@@ -1,26 +1,34 @@
 """YamlAuthoringFiles: the files of a new assignment in `assignments/<id>/` (design §8.3)."""
 
 import logging
+from collections.abc import Sequence
 from pathlib import Path
 
 from pydantic import ValidationError
 
-from hw_checker.adapters.assignments_yaml.rules import describe, read_mapping
-from hw_checker.domain.authoring import AssignmentIntake
+from hw_checker.adapters.assignments_yaml.rules import (
+    COURSE_FILE,
+    RULES_FILE,
+    describe,
+    read_mapping,
+)
+from hw_checker.domain.authoring import AssignmentIntake, DataFile
 from hw_checker.domain.errors import AuthoringError, InvalidAssignmentError
 
 logger = logging.getLogger(__name__)
 
+REQUIREMENTS_FILE = "requirements.yaml"
 INTAKE_FILE = "intake.yaml"
 TASK_FILE = "task.md"
 REFERENCE_FOLDER = "reference"
 
 
 class YamlAuthoringFiles:
-    """Implements `AuthoringFiles` over the assignments folder."""
+    """Implements `AuthoringFiles` over the assignments and course folders."""
 
-    def __init__(self, assignments_dir: Path) -> None:
+    def __init__(self, assignments_dir: Path, course_dir: Path) -> None:
         self._dir = assignments_dir
+        self._course_dir = course_dir
 
     def exists(self, assignment_id: str) -> bool:
         """See `AuthoringFiles.exists`."""
@@ -69,6 +77,34 @@ class YamlAuthoringFiles:
             raise _invalid(problems)
         return intake
 
+    def task_text(self, assignment_id: str) -> str:
+        """See `AuthoringFiles.task_text`."""
+        path = self._dir / assignment_id / TASK_FILE
+        text = _read(path, f"{self._dir.name}/{assignment_id}/{TASK_FILE}")
+        if not text.strip():
+            raise AuthoringError(f"{path} is empty: write the task's text there first.")
+        return text
+
+    def course_files(self) -> tuple[DataFile, ...]:
+        """See `AuthoringFiles.course_files`."""
+        name = self._course_dir.name
+        return tuple(
+            DataFile(label=f"{name}/{file}", text=_read(self._course_dir / file, file))
+            for file in (COURSE_FILE, RULES_FILE)
+            if (self._course_dir / file).is_file()
+        )
+
+    def assignment_files(self, assignment_ids: Sequence[str]) -> tuple[DataFile, ...]:
+        """See `AuthoringFiles.assignment_files`."""
+        found: list[DataFile] = []
+        for assignment_id in assignment_ids:
+            for file in (REQUIREMENTS_FILE, RULES_FILE):
+                path = self._dir / assignment_id / file
+                label = f"{self._dir.name}/{assignment_id}/{file}"
+                if path.is_file():
+                    found.append(DataFile(label=label, text=_read(path, label)))
+        return tuple(found)
+
     def _parse(self, folder: Path, problems: list[str]) -> AssignmentIntake | None:
         label = f"{self._dir.name}/{folder.name}/{INTAKE_FILE}"
         data = read_mapping(folder / INTAKE_FILE, label, problems, required=True)
@@ -85,6 +121,17 @@ class YamlAuthoringFiles:
             )
             return None
         return intake
+
+
+def _read(path: Path, label: str) -> str:
+    try:
+        return path.read_bytes().decode("utf-8")
+    except FileNotFoundError as error:
+        raise AuthoringError(f"{label} is missing.") from error
+    except UnicodeDecodeError as error:
+        raise AuthoringError(f"{label} is not UTF-8 text; save it with UTF-8.") from error
+    except OSError as error:
+        raise AuthoringError(f"Cannot read {label}: {error}") from error
 
 
 def _invalid(problems: list[str]) -> InvalidAssignmentError:

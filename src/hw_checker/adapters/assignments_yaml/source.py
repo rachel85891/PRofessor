@@ -304,6 +304,8 @@ def _requirement_data(entry: RequirementEntry, assignment_id: str) -> dict[str, 
         "http_probes": [_probe_data(probe, entry.id, assignment_id) for probe in entry.probes],
         "depends_on": entry.depends_on,
         "feedback": entry.feedback,
+        "origin": entry.origin,
+        "status": entry.status,
     }
 
 

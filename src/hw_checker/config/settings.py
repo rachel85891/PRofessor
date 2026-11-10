@@ -197,7 +197,7 @@ class StorageSettings(BaseModel):
     database_url: NonBlankText = "sqlite:///workspace/hw_checker.db"
 
 
-LlmRole = Literal["reviewer", "judge", "fixer", "writer"]
+LlmRole = Literal["reviewer", "judge", "fixer", "writer", "author"]
 """The roles the LLM is called for (ADR 0008); code names a role, never a model."""
 LLM_ROLES: tuple[LlmRole, ...] = get_args(LlmRole)
 LlmProvider = Literal["openrouter", "copilot"]
@@ -220,6 +220,7 @@ class CopilotSettings(BaseModel):
         "judge": "claude-sonnet-5.5",
         "fixer": "claude-sonnet-5.5",
         "writer": "claude-haiku-5.5",
+        "author": "claude-sonnet-5.5",
     }
     """The Copilot model id for each role, as the seat's model list names it."""
     start_timeout_seconds: float = Field(default=60, gt=0)
@@ -246,6 +247,7 @@ class LlmSettings(BaseModel):
         "judge": "anthropic/claude-sonnet-5.5",
         "fixer": "anthropic/claude-sonnet-5.5",
         "writer": "anthropic/claude-haiku-5.5",
+        "author": "anthropic/claude-sonnet-5.5",
     }
     """The model id for each role, as the endpoint names it."""
     temperature: float | None = Field(default=None, ge=0, le=1)

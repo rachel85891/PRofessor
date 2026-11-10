@@ -19,6 +19,7 @@ from pydantic import BaseModel
 from hw_checker.bootstrap import (
     build_authoring_service,
     build_round_graph_from_settings,
+    open_author_llm,
     open_checkpointer,
     open_fixer_llm,
     open_llm_client,
@@ -232,7 +233,9 @@ def run_assignment_command(settings: Settings, args: argparse.Namespace, out: Te
     Raises:
         HwCheckerError: the command could not be carried out.
     """
-    folder = build_authoring_service(settings).new_assignment(args.assignment_id, args.order)
+    with open_author_llm(settings) as author_llm:
+        service = build_authoring_service(settings, author_llm)
+        folder = service.new_assignment(args.assignment_id, args.order)
     print(f"Created {folder}: fill in intake.yaml and task.md, then run:", file=out)
     print(f"  python -m hw_checker assignment draft {args.assignment_id}", file=out)
     return EXIT_OK

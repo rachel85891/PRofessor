@@ -64,6 +64,8 @@ class Origin(DomainModel):
 
     source: OriginSource
     quote: str = ""
+    item: str = ""
+    """For an `intake` origin: the key of the intake item (`requirements.return_values.1`)."""
 
 
 class SafeFix(StrEnum):

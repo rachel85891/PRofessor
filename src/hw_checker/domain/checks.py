@@ -109,3 +109,5 @@ class CheckDescription(DomainModel):
     (for `ends_when`) as well as on the working copy."""
     reads_architecture: bool = False
     """True when the check reads the repo's architecture evidence (`CheckInput.architecture`)."""
+    params_schema: str = "{}"
+    """The JSON Schema of the check's params model, as compact JSON text (for the author)."""

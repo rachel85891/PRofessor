@@ -535,12 +535,18 @@ def test_openrouter_is_the_default_llm_provider(tmp_path: Path) -> None:
 def test_the_copilot_provider_uses_the_copilot_roles(tmp_path: Path) -> None:
     yaml_text = (
         "llm:\n  provider: copilot\n"
-        "  copilot:\n    roles: {reviewer: a, judge: b, fixer: b, writer: a}\n"
+        "  copilot:\n    roles: {reviewer: a, judge: b, fixer: b, writer: a, author: b}\n"
     )
 
     llm = _load(tmp_path, yaml_text).llm
 
-    assert llm.role_models() == {"reviewer": "a", "judge": "b", "fixer": "b", "writer": "a"}
+    assert llm.role_models() == {
+        "reviewer": "a",
+        "judge": "b",
+        "fixer": "b",
+        "writer": "a",
+        "author": "b",
+    }
 
 
 def test_an_unknown_llm_provider_is_rejected(tmp_path: Path) -> None:
@@ -553,7 +559,7 @@ def test_a_copilot_role_without_a_model_is_rejected(tmp_path: Path) -> None:
 
     with pytest.raises(
         ConfigurationError,
-        match=re.escape("no model for the roles: fixer, writer (in llm.copilot.roles)"),
+        match=re.escape("no model for the roles: fixer, writer, author (in llm.copilot.roles)"),
     ):
         _load(tmp_path, yaml_text)
 
@@ -594,7 +600,7 @@ def test_repo_config_maps_every_copilot_role_to_a_model(tmp_path: Path) -> None:
     llm = load_settings(config_path=DEFAULT_CONFIG_PATH, env_path=tmp_path / ".env").llm
 
     roles = llm.copilot.roles
-    assert sorted(roles) == ["fixer", "judge", "reviewer", "writer"]
+    assert sorted(roles) == ["author", "fixer", "judge", "reviewer", "writer"]
     assert roles["reviewer"] == roles["writer"]
-    assert roles["judge"] == roles["fixer"]
+    assert roles["judge"] == roles["fixer"] == roles["author"]
     assert llm.copilot_token is None

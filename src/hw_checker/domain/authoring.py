@@ -1,15 +1,28 @@
-"""Adding an assignment (ADR 0023, design §8.3): the developer's intake.
+"""Adding an assignment (ADR 0023, design §8.3): the developer's intake and the author's
+draft.
 
-The developer writes `assignments/<id>/intake.yaml` (this model) and `task.md`; the
-`author` role drafts the requirements and review rules from them.
+The developer writes `assignments/<id>/intake.yaml` (`AssignmentIntake`) and `task.md`;
+the `author` role drafts the requirements and review rules from them (`AuthorReply`).
 """
 
-from typing import Literal, Self
+from typing import Annotated, Literal, Self
 
-from pydantic import Field, model_validator
+from pydantic import Field, StringConstraints, model_validator
 
-from hw_checker.domain.assignment import Assignment, Severity, TaskEnd
-from hw_checker.domain.base import DomainModel, Identifier, NonBlankStr
+from hw_checker.domain.assignment import (
+    VARIABLE_NAME_PATTERN,
+    Assignment,
+    ExpectedJson,
+    Feedback,
+    HttpMethod,
+    ParamValue,
+    ProbePath,
+    RequirementKind,
+    Severity,
+    TaskEnd,
+)
+from hw_checker.domain.base import DomainModel, HttpStatusCode, Identifier, NonBlankStr
+from hw_checker.domain.course import FixExample, ItemStatus, Origin, ReviewRule
 
 LATEST: Literal["latest"] = "latest"
 """`check_commit: latest`: the round checks the repo's latest commit."""
@@ -106,3 +119,99 @@ class AssignmentIntake(DomainModel):
             for prefix, texts in lists
             for number, text in enumerate(texts, start=1)
         )
+
+
+class CaptureSpec(DomainModel):
+    """A probe's capture as `requirements.yaml` writes it: `{name, from}`."""
+
+    name: Annotated[str, StringConstraints(pattern=rf"^{VARIABLE_NAME_PATTERN}$")]
+    source: Annotated[
+        str, StringConstraints(pattern=rf"^(body:{VARIABLE_NAME_PATTERN}|location)$")
+    ] = Field(alias="from")
+
+
+class ProbeSpec(DomainModel):
+    """One HTTP probe as `requirements.yaml` writes it (assignments/README.md, "Probe
+    fields"). `body` is JSON text."""
+
+    method: HttpMethod
+    path: ProbePath
+    path_alternatives: tuple[ProbePath, ...] = ()
+    capture: CaptureSpec | None = None
+    expect_json: ExpectedJson | None = None
+    expect_values: tuple[NonBlankStr, ...] = ()
+    body: str | None = None
+    expected_status: HttpStatusCode
+    allowed_statuses: tuple[HttpStatusCode, ...] = ()
+    notes: str = ""
+
+
+class RequirementSpec(DomainModel):
+    """One requirement as `requirements.yaml` writes it (assignments/README.md,
+    "Requirement fields"), with its origin and approval."""
+
+    id: Identifier
+    kind: RequirementKind
+    title: NonBlankStr
+    description: str = ""
+    severity: Severity
+    allowed_alternatives: tuple[NonBlankStr, ...] = ()
+    check: Identifier | None = None
+    params: dict[str, ParamValue] = Field(default_factory=dict)
+    probes: tuple[ProbeSpec, ...] = ()
+    depends_on: tuple[Identifier, ...] = ()
+    feedback: Feedback = Feedback.FIXES_ALLOWED
+    origin: Origin
+    status: ItemStatus
+
+
+class Drafted(DomainModel):
+    """What the author adds to every drafted item: a one-line plain-English summary for
+    the report, and the keys of the intake items it covers (`requirements.return_values.1`)."""
+
+    summary: NonBlankStr
+    intake_items: tuple[NonBlankStr, ...] = ()
+
+
+class DraftedRequirement(RequirementSpec, Drafted):
+    """A requirement the author drafted."""
+
+
+class DraftedRule(ReviewRule, Drafted):
+    """A review rule the author drafted."""
+
+
+class DraftedExample(FixExample, Drafted):
+    """A fixer example the author drafted."""
+
+
+class FrameSuggestion(DomainModel):
+    """A change to a prompt's frame the author suggests; only the developer applies it,
+    by a commit (ADR 0023)."""
+
+    template: NonBlankStr
+    suggestion: NonBlankStr
+    reason: NonBlankStr
+
+
+class AuthorReply(DomainModel):
+    """The `author` role's reply: the new assignment's requirements and review rules, every
+    item a draft with its origin."""
+
+    requirements: tuple[DraftedRequirement, ...]
+    rules: tuple[DraftedRule, ...] = ()
+    examples: tuple[DraftedExample, ...] = ()
+    lenient_notes: tuple[NonBlankStr, ...] = ()
+    frame_suggestions: tuple[FrameSuggestion, ...] = ()
+
+    @property
+    def items(self) -> tuple[DraftedRequirement | DraftedRule | DraftedExample, ...]:
+        """Every drafted requirement, rule and example, in that order."""
+        return (*self.requirements, *self.rules, *self.examples)
+
+
+class DataFile(DomainModel):
+    """A course or assignment data file shown to the author, by its repo path."""
+
+    label: NonBlankStr
+    text: str

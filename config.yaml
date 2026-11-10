@@ -155,6 +155,8 @@ llm:
     writer: anthropic/claude-haiku-5.5
     judge: anthropic/claude-sonnet-5.5
     fixer: anthropic/claude-sonnet-5.5
+    # The author drafts a new assignment from its task text (stage 16); never student code.
+    author: anthropic/claude-sonnet-5.5
   # null: not sent. These models do not accept temperature on OpenRouter, and with
   # require_parameters (below) any parameter a model does not support makes the request
   # unroutable (HTTP 404 "No endpoints found"). Set a number only for models that list
@@ -182,6 +184,7 @@ llm:
       writer: claude-haiku-5.5
       judge: claude-sonnet-5.5
       fixer: claude-sonnet-5.5
+      author: claude-sonnet-5.5
     # Seconds to wait for the Copilot CLI to start and report its login.
     start_timeout_seconds: 60
   # --- both providers ---

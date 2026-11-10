@@ -1,9 +1,10 @@
 """Port for the files of a new assignment: its intake, task text and reference solution."""
 
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Protocol
 
-from hw_checker.domain.authoring import AssignmentIntake
+from hw_checker.domain.authoring import AssignmentIntake, DataFile
 
 
 class AuthoringFiles(Protocol):
@@ -37,5 +38,30 @@ class AuthoringFiles(Protocol):
         Raises:
             AuthoringError: the folder or its `intake.yaml` is missing.
             InvalidAssignmentError: the intake is invalid (every problem listed).
+        """
+        ...
+
+    def task_text(self, assignment_id: str) -> str:
+        """The text of `assignments/<id>/task.md`.
+
+        Raises:
+            AuthoringError: the file is missing, empty or cannot be read.
+        """
+        ...
+
+    def course_files(self) -> tuple[DataFile, ...]:
+        """The course's `course.yaml` and `review_rules.yaml`.
+
+        Raises:
+            AuthoringError: a file cannot be read.
+        """
+        ...
+
+    def assignment_files(self, assignment_ids: Sequence[str]) -> tuple[DataFile, ...]:
+        """Each assignment's `requirements.yaml`, then its `review_rules.yaml` when it has
+        one, in the order of `assignment_ids`.
+
+        Raises:
+            AuthoringError: a file cannot be read.
         """
         ...

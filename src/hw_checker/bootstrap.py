@@ -178,13 +178,32 @@ def build_graph_services(settings: Settings, fixer_llm: LLMClient | None = None)
     )
 
 
-def build_authoring_service(settings: Settings) -> AuthoringService:
-    """The authoring service over the assignments and course folders (design §8.3)."""
+def build_authoring_service(settings: Settings, author_llm: LLMClient) -> AuthoringService:
+    """The authoring service over the assignments and course folders (design §8.3).
+
+    `author_llm` (from `open_author_llm`) is the `author` role's client; its caller closes it.
+    """
     return AuthoringService(
-        YamlAuthoringFiles(settings.assignments_dir),
+        YamlAuthoringFiles(settings.assignments_dir, settings.course_dir),
         YamlAssignmentSource(settings.assignments_dir, settings.course_dir),
         JinjaTextTemplates(TEMPLATES_DIR, settings.course_dir / COURSE_PROMPTS),
+        CheckRegistry(builtin_checks()),
+        author_llm,
     )
+
+
+@contextmanager
+def open_author_llm(settings: Settings) -> Iterator[LLMClient]:
+    """The `author` role's client for one command, opened on its first call (so `new`,
+    `approve` and `stop` start nothing) and always closed when the block ends.
+
+    It never needs `llm.student_code_approved`: the author sees no student code (ADR 0023).
+    """
+    client = LazyLLMClient(settings)
+    try:
+        yield client
+    finally:
+        client.close()
 
 
 def fixer_config(settings: Settings) -> FixerConfig:

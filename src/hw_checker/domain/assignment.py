@@ -17,7 +17,7 @@ from pydantic import (
 )
 
 from hw_checker.domain.base import DomainModel, HttpStatusCode, Identifier, NonBlankStr
-from hw_checker.domain.course import ReviewRuleSet
+from hw_checker.domain.course import ItemStatus, Origin, ReviewRuleSet
 
 
 class Severity(StrEnum):
@@ -209,6 +209,11 @@ class Requirement(DomainModel):
     claim on this requirement is not held against it while one of them still fails."""
     feedback: Feedback = Feedback.FIXES_ALLOWED
     """What the fixer may do about this requirement's findings."""
+    origin: Origin | None = None
+    """Where the requirement comes from; set on the ones the authoring flow drafted."""
+    status: ItemStatus = ItemStatus.APPROVED
+    """A drafted requirement waits for the developer's approval; a round refuses drafts.
+    One written by hand is approved by its commit."""
 
     @model_validator(mode="after")
     def _does_not_depend_on_itself(self) -> Self:
@@ -428,3 +433,14 @@ class Assignment(DomainModel):
         if any(probe.assignment_id != self.id for probe in probes):
             raise ValueError(f"every probe must have assignment_id {self.id!r}")
         return self
+
+    @property
+    def drafts(self) -> tuple[str, ...]:
+        """The requirements, review rules and examples still waiting for approval, as
+        `requirement 'x'`, `rule 'x'` or `example 'x'`."""
+        requirements = tuple(
+            f"requirement '{requirement.id}'"
+            for requirement in self.requirements
+            if requirement.status is ItemStatus.DRAFT
+        )
+        return requirements + self.review_rules.drafts

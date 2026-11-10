@@ -11,7 +11,7 @@ COURSE_LABEL = "course"
 
 class AssignmentCatalogService:
     """Selects `_general` plus assignments 1..N, refusing requirements with invalid checks
-    and review rules that are still drafts."""
+    and requirements and review rules that are still drafts."""
 
     def __init__(self, source: AssignmentSource, catalog: CheckCatalog) -> None:
         self._source = source
@@ -34,8 +34,9 @@ class AssignmentCatalogService:
         Raises:
             NotFoundError: `assignment_id` is unknown, or is `_general` itself.
             InvalidAssignmentError: the data cannot be loaded, a selected requirement
-                names an unknown check or gives it invalid params, or a review rule or
-                example of the course or of a selected assignment is still a draft.
+                names an unknown check or gives it invalid params, or a requirement,
+                review rule or example of the course or of a selected assignment is still
+                a draft.
         """
         assignments = self._source.load_all()
         target = next((a for a in assignments if a.id == assignment_id), None)
@@ -74,9 +75,8 @@ class AssignmentCatalogService:
         return self._check_problems(self._source.load_all())
 
     def _drafts(self, selected: tuple[Assignment, ...]) -> list[str]:
-        sets = [(COURSE_LABEL, self._source.load_course().rules)]
-        sets += [(assignment.id, assignment.review_rules) for assignment in selected]
-        return [f"{label}: {draft}" for label, rules in sets for draft in rules.drafts]
+        drafts = [f"{COURSE_LABEL}: {draft}" for draft in self._source.load_course().rules.drafts]
+        return drafts + [f"{a.id}: {draft}" for a in selected for draft in a.drafts]
 
     def _check_problems(self, assignments: tuple[Assignment, ...]) -> tuple[str, ...]:
         problems = [

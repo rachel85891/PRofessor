@@ -332,7 +332,7 @@ def test_copilot_config_maps_the_copilot_roles_and_the_shared_limits() -> None:
     llm = LlmSettings(
         provider="copilot",
         copilot=CopilotSettings(
-            roles={"reviewer": "a", "judge": "b", "fixer": "b", "writer": "a"},
+            roles={"reviewer": "a", "judge": "b", "fixer": "b", "writer": "a", "author": "b"},
             start_timeout_seconds=30,
         ),
         timeout_seconds=90,
@@ -343,7 +343,13 @@ def test_copilot_config_maps_the_copilot_roles_and_the_shared_limits() -> None:
 
     config = bootstrap.copilot_config(llm)
 
-    assert dict(config.models) == {"reviewer": "a", "judge": "b", "fixer": "b", "writer": "a"}
+    assert dict(config.models) == {
+        "reviewer": "a",
+        "judge": "b",
+        "fixer": "b",
+        "writer": "a",
+        "author": "b",
+    }
     assert (config.timeout_seconds, config.start_timeout_seconds) == (90, 30)
     assert (config.max_retries, config.retry_backoff_seconds, config.max_prompt_chars) == (
         1,

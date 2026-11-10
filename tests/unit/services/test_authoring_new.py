@@ -14,6 +14,8 @@ from hw_checker.domain.errors import AuthoringError, InvalidAssignmentError
 from hw_checker.prompts import TEMPLATES_DIR
 from hw_checker.services.authoring import AuthoringService
 from tests.fakes.assignments import FakeAssignmentSource
+from tests.fakes.checks import FakeCheckCatalog
+from tests.fakes.llm import FakeLLMClient
 
 GENERAL = Assignment(id="_general", order=0, title="General", requirements=())
 HW01 = Assignment(id="hw01", order=1, title="Users", requirements=())
@@ -21,9 +23,11 @@ HW01 = Assignment(id="hw01", order=1, title="Users", requirements=())
 
 def _service(assignments_dir: Path) -> AuthoringService:
     return AuthoringService(
-        YamlAuthoringFiles(assignments_dir),
+        YamlAuthoringFiles(assignments_dir, assignments_dir.parent / "course"),
         FakeAssignmentSource([GENERAL, HW01]),
         JinjaTextTemplates(TEMPLATES_DIR),
+        FakeCheckCatalog(),
+        FakeLLMClient(),
     )
 
 
@@ -100,7 +104,7 @@ def test_an_invalid_intake_lists_every_problem(tmp_path: Path) -> None:
     )
 
     with pytest.raises(InvalidAssignmentError) as raised:
-        YamlAuthoringFiles(tmp_path).load_intake("hw02")
+        YamlAuthoringFiles(tmp_path, tmp_path / "course").load_intake("hw02")
 
     message = str(raised.value)
     assert "field 'order'" in message
@@ -109,4 +113,4 @@ def test_an_invalid_intake_lists_every_problem(tmp_path: Path) -> None:
 
 def test_a_missing_intake_says_how_to_create_it(tmp_path: Path) -> None:
     with pytest.raises(AuthoringError, match="assignment new hw02"):
-        YamlAuthoringFiles(tmp_path).load_intake("hw02")
+        YamlAuthoringFiles(tmp_path, tmp_path / "course").load_intake("hw02")
