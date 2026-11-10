@@ -35,7 +35,7 @@ Every requirement, rule and example:
 | `build` | the project builds and starts | general |
 | `code` | the code reviewer reads the code; no `check`, no `probes` | clean code, anything no check can tell |
 
-Prefer an existing check from the catalog below. Use `code` only when no check fits. A `code` requirement also has `reviewer_guidance` (what the code reviewer looks for, and what is a finding), `allowed_alternatives`, `lenient_notes` (what not to be strict about here) and `concerns` (the `files`, as repo globs, or the projects' `roles` it is about); only a `code` requirement has these three. It is not checked until the code reviewer is enabled. A `check`'s `params` follow its schema exactly. A probe's `body` is JSON text; `{name}` in a path or body uses a value an earlier probe captured. `depends_on` names requirements that must pass first.
+Prefer an existing check from the catalog below. Use `code` only when no check fits. Besides `allowed_alternatives`, a `code` requirement has `reviewer_guidance` (what the code reviewer looks for, and what is a finding), `lenient_notes` (what not to be strict about here) and `concerns` (the `files`, as repo globs, or the projects' `roles` it is about); no other kind has these three. It is not checked until the code reviewer is enabled. A `check`'s `params` follow its schema exactly. A probe's `body` is JSON text; `{name}` in a path or body uses a value an earlier probe captured. `depends_on` names requirements that must pass first.
 
 # The check catalog
 

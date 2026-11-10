@@ -171,16 +171,21 @@ def build_service(
     runner: FakeCodeRunner | None = None,
     checks: tuple[CheckFunction, ...] = (),
     flag_share: float = 0.9,
+    only_checks: tuple[CheckFunction, ...] | None = None,
 ) -> AuthoringService:
     """The authoring service over the synthetic folders under `root` (written first when
     they are missing), with the real check registry and checker, a fake runner, LLM and
-    clock. Clones go in `root/workspace/clones`, reports in `root/workspace/authoring`."""
+    clock. Clones go in `root/workspace/clones`, reports in `root/workspace/authoring`.
+    `only_checks` replaces the built-in checks (for a golden prompt that does not change
+    when a check is added)."""
     assignments, course = root / "assignments", root / "course"
     if not assignments.exists():
         make_folders(root)
     workspace = root / "workspace"
     files = YamlAuthoringFiles(assignments, course, workspace / "authoring", workspace / "clones")
-    registry = CheckRegistry((*builtin_checks(), *checks))
+    registry = CheckRegistry(
+        only_checks if only_checks is not None else (*builtin_checks(), *checks)
+    )
     execution = ExecutionService(runner or FakeCodeRunner(), workspace / "runs", Path("logs"))
     validator = DraftValidator(
         files,

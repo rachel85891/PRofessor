@@ -338,11 +338,18 @@ def _origin_text(item: DraftedRequirement | DraftedRule | DraftedExample) -> str
 
 def _shown(file: DataFile) -> DataFile:
     """`file` as the author sees it: without comment lines, as data."""
-    return DataFile(label=file.label, text=_data(_COMMENT_LINE.sub("", file.text).strip()))
+    text = _COMMENT_LINE.sub("", _lf(file.text)).strip()
+    return DataFile(label=file.label, text=_data(text))
+
+
+def _lf(text: str) -> str:
+    return text.replace("\r\n", "\n")
 
 
 def _data(text: str) -> str:
-    """`text` with the prompt's data tags escaped, so it cannot close its block."""
+    """`text` with LF line ends and the prompt's data tags escaped, so it cannot close
+    its block."""
+    text = _lf(text)
     for tag in _DATA_TAGS:
         text = text.replace(f"</{tag}>", f"<\\/{tag}>")
     return text
