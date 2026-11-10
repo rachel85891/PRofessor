@@ -26,7 +26,8 @@ from hw_checker.domain import (
 from hw_checker.ports.architecture_evidence import ArchitectureEvidenceReader
 
 _PRIMARY_CONSTRUCTOR = re.compile(
-    r"\b(?:class|record(?:\s+class)?)\s+[A-Za-z_]\w*(?:\s*<[^;{}]*>)?\s*\("
+    r"\b(?:class|struct|record(?:\s+(?:class|struct))?)\s+(?P<name>[A-Za-z_]\w*)"
+    r"(?:\s*<[^;{}()]*>)?\s*\("
 )
 
 EXCLUDED_DIRS: Final = frozenset({"bin", "obj", ".git", ".vs"})
@@ -478,14 +479,6 @@ def _lexical_issues(masked: str, file_path: str) -> list[EvidenceCoverageIssue]:
         issues.append(
             EvidenceCoverageIssue(kind=EvidenceIssueKind.USING_ALIAS, file_path=file_path)
         )
-    for primary in _PRIMARY_CONSTRUCTOR.finditer(masked):
-        issues.append(
-            EvidenceCoverageIssue(
-                kind=EvidenceIssueKind.AMBIGUOUS_SYNTAX,
-                file_path=file_path,
-                line=masked.count("\n", 0, primary.start()) + 1,
-            )
-        )
     return issues
 
 
@@ -510,6 +503,27 @@ def _signals_in_file(
             )
         )
 
+    for primary in _PRIMARY_CONSTRUCTOR.finditer(masked):
+        opening = primary.end() - 1
+        closing = _matching_close(masked, opening)
+        line = masked.count("\n", 0, primary.start("name")) + 1
+        if closing is None or len(primary["name"]) > MAX_IDENTIFIER_CHARS:
+            issues.append(
+                EvidenceCoverageIssue(
+                    kind=EvidenceIssueKind.AMBIGUOUS_SYNTAX, file_path=file_path, line=line
+                )
+            )
+            continue
+        _constructor_signals(
+            primary["name"],
+            masked[opening + 1 : closing],
+            file_path,
+            line,
+            declarations,
+            signals,
+            issues,
+        )
+
     for declaration in _TYPE_DECLARATION.finditer(masked):
         type_name = declaration["name"]
         if len(type_name) > MAX_IDENTIFIER_CHARS:
@@ -522,7 +536,7 @@ def _signals_in_file(
             )
             continue
         opening = declaration.end() - 1
-        closing = _matching_brace(masked, opening)
+        closing = _matching_close(masked, opening)
         if closing is None:
             issues.append(
                 EvidenceCoverageIssue(
@@ -540,48 +554,63 @@ def _signals_in_file(
             if constructor is None or constructor["name"] != type_name:
                 continue
             line = masked.count("\n", 0, opening + 1 + offset + constructor.start("name")) + 1
-            signals.append(
-                ArchitectureSignal(
-                    kind=ArchitectureSignalKind.CONSTRUCTOR_CANDIDATE,
-                    file_path=file_path,
-                    line=line,
-                    subject=type_name,
+            _constructor_signals(
+                type_name,
+                constructor["parameters"],
+                file_path,
+                line,
+                declarations,
+                signals,
+                issues,
+            )
+    return signals, issues
+
+
+def _constructor_signals(
+    type_name: str,
+    parameters: str,
+    file_path: str,
+    line: int,
+    declarations: dict[str, int],
+    signals: list[ArchitectureSignal],
+    issues: list[EvidenceCoverageIssue],
+) -> None:
+    """A classic or primary constructor, and each parameter typed by a declared interface."""
+    signals.append(
+        ArchitectureSignal(
+            kind=ArchitectureSignalKind.CONSTRUCTOR_CANDIDATE,
+            file_path=file_path,
+            line=line,
+            subject=type_name,
+        )
+    )
+    parameter_types = _parameter_types(parameters)
+    if parameter_types is None:
+        issues.append(
+            EvidenceCoverageIssue(
+                kind=EvidenceIssueKind.AMBIGUOUS_SYNTAX, file_path=file_path, line=line
+            )
+        )
+        return
+    for parameter_type in parameter_types:
+        count = declarations.get(parameter_type.rstrip("?").split("<", 1)[0].split(".")[-1], 0)
+        if not count:
+            continue
+        signals.append(
+            ArchitectureSignal(
+                kind=ArchitectureSignalKind.CONSTRUCTOR_INTERFACE_PARAMETER,
+                file_path=file_path,
+                line=line,
+                subject=parameter_type,
+                related_subject=type_name,
+            )
+        )
+        if count > 1:
+            issues.append(
+                EvidenceCoverageIssue(
+                    kind=EvidenceIssueKind.DUPLICATE_TYPE_NAME, file_path=file_path, line=line
                 )
             )
-            parameter_types = _parameter_types(constructor["parameters"])
-            if parameter_types is None:
-                issues.append(
-                    EvidenceCoverageIssue(
-                        kind=EvidenceIssueKind.AMBIGUOUS_SYNTAX,
-                        file_path=file_path,
-                        line=line,
-                    )
-                )
-                continue
-            for parameter_type in parameter_types:
-                count = declarations.get(
-                    parameter_type.rstrip("?").split("<", 1)[0].split(".")[-1], 0
-                )
-                if not count:
-                    continue
-                signals.append(
-                    ArchitectureSignal(
-                        kind=ArchitectureSignalKind.CONSTRUCTOR_INTERFACE_PARAMETER,
-                        file_path=file_path,
-                        line=line,
-                        subject=parameter_type,
-                        related_subject=type_name,
-                    )
-                )
-                if count > 1:
-                    issues.append(
-                        EvidenceCoverageIssue(
-                            kind=EvidenceIssueKind.DUPLICATE_TYPE_NAME,
-                            file_path=file_path,
-                            line=line,
-                        )
-                    )
-    return signals, issues
 
 
 def _registered_types(masked: str, position: int) -> tuple[str | None, str | None]:
@@ -681,12 +710,15 @@ def _top_level_member_headers(body: str) -> tuple[tuple[str, int], ...]:
     return tuple(headers)
 
 
-def _matching_brace(source: str, opening: int) -> int | None:
+def _matching_close(source: str, opening: int) -> int | None:
+    """The index closing the `{` or `(` at `opening`."""
+    open_character = source[opening]
+    close_character = "}" if open_character == "{" else ")"
     depth = 0
     for index in range(opening, len(source)):
-        if source[index] == "{":
+        if source[index] == open_character:
             depth += 1
-        elif source[index] == "}":
+        elif source[index] == close_character:
             depth -= 1
             if depth == 0:
                 return index

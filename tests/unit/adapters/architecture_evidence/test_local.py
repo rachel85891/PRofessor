@@ -297,16 +297,40 @@ def test_preprocessor_alias_and_unbalanced_syntax_lower_coverage(tmp_path: Path)
     assert evidence.signals == ()
 
 
-def test_primary_constructor_is_unsupported_and_not_scanned_as_a_negative(tmp_path: Path) -> None:
-    write(tmp_path, "Service.cs", "public class Service(IRepository repository) { }\n")
+def test_primary_constructor_is_read_like_a_classic_one(tmp_path: Path) -> None:
+    write(tmp_path, "IRepository.cs", "public interface IRepository<T> { }\n")
+    write(
+        tmp_path,
+        "Service.cs",
+        "public class Service<T>(IRepository<T> repository, int size = 10)\n"
+        "    : Base where T : class\n"
+        "{\n"
+        "}\n"
+        "public record Point(int X, int Y);\n",
+    )
+
+    evidence = LocalArchitectureEvidenceReader().scan(tmp_path)
+
+    assert [
+        (signal.kind, signal.line, signal.subject, signal.related_subject)
+        for signal in evidence.signals
+        if signal.file_path == "Service.cs"
+    ] == [
+        (ArchitectureSignalKind.CONSTRUCTOR_CANDIDATE, 1, "Service", None),
+        (ArchitectureSignalKind.CONSTRUCTOR_INTERFACE_PARAMETER, 1, "IRepository<T>", "Service"),
+        (ArchitectureSignalKind.CONSTRUCTOR_CANDIDATE, 5, "Point", None),
+    ]
+
+
+def test_unreadable_primary_constructor_parameters_are_ambiguous(tmp_path: Path) -> None:
+    write(tmp_path, "Service.cs", "public class Service((int, int) pair) { }\n")
 
     evidence = LocalArchitectureEvidenceReader().scan(tmp_path)
 
     assert evidence.signal_coverage.status is EvidenceCoverageStatus.PARTIAL
-    assert EvidenceIssueKind.AMBIGUOUS_SYNTAX in {
-        issue.kind for issue in evidence.signal_coverage.issues
-    }
-    assert evidence.signals == ()
+    assert (EvidenceIssueKind.AMBIGUOUS_SYNTAX, "Service.cs", 1) in [
+        (issue.kind, issue.file_path, issue.line) for issue in evidence.signal_coverage.issues
+    ]
 
 
 def test_invalid_utf8_and_missing_sources_are_not_success_shaped(tmp_path: Path) -> None:
