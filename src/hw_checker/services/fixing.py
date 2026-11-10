@@ -23,6 +23,7 @@ from hw_checker.domain import (
     EditApplication,
     EditKind,
     ExecutionResult,
+    Feedback,
     FetchedRepo,
     FixAttempt,
     FixOutcome,
@@ -323,6 +324,7 @@ class FixService:
         """Apply `edits` to the fix working copy from the checked commit, keeping only the
         ones that pass every guardrail (with the forbidden texts and safe fixes of the
         fixer's rules in effect for `assignment`; the safe fixes read the round's `results`).
+        A requirement with `feedback: notes_only` gets notes, never a `fix`.
 
         Raises:
             GitOperationError: the working copy cannot be reset.
@@ -337,6 +339,7 @@ class FixService:
             self._course, assignment, assignments, ReviewRole.FIXER, selected, _failed(results)
         )
         styles = self._styles(selected)
+        notes_only, notes_only_files = _notes_only(assignments, results)
         rules = EditRules(
             max_edits=self._config.max_edits,
             max_fix_lines=self._config.max_fix_lines,
@@ -351,6 +354,8 @@ class FixService:
                 styles=styles,
                 findings=_finding_messages(results),
             ),
+            notes_only=notes_only,
+            notes_only_files=notes_only_files,
         )
         result = apply_edits(files, edits, rules)
         for path, data in result.files.items():
@@ -1020,6 +1025,28 @@ def _findings(results: Sequence[AssignmentResult]) -> list[dict[str, str]]:
                 }
             )
     return found
+
+
+def _notes_only(
+    assignments: Sequence[Assignment], results: Sequence[AssignmentResult]
+) -> tuple[frozenset[str], frozenset[str]]:
+    """The notes-only requirements' ids with their findings' ids, and the files that only
+    their findings point to (by the findings' evidence)."""
+    requirements = {
+        requirement.id
+        for assignment in assignments
+        for requirement in assignment.requirements
+        if requirement.feedback is Feedback.NOTES_ONLY
+    }
+    findings = [finding for result in results for finding in result.findings]
+    pointing: dict[str, set[str]] = {}
+    for finding in findings:
+        if finding.evidence is not None:
+            path = finding.evidence.file_path.replace("\\", "/")
+            pointing.setdefault(path, set()).add(finding.requirement_id)
+    ids = requirements | {f.id for f in findings if f.requirement_id in requirements}
+    files = {path for path, owners in pointing.items() if owners <= requirements}
+    return frozenset(ids), frozenset(files)
 
 
 def _failed(results: Sequence[AssignmentResult]) -> set[str]:

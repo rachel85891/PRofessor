@@ -6,7 +6,7 @@ import pytest
 
 from hw_checker.adapters.assignments_yaml import YamlAssignmentSource
 from hw_checker.config.settings import REPO_ROOT
-from hw_checker.domain import RequirementKind, Severity
+from hw_checker.domain import Feedback, RequirementKind, Severity
 from hw_checker.domain.errors import InvalidAssignmentError
 from hw_checker.ports import AssignmentSource
 from tests.fakes.assignments import FakeAssignmentSource
@@ -681,3 +681,15 @@ def test_applies_when_and_skip_when_together_are_reported(tmp_path: Path) -> Non
     assert "hw02/requirements.yaml: give applies_when or skip_when, not both" in problems_of(
         load(tmp_path, {"_general": GENERAL, "hw02": both})
     )
+
+
+def test_a_requirement_may_allow_notes_only(tmp_path: Path) -> None:
+    (tmp_path / "a").mkdir()
+    (tmp_path / "b").mkdir()
+    notes = HW02.replace("    severity: major\n", "    severity: major\n    feedback: notes_only\n")
+    wrong = HW02.replace("    severity: major\n", "    severity: major\n    feedback: sometimes\n")
+
+    [_, loaded] = load(tmp_path / "a", {"_general": GENERAL, "hw02": notes}).load_all()
+
+    assert loaded.requirements[0].feedback is Feedback.NOTES_ONLY
+    assert "feedback" in problems_of(load(tmp_path / "b", {"_general": GENERAL, "hw02": wrong}))

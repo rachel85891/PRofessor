@@ -62,6 +62,15 @@ class RequirementKind(StrEnum):
     CUSTOM = "custom"
 
 
+class Feedback(StrEnum):
+    """What the fixer may do about a requirement's findings."""
+
+    FIXES_ALLOWED = "fixes_allowed"
+    NOTES_ONLY = "notes_only"
+    """Only notes: a `fix` that claims the requirement, or edits a file only its findings
+    point to, is rejected (deterministically, not by prompt wording)."""
+
+
 class HttpMethod(StrEnum):
     """HTTP methods an HTTP probe may use."""
 
@@ -198,6 +207,8 @@ class Requirement(DomainModel):
     depends_on: tuple[Identifier, ...] = ()
     """Requirements that must pass before this one can (rules as data, ADR 0023). A fix's
     claim on this requirement is not held against it while one of them still fails."""
+    feedback: Feedback = Feedback.FIXES_ALLOWED
+    """What the fixer may do about this requirement's findings."""
 
     @model_validator(mode="after")
     def _does_not_depend_on_itself(self) -> Self:

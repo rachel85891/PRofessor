@@ -214,6 +214,22 @@ rules:
       quote: "developer decision 2026-11-05"
     status: approved
 
+  - id: notes-only-requirements
+    # Stage 20: requirements with `feedback: notes_only` (architecture feedback). The code
+    # rejects a fix for them; this rule tells the fixer before it plans. In a prompt only
+    # when one of them failed ({notes_only}), so other prompts are unchanged.
+    applies_to: [fixer]
+    kind: note_only
+    note_section: for_you
+    text: >-
+      Requirements {notes_only} allow notes only: for their findings, plan `note` edits (a
+      question or an instruction for the student), never a `fix`. A `fix` that claims one of
+      them, or that changes a file only their findings point to, is rejected.
+    origin:
+      source: developer
+      quote: "approved implementation approach, docs/design.md §7 (developer, 2026-11-10)"
+    status: approved
+
 examples:
   - id: break-and-naming
     # Moved from code in stage 3f.
