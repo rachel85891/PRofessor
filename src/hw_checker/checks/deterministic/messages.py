@@ -374,6 +374,18 @@ LAYER_REFERENCE_MISSING = MessageTemplate(
     en="{source} does not reference {target} ({source_role} → {target_role} is required)",
 )
 
+LAYER_REFERENCE_MISSING_ANY_PATH = MessageTemplate(
+    name="LAYER_REFERENCE_MISSING_ANY_PATH",
+    he=(
+        "{source} לא מפנה ל-{target}, לא ישירות ולא דרך שכבה אחרת "
+        "(נדרש {source_role} → {target_role})"
+    ),
+    en=(
+        "{source} doesn't reference {target}, directly or through another layer "
+        "({source_role} → {target_role} is required)"
+    ),
+)
+
 LAYER_REFERENCE_FORBIDDEN = MessageTemplate(
     name="LAYER_REFERENCE_FORBIDDEN",
     he="{source} מפנה ל-{target} (אסור {source_role} → {target_role})",
@@ -512,6 +524,7 @@ ALL_TEMPLATES: tuple[MessageTemplate, ...] = (
     LAYER_UNASSIGNED,
     LAYER_REFERENCES,
     LAYER_REFERENCE_MISSING,
+    LAYER_REFERENCE_MISSING_ANY_PATH,
     LAYER_REFERENCE_FORBIDDEN,
     CODE_OUTSIDE_LAYER,
     NO_INTERFACE,

@@ -270,8 +270,12 @@ def test_a_transitive_required_reference_still_needs_a_path(tmp_path: Path) -> N
 
     outcome = run("layer_references", solution(tmp_path, files), **TRANSITIVE)
 
-    assert "`Services` does not reference `Entities`" in message(outcome)
-    assert "`Repositories` does not reference `Entities`" in message(outcome)
+    assert message(outcome) == (
+        "The project references do not follow the layers: `Services` doesn't reference "
+        "`Entities`, directly or through another layer (services → entities is required); "
+        "`Repositories` doesn't reference `Entities`, directly or through another layer "
+        "(repositories → entities is required). Total: 2."
+    )
 
 
 def test_a_forbidden_reference_counts_only_when_direct(tmp_path: Path) -> None:

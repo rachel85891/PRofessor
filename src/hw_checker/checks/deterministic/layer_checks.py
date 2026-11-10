@@ -30,6 +30,7 @@ from hw_checker.checks.deterministic.messages import (
     LAYER_PROJECTS_MISSING,
     LAYER_REFERENCE_FORBIDDEN,
     LAYER_REFERENCE_MISSING,
+    LAYER_REFERENCE_MISSING_ANY_PATH,
     LAYER_REFERENCES,
     LAYER_UNASSIGNED,
     LOCATED_EXAMPLE,
@@ -241,6 +242,11 @@ def layer_references(check_input: CheckInput, params: LayerReferencesParams) -> 
     evidence, roles = found
     edges = _reference_edges(evidence)
     problems: list[_Problem] = []
+    missing = (
+        LAYER_REFERENCE_MISSING_ANY_PATH
+        if params.transitive_required
+        else (LAYER_REFERENCE_MISSING)
+    )
     for source_role, target_role in params.required:
         if not _references(
             edges,
@@ -250,7 +256,7 @@ def layer_references(check_input: CheckInput, params: LayerReferencesParams) -> 
         ):
             problems.append(
                 _Problem(
-                    LAYER_REFERENCE_MISSING.render(
+                    missing.render(
                         source=_projects(roles.projects(source_role)),
                         target=_projects(roles.projects(target_role)),
                         source_role=source_role,
