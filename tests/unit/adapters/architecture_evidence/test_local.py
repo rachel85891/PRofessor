@@ -66,7 +66,7 @@ def test_inventory_references_and_di_candidates_are_factual(tmp_path: Path) -> N
     assert evidence.project_references[0].target_project == "Core/Core.csproj"
     assert evidence.project_references[0].status is ProjectReferenceStatus.MATCHED
     assert evidence.inventory_coverage.status is EvidenceCoverageStatus.COMPLETE
-    assert evidence.signal_coverage.status is EvidenceCoverageStatus.PARTIAL
+    assert evidence.signal_coverage.status is EvidenceCoverageStatus.COMPLETE
     assert signal_kinds(evidence) == {
         ArchitectureSignalKind.INTERFACE_DECLARATION,
         ArchitectureSignalKind.CONSTRUCTOR_CANDIDATE,
@@ -202,10 +202,8 @@ def test_comments_and_strings_are_not_reported_as_active_di(tmp_path: Path) -> N
     evidence = LocalArchitectureEvidenceReader().scan(tmp_path)
 
     assert evidence.signals == ()
-    assert evidence.signal_coverage.status is EvidenceCoverageStatus.PARTIAL
-    assert EvidenceIssueKind.HEURISTIC_CSHARP_SCAN in {
-        issue.kind for issue in evidence.signal_coverage.issues
-    }
+    assert evidence.signal_coverage.status is EvidenceCoverageStatus.COMPLETE
+    assert evidence.signal_coverage.issues == ()
 
 
 def test_malformed_and_unsafe_project_references_are_explicit(tmp_path: Path) -> None:
@@ -328,9 +326,9 @@ def test_unreadable_primary_constructor_parameters_are_ambiguous(tmp_path: Path)
     evidence = LocalArchitectureEvidenceReader().scan(tmp_path)
 
     assert evidence.signal_coverage.status is EvidenceCoverageStatus.PARTIAL
-    assert (EvidenceIssueKind.AMBIGUOUS_SYNTAX, "Service.cs", 1) in [
+    assert [
         (issue.kind, issue.file_path, issue.line) for issue in evidence.signal_coverage.issues
-    ]
+    ] == [(EvidenceIssueKind.AMBIGUOUS_SYNTAX, "Service.cs", 1)]
 
 
 def test_invalid_utf8_and_missing_sources_are_not_success_shaped(tmp_path: Path) -> None:

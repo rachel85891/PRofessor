@@ -29,14 +29,33 @@ producing a clean empty result.
 ## What signals mean
 
 An interface declaration, constructor candidate, constructor parameter whose simple name
-matches a discovered interface declaration, or generic `AddSingleton`/`AddScoped`/
-`AddTransient` call is only a lexical candidate. It does not prove that the names resolve,
-that the registration is active, that a constructor is used, that every dependency uses
-injection, or that any course requirement is met or violated. The reader does not evaluate
-MSBuild, C# aliases, namespaces, overloads, conditional compilation, syntax trees, semantic
-types, generated source or runtime behavior. C# coverage is consequently marked partial
-even when the supported scan encounters no specific ambiguity; absence of a signal must
-not be treated as proof of absence.
+matches a discovered interface declaration, or `AddSingleton`/`AddScoped`/`AddTransient`
+call is only a lexical candidate. It does not prove that the names resolve, that the
+registration is active, that a constructor is used, that every dependency uses injection,
+or that any course requirement is met or violated.
+
+The scan runs in two passes. The first collects the interface declarations of every
+scanned `.cs` file, so a constructor in one project matches an interface declared in
+another. The second reads constructors and registrations:
+
+- a classic constructor (leading `[...]` attribute sections are skipped) and a primary
+  constructor (`class C(IX x)`, also on structs and records) give `constructor_candidate`,
+  and each parameter whose simple type name is a declared interface gives
+  `constructor_interface_parameter` (`subject` = the parameter type, `related_subject` =
+  the constructor's type). A simple name declared more than once still matches and adds a
+  `duplicate_type_name` issue at the constructor's line;
+- a registration gives `registration_candidate` with `registration_method` (as written)
+  and `lifetime`. For `AddScoped<IX, X>()` and `AddScoped(typeof(IX), typeof(X))`,
+  `subject` is the service type and `related_subject` the implementation type. Any other
+  call shape (a factory lambda, an instance, a key, a method group) has no types.
+
+This is a lexical scan, not a compiler, and that is a property of the reader, not a
+per-scan issue. It does not evaluate MSBuild, C# aliases, namespaces, overloads,
+conditional compilation, syntax trees, semantic types, generated source or runtime
+behavior. Signal coverage is `complete` when every C# file in scope was read and parsed
+with no issue; a preprocessor condition, a using alias, unbalanced brackets, an unreadable
+parameter list or a duplicate type name makes it `partial`. Even with complete coverage,
+the absence of a signal is not proof of absence.
 
 The reader reuses the existing C# comment/string masker and declaration reader. This stage
 makes zero LLM calls. It does not

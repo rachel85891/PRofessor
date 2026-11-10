@@ -41,7 +41,6 @@ class EvidenceIssueKind(StrEnum):
     AMBIGUOUS_SYNTAX = "ambiguous_syntax"
     DUPLICATE_TYPE_NAME = "duplicate_type_name"
     """A matched simple type name is declared more than once in the repository."""
-    HEURISTIC_CSHARP_SCAN = "heuristic_csharp_scan"
 
 
 class EvidenceCoverageIssue(DomainModel):
@@ -53,7 +52,12 @@ class EvidenceCoverageIssue(DomainModel):
 
 
 class EvidenceCoverage(DomainModel):
-    """Coverage for project inventory or source-signal scanning."""
+    """Coverage for project inventory or source-signal scanning.
+
+    `complete` means every file in scope was read and parsed with no issue. For C# signals
+    the reader is lexical, not a compiler (see `ArchitectureEvidence`): complete coverage
+    says the supported syntax was read everywhere, not that names resolve.
+    """
 
     status: EvidenceCoverageStatus
     files_examined: int = Field(ge=0)
@@ -136,7 +140,12 @@ class ArchitectureSignal(DomainModel):
 
 
 class ArchitectureEvidence(DomainModel):
-    """Read-only facts for one repository; source text and student identity are omitted."""
+    """Read-only facts for one repository; source text and student identity are omitted.
+
+    The C# signals come from a lexical scan, not a compiler: names are matched by their
+    simple text, and namespaces, aliases, overloads and semantic types are not resolved.
+    A signal is a candidate, and the absence of one is not proof of absence.
+    """
 
     project_files: tuple[EvidencePath, ...] = ()
     projects: tuple[ProjectEvidence, ...] = ()

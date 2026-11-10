@@ -86,6 +86,8 @@ class LocalArchitectureEvidenceReader(ArchitectureEvidenceReader):
 
     The adapter never runs MSBuild or student code, follows links, or opens a referenced
     project path. Source is decoded strictly and kept only in local variables while scanning.
+    C# is read lexically, not compiled: interfaces are collected from every scanned file
+    first, then constructor parameters are matched against them by simple name.
     """
 
     def scan(self, root: Path) -> ArchitectureEvidence:
@@ -178,10 +180,6 @@ class LocalArchitectureEvidenceReader(ArchitectureEvidenceReader):
 
         signals, issues = _signals_in_sources(sources)
         source_issues.extend(issues)
-        if source_files:
-            source_issues.append(
-                EvidenceCoverageIssue(kind=EvidenceIssueKind.HEURISTIC_CSHARP_SCAN)
-            )
         return ArchitectureEvidence(
             project_files=project_files,
             projects=tuple(projects),
