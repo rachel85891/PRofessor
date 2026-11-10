@@ -52,7 +52,6 @@ REVIEW_KEY_INPUTS = ("repo", "workspace", "application", "assignment_results")
 TEXT_KEY_INPUTS = (
     "repo",
     "workspace",
-    "assignment_id",
     "application",
     "plan",
     "assignment_results",
@@ -64,7 +63,6 @@ class FixInput(TypedDict):
     """What the fixer reads from its repo."""
 
     run_id: str
-    assignment_id: str
     repo: RepoTarget
     selected_assignment_ids: list[str]
     fetched: FetchedRepo
@@ -122,6 +120,10 @@ def build_fix_graph(
     def selected(state: FixState) -> tuple[Assignment, ...]:
         return tuple(by_id[i] for i in state["selected_assignment_ids"] if i in by_id)
 
+    def review_target(state: FixState) -> Assignment:
+        """The repo's own target, chosen when the branch was prepared (`fix_target`)."""
+        return by_id[state["workspace"].assignment_id]
+
     def step(name: str, state: FixState, work: Callable[[], Update], llm: bool = False) -> Update:
         repo_id = state["repo"].repo_id
         get_stream_writer()(
@@ -156,7 +158,11 @@ def build_fix_graph(
             state,
             lambda: {
                 "workspace": fixing.prepare(
-                    state["run_id"], state["assignment_id"], state["repo"], state["fetched"]
+                    state["run_id"],
+                    selected(state),
+                    state["assignment_results"],
+                    state["repo"],
+                    state["fetched"],
                 ),
                 "attempt": 1,
                 "feedback": [],
@@ -170,7 +176,7 @@ def build_fix_graph(
             plan, usage = fixing.plan(
                 state["run_id"],
                 state["workspace"],
-                by_id[state["assignment_id"]],
+                review_target(state),
                 selected(state),
                 state["assignment_results"],
                 state["attempt"],
@@ -189,7 +195,7 @@ def build_fix_graph(
                 "application": fixing.apply(
                     state["workspace"],
                     state["plan"].edits,
-                    by_id[state["assignment_id"]],
+                    review_target(state),
                     selected(state),
                     state["assignment_results"],
                 )
@@ -201,7 +207,7 @@ def build_fix_graph(
             reviewed = fixing.self_review(
                 state["run_id"],
                 state["workspace"],
-                by_id[state["assignment_id"]],
+                review_target(state),
                 selected(state),
                 state["application"],
                 state["assignment_results"],
@@ -222,7 +228,7 @@ def build_fix_graph(
             lambda: {
                 "application": fixing.remove_violations(
                     state["workspace"],
-                    by_id[state["assignment_id"]],
+                    review_target(state),
                     selected(state),
                     state["application"],
                     review,
@@ -271,7 +277,7 @@ def build_fix_graph(
                 "plan": best.plan,
                 "application": fixing.restore(
                     state["workspace"],
-                    by_id[state["assignment_id"]],
+                    review_target(state),
                     selected(state),
                     best,
                     state["assignment_results"],
@@ -288,7 +294,7 @@ def build_fix_graph(
             lambda: {
                 "application": fixing.fall_back(
                     state["workspace"],
-                    by_id[state["assignment_id"]],
+                    review_target(state),
                     selected(state),
                     state["application"],
                     state["verification"],
@@ -309,7 +315,7 @@ def build_fix_graph(
         def work() -> Update:
             title, body, usages = fixing.write_text(
                 state["run_id"],
-                by_id[state["assignment_id"]],
+                review_target(state),
                 selected(state),
                 state["assignment_results"],
                 state["application"],
@@ -330,7 +336,7 @@ def build_fix_graph(
                         state["run_id"],
                         state["repo"],
                         state["workspace"],
-                        by_id[state["assignment_id"]],
+                        review_target(state),
                         state["application"],
                         state.get("pr_title", ""),
                         state.get("pr_body", ""),
@@ -402,7 +408,7 @@ def build_fix_graph(
             "write_pr_text",
             state["repo"].repo_id,
             state["workspace"].base_sha,
-            state["assignment_id"],
+            state["workspace"].assignment_id,
             state["application"].model_dump(mode="json")["applied"],
             list(state["plan"].files_notes),
             [result.model_dump(mode="json") for result in results],

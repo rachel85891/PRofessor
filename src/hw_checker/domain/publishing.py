@@ -58,6 +58,15 @@ class GateDecision(DomainModel):
     """A note for some of the approved or declined repos, by repo id."""
 
 
+class UnknownCondition(DomainModel):
+    """An assignment whose `applies_when` or `skip_when` could not be evaluated in a repo:
+    none of its requirements was checked, and a reviewer decides the repo's path."""
+
+    repo_id: Identifier
+    assignment_id: Identifier
+    detail: str = ""
+
+
 class PendingReview(DomainModel):
     """One repo waiting at the approval gate, with what the reviewer needs to decide."""
 
@@ -83,6 +92,9 @@ class ReviewPrompt(DomainModel):
     """What the approval gate shows: the pending repos, how to answer, and any error."""
 
     run_id: Identifier
+    unknown_conditions: tuple[UnknownCondition, ...] = ()
+    """Every repo of the round whose path could not be decided, to review first; their
+    pending repos come first in `pending`."""
     pending: tuple[PendingReview, ...]
     message: str = ""
     """Why the last answer was not applied; empty when it was."""

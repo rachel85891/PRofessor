@@ -52,6 +52,8 @@ rules:
       Do not mention GET all (not required in HW1), layers, or a `Models` folder (taught
       later).
     after: put-returns-ok
+    # until hw01: approved by the developer on 2026-11-10 (layers and DI are taught in hw02/hw03)
+    until: hw01
     origin:
       source: developer
       quote: "docs/fix-pr-workflow.md §3, rule 6 (the lecturer, 2026-10-28)"

@@ -4,7 +4,8 @@ The course's rules and examples come first, then each assignment's up to the che
 by `order`; `replaces`, `after` and `until` shape the list, and each role keeps only the
 items that apply to it and to the file types its prompt shows. The rules are numbered from
 1 in that order, and their texts' placeholders are filled here, so a prompt's frame only
-shows them. A guardrail or allowance keeps the file types its rule is limited to.
+shows them; a rule naming the failing notes-only requirements is left out when none fails.
+A guardrail or allowance keeps the file types its rule is limited to.
 """
 
 import json
@@ -15,13 +16,16 @@ from hw_checker.domain import (
     ApprovedNote,
     Assignment,
     Course,
+    Feedback,
     FixExample,
     ForbiddenText,
     NoteSection,
     ReviewRole,
+    ReviewRule,
     SafeFix,
 )
 from hw_checker.domain.course import (
+    NOTES_ONLY,
     RULE_REFERENCE,
     SHORT_NAME,
     TAUGHT_SO_FAR,
@@ -122,9 +126,20 @@ def role_policy(
             and (not item.when_found or any(item_id in found for item_id in item.when_found))
         )
 
+    notes_only = [
+        requirement.id
+        for a in earlier
+        for requirement in a.requirements
+        if requirement.feedback is Feedback.NOTES_ONLY and requirement.id in found
+    ]
+
+    def filled(rule: ReviewRule) -> bool:
+        return bool(notes_only) or not any(NOTES_ONLY in text for text in rule.texts)
+
     in_rules = in_effect([course.rules.rules, *(a.review_rules.rules for a in earlier)], passed)
-    rules = [rule for rule in in_rules if shown(rule) and rule.shown_in is RulePlace.RULES]
-    conditions = [rule for rule in in_rules if shown(rule) and rule.shown_in is not RulePlace.RULES]
+    in_rules = [rule for rule in in_rules if shown(rule) and filled(rule)]
+    rules = [rule for rule in in_rules if rule.shown_in is RulePlace.RULES]
+    conditions = [rule for rule in in_rules if rule.shown_in is not RulePlace.RULES]
     examples: list[FixExample] = [
         example
         for example in in_effect(
@@ -140,7 +155,8 @@ def role_policy(
     numbers = {rule.id: number for number, rule in enumerate(rules, start=1)}
 
     def fill(text: str) -> str:
-        return _fill(text, numbers, course, assignment)
+        listed = ", ".join(f"`{requirement_id}`" for requirement_id in notes_only)
+        return _fill(text, numbers, course, assignment).replace(NOTES_ONLY, listed)
 
     shown_examples = [ShownExample(example.situation, None, example.plan) for example in examples]
     shown_examples += [

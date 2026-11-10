@@ -25,6 +25,7 @@ from langgraph.types import Checkpointer
 from pydantic import BaseModel
 
 import hw_checker.domain
+from hw_checker.adapters.architecture_evidence.local import LocalArchitectureEvidenceReader
 from hw_checker.adapters.assignments_yaml import YamlAssignmentSource
 from hw_checker.adapters.docker_runner.engine import EngineError, SdkDockerEngine
 from hw_checker.adapters.docker_runner.runner import DockerCodeRunner
@@ -125,7 +126,7 @@ def build_graph_services(settings: Settings, fixer_llm: LLMClient | None = None)
         settings.runner.logs_root,
     )
     checker = DeterministicRequirementChecker(registry)
-    checks = DeterministicCheckService(checker, git_client)
+    checks = DeterministicCheckService(checker, git_client, LocalArchitectureEvidenceReader())
     assignment_source = YamlAssignmentSource(settings.assignments_dir, settings.course_dir)
     fixing = (
         FixService(

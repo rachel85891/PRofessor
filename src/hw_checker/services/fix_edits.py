@@ -57,6 +57,12 @@ class EditRules:
     allowances: Allowances | None = None
     """The safe fixes in effect: a `fix` of a safe fix's shape that its detector still
     refuses is rejected with the detector's reason."""
+    notes_only: frozenset[str] = field(default_factory=frozenset)
+    """The ids of the notes-only requirements (`feedback: notes_only`) and of their
+    findings: a `fix` that claims one is rejected."""
+    notes_only_files: frozenset[str] = field(default_factory=frozenset)
+    """The files only notes-only findings point to: a `fix` there that claims nothing is
+    rejected."""
 
     def style(self, path: str) -> CommentStyle | None:
         """The comment style of the file at `path`; None when it is not edited."""
@@ -130,7 +136,7 @@ def _apply(
     if _placeholder(edit.reason):
         return "the reason is empty or a placeholder; give one real sentence saying why"
     path = edit.file.replace("\\", "/")
-    problem = _path_problem(path, files, edit.kind, rules)
+    problem = _path_problem(path, files, edit.kind, rules) or _notes_only_problem(path, edit, rules)
     if problem:
         return problem
     if path not in texts:
@@ -163,6 +169,23 @@ def _path_problem(
         return f"{path} is not a {suffixes} file; only {suffixes} files are edited"
     if rules.editable is not None and path not in rules.editable:
         return f"{path} was not shown to you; only the files shown are edited"
+    return None
+
+
+def _notes_only_problem(path: str, edit: PlannedEdit, rules: EditRules) -> str | None:
+    """A `fix` for a notes-only requirement, or a `fix` that claims nothing in a file only
+    notes-only findings point to."""
+    if edit.kind is not EditKind.FIX:
+        return None
+    claimed = [item for item in edit.finding_ids if item in rules.notes_only]
+    if claimed:
+        verb = "allows" if len(claimed) == 1 else "allow"
+        return f"{', '.join(claimed)} {verb} notes only; plan a note, not a fix"
+    if not edit.finding_ids and path in rules.notes_only_files:
+        return (
+            f"only notes-only findings point to {path}, so it gets notes only; plan a note, "
+            "not a fix"
+        )
     return None
 
 

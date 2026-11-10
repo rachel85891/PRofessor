@@ -1,3 +1,4 @@
+import dataclasses
 from collections.abc import Mapping
 from typing import Any
 
@@ -328,3 +329,51 @@ def test_the_fallback_of_a_fix_is_a_note_above_the_original_text() -> None:
 
 def test_a_fix_without_a_fallback_note_has_no_fallback() -> None:
     assert fallback_edit(edit(fallback_note=None), STYLE) is None
+
+
+NOTES_ONLY = dataclasses.replace(
+    RULES,
+    notes_only=frozenset({"hw02-layers", "hw02-layers-abc123"}),
+    notes_only_files=frozenset({CONTROLLER}),
+)
+"""`hw02-layers` allows notes only, and only its finding points to the controller."""
+NOTE = edit(
+    kind=EditKind.NOTE,
+    find="        switch (kind)\n",
+    replace="        //Could this logic move to a service class?\n        switch (kind)\n",
+    finding_ids=("hw02-layers",),
+    fallback_note=None,
+    note_section=NoteSection.FOR_YOU,
+)
+
+
+@pytest.mark.parametrize("claim", ["hw02-layers", "hw02-layers-abc123"])
+def test_a_fix_for_a_notes_only_requirement_is_rejected(claim: str) -> None:
+    result = apply_edits(files(), [edit(finding_ids=(claim, "hw01-update"))], NOTES_ONLY)
+
+    assert result.application.applied == ()
+    assert reasons(result) == [f"{claim} allows notes only; plan a note, not a fix"]
+
+
+def test_a_note_for_a_notes_only_requirement_is_applied() -> None:
+    result = apply_edits(files(), [NOTE], NOTES_ONLY)
+
+    assert result.application.applied == (NOTE,)
+
+
+def test_a_fix_claiming_nothing_in_a_notes_only_file_is_rejected() -> None:
+    result = apply_edits(files(), [edit(finding_ids=())], NOTES_ONLY)
+
+    assert reasons(result) == [
+        f"only notes-only findings point to {CONTROLLER}, so it gets notes only; plan a note, "
+        "not a fix"
+    ]
+
+
+def test_a_fix_for_another_requirement_in_that_file_and_a_final_newline_are_applied() -> None:
+    newline = edit(file=DATA, kind=EditKind.FINAL_NEWLINE, find="", replace="", fallback_note=None)
+    notes_only = dataclasses.replace(NOTES_ONLY, notes_only_files=frozenset({CONTROLLER, DATA}))
+
+    result = apply_edits(files(), [edit(), newline], notes_only)
+
+    assert result.application.applied == (edit(), newline)

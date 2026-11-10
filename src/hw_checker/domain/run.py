@@ -14,7 +14,7 @@ from hw_checker.domain.base import DomainModel, Identifier, NonBlankStr
 from hw_checker.domain.execution import MAX_PATH_TEXT_CHARS, ExecutionResult
 from hw_checker.domain.findings import Finding, JudgedFinding
 from hw_checker.domain.fixes import FixOutcome, LlmUsage
-from hw_checker.domain.publishing import PublishRecord
+from hw_checker.domain.publishing import PublishRecord, UnknownCondition
 from hw_checker.domain.roster import RepoTarget
 from hw_checker.domain.vcs import CheckedCommit
 
@@ -59,6 +59,18 @@ class NotEvaluatedReason(StrEnum):
     """A request failed with a 5xx while the app could not open a path written with
     Windows folder separators, which likely works on Windows but not in the Linux
     container (or a requirement depends on one that failed so)."""
+    ASSIGNMENT_NOT_APPLICABLE = "assignment_not_applicable"
+    """The assignment's `applies_when` does not hold for the repo, or its `skip_when`
+    does, so none of its requirements was checked."""
+    ASSIGNMENT_CONDITION_UNKNOWN = "assignment_condition_unknown"
+    """The assignment's `applies_when` or `skip_when` could not be evaluated, so none of
+    its requirements was checked; a reviewer decides which path the repo is on."""
+
+
+CONDITION_REASONS = frozenset(
+    {NotEvaluatedReason.ASSIGNMENT_NOT_APPLICABLE, NotEvaluatedReason.ASSIGNMENT_CONDITION_UNKNOWN}
+)
+"""The reasons that say the whole assignment was not checked in a repo."""
 
 
 class NotEvaluated(DomainModel):
@@ -90,6 +102,14 @@ class AssignmentResult(DomainModel):
         if both:
             raise ValueError(f"requirements both failed and not evaluated: {', '.join(both)}")
         return self
+
+    @property
+    def not_checked(self) -> NotEvaluated | None:
+        """Why the assignment was not checked in the repo (its `applies_when` or `skip_when`);
+        None when it was checked."""
+        return next(
+            (entry for entry in self.not_evaluated if entry.reason in CONDITION_REASONS), None
+        )
 
 
 class RepoRunResult(DomainModel):
@@ -183,6 +203,8 @@ class RepoSummary(DomainModel):
     """The repo's last publish attempt in this round; None when it was not published."""
     checked_commit: CheckedCommit | None = None
     """How the checked commit was chosen, for an assignment with `ends_when`."""
+    unknown_conditions: tuple[UnknownCondition, ...] = ()
+    """The assignments whose `applies_when` or `skip_when` could not be evaluated."""
 
     @classmethod
     def from_repo_run(cls, repo_run: RepoRunResult, report_path: Path | None = None) -> Self:
@@ -208,6 +230,16 @@ class RepoSummary(DomainModel):
             errors=repo_run.errors,
             report_path=report_path,
             checked_commit=repo_run.checked_commit,
+            unknown_conditions=tuple(
+                UnknownCondition(
+                    repo_id=repo_run.repo.repo_id,
+                    assignment_id=result.assignment_id,
+                    detail=entry.detail,
+                )
+                for result in repo_run.assignment_results
+                if (entry := result.not_checked) is not None
+                and entry.reason is NotEvaluatedReason.ASSIGNMENT_CONDITION_UNKNOWN
+            ),
         )
 
 

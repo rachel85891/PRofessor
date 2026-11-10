@@ -39,7 +39,7 @@ ONE_ITEM = "one item for both findings, in the approved PRs' wording"
 
 def _plan(tmp_path: Path, results: tuple[AssignmentResult, ...]) -> str:
     setup = FixerSetup(tmp_path)
-    workspace = setup.service.prepare(RUN_ID, "hw01", REPO, setup.fetched)
+    workspace = setup.service.prepare(RUN_ID, (ASSIGNMENT,), (), REPO, setup.fetched)
     return setup.service.plan_prompt(workspace, ASSIGNMENT, (ASSIGNMENT,), results, 1)
 
 
@@ -88,7 +88,7 @@ def test_a_stray_using_is_deleted_never_commented_out(
     tmp_path: Path, replace: str, reason: str | None
 ) -> None:
     setup = FixerSetup(tmp_path)
-    workspace = setup.service.prepare(RUN_ID, "hw01", REPO, setup.fetched)
+    workspace = setup.service.prepare(RUN_ID, (ASSIGNMENT,), (), REPO, setup.fetched)
 
     application = setup.service.apply(workspace, [_using_fix(replace)], ASSIGNMENT, (ASSIGNMENT,))
 

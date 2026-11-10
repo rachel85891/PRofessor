@@ -25,6 +25,7 @@ from hw_checker.adapters.assignments_yaml.rules import (
 )
 from hw_checker.adapters.assignments_yaml.schema import (
     AssignmentFile,
+    CheckConditionEntry,
     ProbeEntry,
     RequirementEntry,
 )
@@ -275,15 +276,19 @@ def _build_assignment(
                 "reviewed_files": None
                 if parsed.reviewed_files is None
                 else parsed.reviewed_files.model_dump(),
-                "ends_when": None
-                if parsed.ends_when is None
-                else {"check": parsed.ends_when.check, "params": parsed.ends_when.params},
+                "ends_when": _condition_data(parsed.ends_when),
+                "applies_when": _condition_data(parsed.applies_when),
+                "skip_when": _condition_data(parsed.skip_when),
                 "source_hash": source_hash,
             }
         )
     except ValidationError as error:
         problems.extend(f"{label}{_describe(item)}" for item in error.errors())
         return None
+
+
+def _condition_data(entry: CheckConditionEntry | None) -> dict[str, Any] | None:
+    return None if entry is None else {"check": entry.check, "params": entry.params}
 
 
 def _requirement_data(entry: RequirementEntry, assignment_id: str) -> dict[str, Any]:
@@ -298,6 +303,7 @@ def _requirement_data(entry: RequirementEntry, assignment_id: str) -> dict[str, 
         "params": entry.params,
         "http_probes": [_probe_data(probe, entry.id, assignment_id) for probe in entry.probes],
         "depends_on": entry.depends_on,
+        "feedback": entry.feedback,
     }
 
 

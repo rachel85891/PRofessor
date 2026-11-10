@@ -31,6 +31,11 @@ ends_when:                    # optional; when the student has started the next 
   check: project_count
   params:
     min: 2
+applies_when:                 # optional; the assignment applies to a repo only when this
+  check: di_started           #   holds (or skip_when: it does not apply when it holds)
+  params:
+    min_registrations: 1
+    min_interface_constructors: 1
 reviewed_files:               # optional; files besides the code the fixer reviews
   include: ["**/wwwroot/**/*.js"]
   exclude: ["**/*.min.js", "**/lib/**"]
@@ -66,6 +71,26 @@ When a round checks a repo, it walks the default branch's main line (first paren
 
 The repo report and the approval gate show the checked commit, its date, the commit where the next task started and how many commits came after it. Publishing refuses a pull request only when the branch moved after the round, not because the checked commit is older than the head.
 
+## Which assignments apply to a repo (`applies_when` / `skip_when`)
+
+Students take different paths: one repo is still on the layers task while another has started dependency injection. An assignment may say, per repo, whether it applies:
+
+```yaml
+skip_when:                    # hw02: not this assignment once DI has started
+  check: di_started
+  params: {min_registrations: 1, min_interface_constructors: 1}
+```
+
+`applies_when` (the assignment applies only when the condition holds) and `skip_when` (it does not apply when the condition holds) take the same `check` and `params` as a `structure` requirement; give one of them, not both. Unlike `ends_when`, the check may read file contents: it runs on the checked commit's working copy, for each repo, before the assignment's requirements. The condition holds when its check passes. When a round starts, a condition that names an unknown check or gives it invalid params is refused, like a requirement's.
+
+- **The assignment applies:** its requirements are checked as usual.
+- **It does not apply** (`applies_when` does not hold, or `skip_when` holds): none of its requirements is checked. Each is "not evaluated" with the reason `assignment_not_applicable`, and the detail names the condition and the check's own words, for example `skip_when di_started: DI has started (3 registrations, 2 constructors taking an interface).`
+- **The condition cannot be evaluated** (its check is "not evaluated", or fails unexpectedly): nothing is guessed. Every requirement is "not evaluated" with the reason `assignment_condition_unknown`, and the detail says why.
+
+`ends_when` keeps its meaning (it chooses the commit); `applies_when` and `skip_when` never choose a commit. The repo report lists each assignment as "checked" or "not checked" with the reason; the round's `round.md`, the approval gate and `review` list first the repos with `assignment_condition_unknown`, so a reviewer looks at them before anything else.
+
+**The fixer's target is per repo:** the highest-order selected assignment that applies to the repo, not the round's target. In a round on hw03, a repo on the layers path gets an "HW2 review" branch and pull request; the prompts name hw02 and show only the requirements of the assignments that apply. The fixer's recheck evaluates every selected assignment with the same conditions.
+
 ## Requirement fields
 
 | Field | Required | Meaning |
@@ -80,6 +105,7 @@ The repo report and the approval gate show the checked commit, its date, the com
 | `params` | no | Named values for the check, for example a file pattern. Only together with `check`. Values may be text, numbers, `true`/`false`, or a list of those. |
 | `probes` | `http` only, at least one | HTTP requests to send to the running app (see below). |
 | `depends_on` | no | Ids of requirements that must pass before this one can, for example reading back an updated user needs GET by id. Each id must exist (in any assignment), and a requirement cannot depend on itself, also not through others. The fixer's recheck does not hold a fix's claim on this requirement against it while one of these still fails. |
+| `feedback` | no | `fixes_allowed` (the default) or `notes_only`: the fixer may only leave notes about this requirement's findings (architecture feedback). This is enforced in code: a `fix` that claims the requirement (or one of its findings) is rejected with "<id> allows notes only", and so is a `fix` that claims nothing in a file only notes-only findings point to; notes and `final_newline` edits are not affected. The rejection goes back to the fixer like any other, and the course rule `notes-only-requirements` names the failing notes-only requirements in the fixer's prompt. |
 
 Unknown fields are rejected, so a typo such as `chek` is reported instead of being silently ignored.
 
@@ -325,6 +351,22 @@ All three take one param, `root` (required): the client folder, such as `wwwroot
 
 JavaScript is read with regexes over the code, with comments and strings masked, not with a full parser; event attributes (`onclick="…"`), jQuery, `XMLHttpRequest` and `axios` are not read.
 
+### Architecture-evidence checks (stage 20)
+
+These read the repo's local architecture evidence (stage 19): the `.csproj` inventory and project references, and C# signals (interface declarations, constructors and their interface parameters, service registrations) read lexically, never compiled or run. A signal is a candidate and a missing one is not proof, so these checks only count signals against thresholds that are the assignment's data. The evidence is read at most once per assignment evaluation, and only when a selected requirement or condition uses a check that reads it (`di_started` today); when it cannot be read, those checks are "not evaluated" (`environment_issue`).
+
+```yaml
+applies_when:
+  check: di_started
+  params:
+    min_registrations: 1           # registration signals (AddScoped, AddSingleton, ...)
+    min_interface_constructors: 1  # constructors with a parameter typed by a declared interface
+```
+
+| Check | Params | Passes when |
+| --- | --- | --- |
+| `di_started` | `min_registrations`, `min_interface_constructors` (both required, 0 or more) | Both counts are reached. It passes saying what it counted ("DI has started (3 registrations, 2 constructors taking an interface)."); otherwise its finding gives both counts and thresholds. When the C# signals are unavailable (no C# source could be read) it is "not evaluated". Meant as the condition of `applies_when` / `skip_when`. |
+
 **How results are decided.** A `build` requirement gives a finding only when the build failed because of the code, or when the project built but crashed on startup; a build or run that failed because of the environment, or timed out, is not evaluated. An `http` requirement is judged only when the app built and started; a status listed in `allowed_statuses` always counts as correct. A requirement that could not be checked, for example every `http` requirement when the build failed, is shown as "not evaluated" with the reason, and never counts against the student.
 
 ## YAML tips
@@ -355,6 +397,8 @@ If anything is wrong, the round does not start, and **all** problems are listed 
 | `an http requirement needs at least one probe` | Add a `probes` list, or change the `kind`. |
 | `a … requirement needs a check` / `must not have a check` | `structure` and `custom` need `check`; the other kinds must not have one. |
 | `params are only allowed together with a check` | Remove `params` or add `check`. |
+| `give applies_when or skip_when, not both` | An assignment has one condition; keep the one you mean. |
+| `applies_when, check 'x': unknown check` / `param '…'` | The condition names a registered check with valid params, like a requirement. |
 | `must include expected_status` | Add `expected_status` to `allowed_statuses`. |
 | `String should match pattern '^/'` (field `path`) | The probe path must start with `/`. |
 | `Input should be 'minor', 'major' or 'critical'` and similar | The value must be one of the listed options. |
@@ -424,7 +468,7 @@ examples:
 | `id` | Unique among the rules (or among the examples) of the course and every assignment. |
 | `applies_to` | One or more of `fixer` (plans the edits), `judge` (the self-review), `writer` (the PR text) and `reviewer` (the LLM review, later). Each prompt shows only its role's rules. |
 | `kind` | `fix_allowed` (may be changed), `note_only` (only a comment), `never_do` (never added or changed), `never_mention` (not even commented on), `style` (how text is written). |
-| `text` | The rule as the prompts number it. It may use `{short_name}`, `{taught_so_far}` and `{rule:<id>}` (that rule's number in the role's list); any other braces stay as written. |
+| `text` | The rule as the prompts number it. It may use `{short_name}`, `{taught_so_far}`, `{rule:<id>}` (that rule's number in the role's list) and `{notes_only}` (the failing requirements with `feedback: notes_only`, as `` `id` `` items; a rule that uses it is left out of a prompt when none fails); any other braces stay as written. |
 | `files` | Optional (rules and examples): the file types (suffixes, `[.html, .js]`) the item is limited to. It is in a prompt only when the prompt shows a file of one of them, and its `forbidden_text`, `forbidden_change`, detectors and approved notes apply only to edits in those files. Without it, every file type. |
 | `note_section` | Optional on `note_only` rules: `names` or `for_you`, the PR section for the rule's notes. The plan lists naming-convention languages only for shown file types covered by a `names` rule. |
 | `when_found` | Optional (rules and examples): requirement ids. The item is in a prompt only when one of them has a finding (the course's `repository-files` rule). |
@@ -445,7 +489,7 @@ examples:
 
 An example (under `examples:`) has the same `id`, `applies_to`, `files`, `when_found`, `until`, `replaces`, `after`, `origin` and `status`, plus `situation` (the invented repo) and `plan` (the plan's JSON, shown exactly as written).
 
-**Inheritance.** Checking assignment N uses the course's rules, then the rules of assignments 1..N by `order`, the same way requirements regress. hw01's rules (no `File.Exists`, PUT returns `Ok()`, no GET all or `Models` folder) apply to hw02 too, unless hw02 has a rule that `replaces` one of them, or the hw01 rule has `until: hw01`.
+**Inheritance.** Checking assignment N uses the course's rules, then the rules of assignments 1..N by `order`, the same way requirements regress. hw01's rules (no `File.Exists`, PUT returns `Ok()`) apply to hw02 too, unless hw02 has a rule that `replaces` one of them, or the hw01 rule has `until: hw01`, as `not-yet-taught` (no GET all, layers or `Models` folder) does: layers and DI are taught in hw02 and hw03.
 
 | Message | What to do |
 | --- | --- |

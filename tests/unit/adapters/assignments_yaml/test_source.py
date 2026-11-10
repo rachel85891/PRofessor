@@ -6,7 +6,7 @@ import pytest
 
 from hw_checker.adapters.assignments_yaml import YamlAssignmentSource
 from hw_checker.config.settings import REPO_ROOT
-from hw_checker.domain import RequirementKind, Severity
+from hw_checker.domain import Feedback, RequirementKind, Severity
 from hw_checker.domain.errors import InvalidAssignmentError
 from hw_checker.ports import AssignmentSource
 from tests.fakes.assignments import FakeAssignmentSource
@@ -650,3 +650,46 @@ def test_ends_when_with_an_unknown_key_or_no_check_is_reported(tmp_path: Path) -
     assert "field 'ends_when.check': this required field is missing" in problems_of(
         load(tmp_path / "b", {"_general": GENERAL, "hw02": missing})
     )
+
+
+APPLIES_WHEN = "applies_when:\n  check: project_count\n  params:\n    min: 4\n"
+SKIP_WHEN = "skip_when:\n  check: file_exists\n  params:\n    glob: '**/*.sln'\n"
+
+
+def test_applies_when_and_skip_when_load_with_their_check_and_params(tmp_path: Path) -> None:
+    applies = HW02.replace("title: Get by id\n", "title: Get by id\n" + APPLIES_WHEN)
+    third = HW02.replace("hw02", "hw03").replace("order: 2", "order: 3")
+    skips = third.replace("title: Get by id\n", "title: Get by id\n" + SKIP_WHEN)
+
+    [_, hw02, hw03] = load(
+        tmp_path, {"_general": GENERAL, "hw02": applies, "hw03": skips}
+    ).load_all()
+
+    assert hw02.applies_when is not None and hw02.skip_when is None
+    assert (hw02.applies_when.check, dict(hw02.applies_when.params)) == (
+        "project_count",
+        {"min": 4},
+    )
+    assert hw03.skip_when is not None and hw03.skip_when.check == "file_exists"
+    assert hw02.condition_requirement is not None
+    assert hw02.condition_requirement.id == "hw02-applies-when"
+
+
+def test_applies_when_and_skip_when_together_are_reported(tmp_path: Path) -> None:
+    both = HW02.replace("title: Get by id\n", "title: Get by id\n" + APPLIES_WHEN + SKIP_WHEN)
+
+    assert "hw02/requirements.yaml: give applies_when or skip_when, not both" in problems_of(
+        load(tmp_path, {"_general": GENERAL, "hw02": both})
+    )
+
+
+def test_a_requirement_may_allow_notes_only(tmp_path: Path) -> None:
+    (tmp_path / "a").mkdir()
+    (tmp_path / "b").mkdir()
+    notes = HW02.replace("    severity: major\n", "    severity: major\n    feedback: notes_only\n")
+    wrong = HW02.replace("    severity: major\n", "    severity: major\n    feedback: sometimes\n")
+
+    [_, loaded] = load(tmp_path / "a", {"_general": GENERAL, "hw02": notes}).load_all()
+
+    assert loaded.requirements[0].feedback is Feedback.NOTES_ONLY
+    assert "feedback" in problems_of(load(tmp_path / "b", {"_general": GENERAL, "hw02": wrong}))

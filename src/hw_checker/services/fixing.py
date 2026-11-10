@@ -23,6 +23,7 @@ from hw_checker.domain import (
     EditApplication,
     EditKind,
     ExecutionResult,
+    Feedback,
     FetchedRepo,
     FixAttempt,
     FixOutcome,
@@ -168,15 +169,23 @@ class FixService:
         ).hexdigest()
 
     def prepare(
-        self, run_id: str, assignment_id: str, repo: RepoTarget, fetched: FetchedRepo
+        self,
+        run_id: str,
+        assignments: Sequence[Assignment],
+        results: Sequence[AssignmentResult],
+        repo: RepoTarget,
+        fetched: FetchedRepo,
     ) -> FixWorkspace:
         """Clone the checked working copy into `<runs>/<run_id>/fixes/<repo_id>`, at the
-        checked commit. The checked working copy is never changed.
+        checked commit, for the review of the repo's own target (`fix_target`): the branch
+        is named after it. The checked working copy is never changed.
 
         Raises:
             GitOperationError: the clone failed.
-            FixError: the clone is not at the checked commit.
+            FixError: the clone is not at the checked commit, or no selected assignment
+                applies to the repo.
         """
+        target = fix_target(assignments, results)
         copy = self._runs_dir / run_id / FIXES_FOLDER / repo.repo_id
         self._git.clone_local(fetched.working_copy, copy)
         head = self._git.head_sha(copy)
@@ -185,13 +194,15 @@ class FixService:
                 f"The fix working copy is at {head[:12]}, not the checked commit "
                 f"{fetched.commit_sha[:12]}."
             )
+        logger.info("Fix target: %s", target.id, extra={"assignment_id": target.id})
         return FixWorkspace(
             working_copy=copy,
             base_sha=fetched.commit_sha,
+            assignment_id=target.id,
             branch_head_sha=None
             if fetched.latest_sha == fetched.commit_sha
             else fetched.latest_sha,
-            branch_name=f"{BRANCH_PREFIX}{assignment_id}-{self._clock.now():%Y-%m-%d}",
+            branch_name=f"{BRANCH_PREFIX}{target.id}-{self._clock.now():%Y-%m-%d}",
         )
 
     def plan(
@@ -240,11 +251,12 @@ class FixService:
         paths = self._files.list_files(root, frozenset(self._config.skip_dirs))
         selected = self._shown_paths(paths, assignments)
         shown = [{"path": path, "text": self._file_text(root, path)} for path in selected]
+        applying = applying_assignments(assignments, results)
         values: dict[str, object] = {
             "course": self._course.profile,
             "assignment": assignment,
-            "requirements": [r for a in assignments for r in a.requirements],
-            "lenient_notes": [note for a in assignments for note in a.lenient_notes],
+            "requirements": [r for a in applying for r in a.requirements],
+            "lenient_notes": [note for a in applying for note in a.lenient_notes],
             "findings": _findings(results),
             "responses": _responses(results),
             "windows_paths": _windows_paths(results),
@@ -312,6 +324,7 @@ class FixService:
         """Apply `edits` to the fix working copy from the checked commit, keeping only the
         ones that pass every guardrail (with the forbidden texts and safe fixes of the
         fixer's rules in effect for `assignment`; the safe fixes read the round's `results`).
+        A requirement with `feedback: notes_only` gets notes, never a `fix`.
 
         Raises:
             GitOperationError: the working copy cannot be reset.
@@ -326,6 +339,7 @@ class FixService:
             self._course, assignment, assignments, ReviewRole.FIXER, selected, _failed(results)
         )
         styles = self._styles(selected)
+        notes_only, notes_only_files = _notes_only(assignments, results)
         rules = EditRules(
             max_edits=self._config.max_edits,
             max_fix_lines=self._config.max_fix_lines,
@@ -340,6 +354,8 @@ class FixService:
                 styles=styles,
                 findings=_finding_messages(results),
             ),
+            notes_only=notes_only,
+            notes_only_files=notes_only_files,
         )
         result = apply_edits(files, edits, rules)
         for path, data in result.files.items():
@@ -861,6 +877,31 @@ class FixService:
         )
 
 
+def applying_assignments(
+    assignments: Sequence[Assignment], results: Sequence[AssignmentResult]
+) -> list[Assignment]:
+    """The `assignments` that apply to the repo: those its `results` do not mark as not
+    checked (by an `applies_when` or `skip_when`)."""
+    skipped = {result.assignment_id for result in results if result.not_checked is not None}
+    return [assignment for assignment in assignments if assignment.id not in skipped]
+
+
+def fix_target(
+    assignments: Sequence[Assignment], results: Sequence[AssignmentResult]
+) -> Assignment:
+    """The assignment a repo's review is for: the highest-order of `assignments` (the
+    round's selection) that applies to the repo (`applying_assignments`). A repo on the layers
+    path gets the layers review even in a round whose target is a later assignment.
+
+    Raises:
+        FixError: no selected assignment applies to the repo.
+    """
+    applying = applying_assignments(assignments, results)
+    if not applying:
+        raise FixError("No selected assignment applies to the repo.")
+    return max(applying, key=lambda assignment: assignment.order)
+
+
 def best_attempt(tried: Sequence[FixAttempt]) -> FixAttempt | None:
     """The attempt a proposal is made of: among those whose recheck passed, the one with the
     most applied edits, the later one on a tie; None when no recheck passed."""
@@ -984,6 +1025,28 @@ def _findings(results: Sequence[AssignmentResult]) -> list[dict[str, str]]:
                 }
             )
     return found
+
+
+def _notes_only(
+    assignments: Sequence[Assignment], results: Sequence[AssignmentResult]
+) -> tuple[frozenset[str], frozenset[str]]:
+    """The notes-only requirements' ids with their findings' ids, and the files that only
+    their findings point to (by the findings' evidence)."""
+    requirements = {
+        requirement.id
+        for assignment in assignments
+        for requirement in assignment.requirements
+        if requirement.feedback is Feedback.NOTES_ONLY
+    }
+    findings = [finding for result in results for finding in result.findings]
+    pointing: dict[str, set[str]] = {}
+    for finding in findings:
+        if finding.evidence is not None:
+            path = finding.evidence.file_path.replace("\\", "/")
+            pointing.setdefault(path, set()).add(finding.requirement_id)
+    ids = requirements | {f.id for f in findings if f.requirement_id in requirements}
+    files = {path for path, owners in pointing.items() if owners <= requirements}
+    return frozenset(ids), frozenset(files)
 
 
 def _failed(results: Sequence[AssignmentResult]) -> set[str]:

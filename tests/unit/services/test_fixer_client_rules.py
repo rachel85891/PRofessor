@@ -94,7 +94,7 @@ def _apply(
     tmp_path: Path, edits: list[PlannedEdit], results: tuple[AssignmentResult, ...]
 ) -> list[str]:
     setup = FixerSetup(tmp_path, files=CLIENT_FILES)
-    workspace = setup.service.prepare(RUN_ID, "hw01", REPO, setup.fetched)
+    workspace = setup.service.prepare(RUN_ID, (ASSIGNMENT,), (), REPO, setup.fetched)
     application = setup.service.apply(
         workspace, edits, CLIENT_ASSIGNMENT, (CLIENT_ASSIGNMENT,), results
     )
@@ -182,7 +182,7 @@ def test_hw01s_client_example_passes_the_guardrails(tmp_path: Path) -> None:
         "wwwroot/update.js": SCRIPT,
     }
     setup = FixerSetup(tmp_path, files=files)
-    workspace = setup.service.prepare(RUN_ID, "hw01", REPO, setup.fetched)
+    workspace = setup.service.prepare(RUN_ID, (ASSIGNMENT,), (), REPO, setup.fetched)
 
     application = setup.service.apply(
         workspace, edits, CLIENT_ASSIGNMENT, (CLIENT_ASSIGNMENT,), (ELEMENT_IDS,)

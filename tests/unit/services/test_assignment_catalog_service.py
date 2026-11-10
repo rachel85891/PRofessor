@@ -7,6 +7,7 @@ from hw_checker.checks.deterministic.builtin import builtin_checks
 from hw_checker.checks.registry import CheckRegistry, check
 from hw_checker.domain import (
     Assignment,
+    CheckCondition,
     CheckInput,
     Finding,
     Requirement,
@@ -230,3 +231,55 @@ def test_ends_when_must_name_a_known_file_list_check_with_valid_params() -> None
         problems = catalog.validate_all()
         assert len(problems) == 1
         assert expected in problems[0]
+
+
+def with_condition(base: Assignment, field: str, check_name: str, **params: Any) -> Assignment:
+    return base.model_copy(update={field: CheckCondition(check=check_name, params=params)})
+
+
+def test_a_condition_must_name_a_known_check_with_valid_params() -> None:
+    registry = CheckRegistry(builtin_checks())
+    # Unlike ends_when, a condition may read file contents (controller_suffix does).
+    valid = with_condition(HW01, "applies_when", "controller_suffix")
+
+    assert (
+        AssignmentCatalogService(FakeAssignmentSource((GENERAL, valid)), registry).validate_all()
+        == ()
+    )
+    for broken, expected in [
+        (
+            with_condition(HW01, "applies_when", "no_such_check"),
+            "hw01: applies_when, check 'no_such_check': unknown",
+        ),
+        (
+            with_condition(HW01, "skip_when", "project_count"),
+            "hw01: skip_when, check 'project_count': param 'min': this required param is missing",
+        ),
+        (
+            with_condition(HW01, "skip_when", "project_count", min=2, max=3),
+            "param 'max': unknown param",
+        ),
+    ]:
+        catalog = AssignmentCatalogService(FakeAssignmentSource((GENERAL, broken)), registry)
+        problems = catalog.validate_all()
+        assert len(problems) == 1
+        assert expected in problems[0]
+
+
+def test_a_round_with_an_invalid_condition_does_not_start() -> None:
+    broken = with_condition(HW01, "skip_when", "no_such_check")
+    catalog = AssignmentCatalogService(
+        FakeAssignmentSource((GENERAL, broken)), CheckRegistry(builtin_checks())
+    )
+
+    with pytest.raises(InvalidAssignmentError, match="skip_when, check 'no_such_check'"):
+        catalog.select_for_round("hw01")
+
+
+def test_an_assignment_cannot_have_both_conditions() -> None:
+    condition = CheckCondition(check="project_count", params={"min": 2})
+
+    with pytest.raises(ValueError, match="applies_when or skip_when, not both"):
+        Assignment.model_validate(
+            HW01.model_dump() | {"applies_when": condition, "skip_when": condition}
+        )

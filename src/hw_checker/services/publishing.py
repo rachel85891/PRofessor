@@ -67,7 +67,9 @@ class PublishService:
     ) -> ReviewPrompt | None:
         """What the approval gate shows for the run `run_id`, or None if nothing is pending.
 
-        The pending repos follow the summary's (roster) order. Each comes with its counts
+        The pending repos follow the summary's (roster) order, except that repos where an
+        assignment's `applies_when` or `skip_when` could not be evaluated come first; every
+        such repo of the round is also listed on its own. Each comes with its counts
         and report from `summary`, its branch and
         pull request title, its diff (written next to the reports) and, after a failed
         publish, that attempt. `message` explains why the last answer was not applied.
@@ -76,14 +78,16 @@ class PublishService:
             StorageError: the proposals cannot be loaded or a diff cannot be written.
         """
         lines = {line.repo_id: line for line in summary.repos}
-        order = {repo_id: index for index, repo_id in enumerate(lines)}
+        unknown = tuple(item for line in summary.repos for item in line.unknown_conditions)
+        first = {item.repo_id for item in unknown}
+        order = {repo_id: (repo_id not in first, index) for index, repo_id in enumerate(lines)}
         proposals = sorted(
             (
                 p
                 for p in self._proposals.list_for_run(run_id)
                 if p.status is ProposalStatus.PENDING_REVIEW
             ),
-            key=lambda proposal: order.get(proposal.repo.repo_id, len(order)),
+            key=lambda proposal: order.get(proposal.repo.repo_id, (True, len(order))),
         )
         pending = tuple(
             self._pending_review(run_id, proposal, lines.get(proposal.repo.repo_id))
@@ -92,7 +96,11 @@ class PublishService:
         if not pending:
             return None
         return ReviewPrompt(
-            run_id=run_id, pending=pending, message=message, how_to_answer=HOW_TO_ANSWER
+            run_id=run_id,
+            unknown_conditions=unknown,
+            pending=pending,
+            message=message,
+            how_to_answer=HOW_TO_ANSWER,
         )
 
     def apply_decision(self, run_id: str, decision: GateDecision) -> tuple[str, ...]:
