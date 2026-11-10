@@ -43,6 +43,7 @@ TEMPLATE_WORDED_REASONS = frozenset(
         NotEvaluatedReason.WINDOWS_PATH,
         NotEvaluatedReason.ASSIGNMENT_NOT_APPLICABLE,
         NotEvaluatedReason.ASSIGNMENT_CONDITION_UNKNOWN,
+        NotEvaluatedReason.AWAITING_REVIEWER,
     }
 )
 """Reasons whose sentence names a detail (such as a path or an assignment's condition), so

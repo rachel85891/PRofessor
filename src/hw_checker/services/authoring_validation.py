@@ -48,7 +48,7 @@ FILE_KINDS = frozenset({RequirementKind.STRUCTURE, RequirementKind.CUSTOM})
 """The requirements the preview runs without building: their checks read files."""
 RUN_KINDS = frozenset({RequirementKind.BUILD, RequirementKind.HTTP})
 """The requirements the preview adds when it builds and runs (`--with-execution`)."""
-NOT_A_FAILURE: frozenset[NotEvaluatedReason] = frozenset()
+NOT_A_FAILURE = frozenset({NotEvaluatedReason.AWAITING_REVIEWER})
 """Not evaluated on the reference solution, and expected: nothing to show."""
 _SPACE = re.compile(r"\s+")
 

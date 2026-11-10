@@ -218,6 +218,7 @@ def test_not_evaluated_reasons() -> None:
         "windows_path",
         "assignment_not_applicable",
         "assignment_condition_unknown",
+        "awaiting_reviewer",
     }
 
 

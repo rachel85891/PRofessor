@@ -307,6 +307,9 @@ def _requirement_data(entry: RequirementEntry, assignment_id: str) -> dict[str, 
         "feedback": entry.feedback,
         "origin": entry.origin,
         "status": entry.status,
+        "reviewer_guidance": entry.reviewer_guidance,
+        "lenient_notes": entry.lenient_notes,
+        "concerns": entry.concerns,
     }
 
 

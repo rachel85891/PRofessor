@@ -187,6 +187,25 @@ class HttpProbe(DomainModel):
         return value
 
 
+class CodeScope(DomainModel):
+    """What a `code` requirement concerns, so the code reviewer is shown only the relevant
+    files (design §10): repo globs (`**/Services/*.cs`, matched like `reviewed_files`) and
+    the projects' roles, as the architecture checks name them (`services`)."""
+
+    files: tuple[NonBlankStr, ...] = ()
+    roles: tuple[Identifier, ...] = ()
+
+    @model_validator(mode="after")
+    def _names_something(self) -> Self:
+        if not self.files and not self.roles:
+            raise ValueError("give files, roles or both")
+        return self
+
+
+CODE_FIELDS = ("reviewer_guidance", "lenient_notes", "concerns")
+"""The fields only a `code` requirement has: what the code reviewer (stage 8b) reads."""
+
+
 class Requirement(DomainModel):
     """A single requirement of an assignment.
 
@@ -214,6 +233,15 @@ class Requirement(DomainModel):
     status: ItemStatus = ItemStatus.APPROVED
     """A drafted requirement waits for the developer's approval; a round refuses drafts.
     One written by hand is approved by its commit."""
+    reviewer_guidance: str = ""
+    """For a `code` requirement: what the code reviewer looks for, and what is a finding
+    (design §10). Its title and description say what is required."""
+    lenient_notes: tuple[NonBlankStr, ...] = ()
+    """For a `code` requirement: what the reviewer and the judge must not be strict about
+    here, besides the assignment's own `lenient_notes`."""
+    concerns: CodeScope | None = None
+    """For a `code` requirement: the files or roles it concerns; without it, the reviewer
+    chooses the files."""
 
     @model_validator(mode="after")
     def _does_not_depend_on_itself(self) -> Self:
@@ -227,6 +255,13 @@ class Requirement(DomainModel):
             raise ValueError("an http requirement needs at least one probe")
         if self.kind is not RequirementKind.HTTP and self.http_probes:
             raise ValueError(f"a {self.kind} requirement must not have http probes")
+        return self
+
+    @model_validator(mode="after")
+    def _code_fields_only_for_code(self) -> Self:
+        given = [name for name in CODE_FIELDS if getattr(self, name)]
+        if self.kind is not RequirementKind.CODE and given:
+            raise ValueError(f"{', '.join(given)}: only a code requirement has them")
         return self
 
     @model_validator(mode="after")

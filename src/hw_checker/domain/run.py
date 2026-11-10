@@ -65,6 +65,8 @@ class NotEvaluatedReason(StrEnum):
     ASSIGNMENT_CONDITION_UNKNOWN = "assignment_condition_unknown"
     """The assignment's `applies_when` or `skip_when` could not be evaluated, so none of
     its requirements was checked; a reviewer decides which path the repo is on."""
+    AWAITING_REVIEWER = "awaiting_reviewer"
+    """A `code` requirement: the LLM code reviewer checks it, and it is not enabled yet."""
 
 
 CONDITION_REASONS = frozenset(

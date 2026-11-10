@@ -13,6 +13,7 @@ from pydantic import Field, StringConstraints, model_validator
 from hw_checker.domain.assignment import (
     VARIABLE_NAME_PATTERN,
     Assignment,
+    CodeScope,
     ExpectedJson,
     Feedback,
     HttpMethod,
@@ -162,6 +163,12 @@ class RequirementSpec(DomainModel):
     probes: tuple[ProbeSpec, ...] = ()
     depends_on: tuple[Identifier, ...] = ()
     feedback: Feedback = Feedback.FIXES_ALLOWED
+    reviewer_guidance: str = ""
+    """For `code`: what the code reviewer looks for, and what is a finding."""
+    lenient_notes: tuple[NonBlankStr, ...] = ()
+    """For `code`: what the reviewer and the judge must not be strict about here."""
+    concerns: CodeScope | None = None
+    """For `code`: the files (repo globs) or the projects' roles it concerns."""
     origin: Origin
     status: ItemStatus
 
