@@ -19,6 +19,7 @@ from hw_checker.domain import (
     EvidenceCoverageStatus,
     Finding,
     NotEvaluatedReason,
+    ProjectReferenceStatus,
     Requirement,
     RequirementKind,
     Severity,
@@ -229,6 +230,20 @@ def test_entities_may_reference_no_layer(tmp_path: Path) -> None:
     assert "`Entities` references `Services` (entities → services is not allowed)" in message(
         outcome
     )
+
+
+def test_a_reference_in_other_letter_case_is_a_reference(tmp_path: Path) -> None:
+    api = FILES["Api/Api.csproj"].replace(
+        "..\\Services\\Services.csproj", "..\\services\\services.csproj"
+    )
+    files = variant({"Api/Api.csproj": api})
+    root = solution(tmp_path, files)
+    evidence = LocalArchitectureEvidenceReader().scan(root)
+    assert ProjectReferenceStatus.CASE_MISMATCHED in {
+        reference.status for reference in evidence.project_references
+    }
+
+    assert run("layer_references", root, evidence, **REFERENCES) == ()
 
 
 def test_layer_references_cannot_tell_when_a_layer_has_no_project(tmp_path: Path) -> None:

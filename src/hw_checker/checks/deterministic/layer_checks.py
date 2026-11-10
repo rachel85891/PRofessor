@@ -67,6 +67,8 @@ SOURCE_SUFFIX = ".cs"
 NOTHING = Localized(he="", en="")
 NONE_FOUND = Localized(he="אין", en="none")
 _OR = Localized(he=" או ", en=" or ")
+_REFERENCED = frozenset({ProjectReferenceStatus.MATCHED, ProjectReferenceStatus.CASE_MISMATCHED})
+"""Reference statuses that name a project of the repo."""
 
 
 def _role_name(value: str) -> str:
@@ -235,11 +237,7 @@ def layer_references(check_input: CheckInput, params: LayerReferencesParams) -> 
     if not isinstance(found, tuple):
         return found
     evidence, roles = found
-    edges = [
-        (reference.source_project, reference.target_project)
-        for reference in evidence.project_references
-        if reference.status is ProjectReferenceStatus.MATCHED and reference.target_project
-    ]
+    edges = _reference_edges(evidence)
     problems: list[_Problem] = []
     for source_role, target_role in params.required:
         if not any(
@@ -259,7 +257,7 @@ def layer_references(check_input: CheckInput, params: LayerReferencesParams) -> 
             )
     for source, target in edges:
         from_role = roles.role_of_project.get(source)
-        to_role = roles.role_of_project.get(target or "")
+        to_role = roles.role_of_project.get(target)
         if from_role is None or to_role is None:
             continue
         if any(
@@ -271,7 +269,7 @@ def layer_references(check_input: CheckInput, params: LayerReferencesParams) -> 
                 _Problem(
                     LAYER_REFERENCE_FORBIDDEN.render(
                         source=code(project_name(source)),
-                        target=code(project_name(target or "")),
+                        target=code(project_name(target)),
                         source_role=from_role,
                         target_role=to_role,
                     )
@@ -587,6 +585,21 @@ def _finding(
     examples = joined_examples(problem.example() for problem in problems[:MAX_EXAMPLES])
     message = template.render(examples=examples, count=len(problems), **fields)
     return (deterministic_finding(check_input, message, [p.fact for p in problems]),)
+
+
+def _reference_edges(evidence: ArchitectureEvidence) -> list[tuple[str, str]]:
+    """The project references as (source, target) project files of the inventory. A
+    reference written with other letter case (`case_mismatched`) is still a reference here:
+    the build and file-reference checks own the letter case."""
+    by_lower = {project.lower(): project for project in evidence.project_files}
+    edges: list[tuple[str, str]] = []
+    for reference in evidence.project_references:
+        if reference.status not in _REFERENCED or reference.target_project is None:
+            continue
+        target = by_lower.get(reference.target_project.lower())
+        if target is not None:
+            edges.append((reference.source_project, target))
+    return edges
 
 
 def _signals(
