@@ -65,6 +65,9 @@ class NotEvaluatedReason(StrEnum):
     ASSIGNMENT_CONDITION_UNKNOWN = "assignment_condition_unknown"
     """The assignment's `applies_when` or `skip_when` could not be evaluated, so none of
     its requirements was checked; a reviewer decides which path the repo is on."""
+    EVIDENCE_UNAVAILABLE = "evidence_unavailable"
+    """The repo's projects or C# code could not be read (the architecture evidence, or its
+    signal coverage, is unavailable), so a check that reads them could not decide."""
 
 
 CONDITION_REASONS = frozenset(
@@ -194,6 +197,8 @@ class RepoSummary(DomainModel):
     major: int = Field(default=0, ge=0)
     minor: int = Field(default=0, ge=0)
     not_evaluated: int = Field(default=0, ge=0)
+    """Requirements not checked, without those of an assignment that does not apply (or
+    whose condition is unknown)."""
     findings: tuple[FindingBrief, ...] = ()
     """Each finding (before judging), briefly, in the order the checks reported them."""
     errors: tuple[NonBlankStr, ...] = ()
@@ -208,7 +213,11 @@ class RepoSummary(DomainModel):
 
     @classmethod
     def from_repo_run(cls, repo_run: RepoRunResult, report_path: Path | None = None) -> Self:
-        """Count the repo's findings (before judging) by severity, and its skipped checks."""
+        """Count the repo's findings (before judging) by severity, and its skipped checks.
+
+        An assignment that does not apply to the repo, or whose condition is unknown, is
+        not counted as skipped checks: the repo report lists it under "Assignments", and an
+        unknown condition is in `unknown_conditions`."""
         findings = [
             finding for result in repo_run.assignment_results for finding in result.findings
         ]
@@ -218,7 +227,11 @@ class RepoSummary(DomainModel):
             critical=sum(finding.severity is Severity.CRITICAL for finding in findings),
             major=sum(finding.severity is Severity.MAJOR for finding in findings),
             minor=sum(finding.severity is Severity.MINOR for finding in findings),
-            not_evaluated=sum(len(result.not_evaluated) for result in repo_run.assignment_results),
+            not_evaluated=sum(
+                entry.reason not in CONDITION_REASONS
+                for result in repo_run.assignment_results
+                for entry in result.not_evaluated
+            ),
             findings=tuple(
                 FindingBrief(
                     requirement_id=finding.requirement_id,

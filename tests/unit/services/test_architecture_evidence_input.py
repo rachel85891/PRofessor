@@ -100,8 +100,8 @@ def test_evidence_that_cannot_be_read_leaves_its_checks_not_evaluated(
 
     assert reader.calls == 1
     assert [(e.requirement_id, e.reason) for e in result.not_evaluated] == [
-        ("hw03-di", NotEvaluatedReason.ENVIRONMENT_ISSUE),
-        ("hw03-di-again", NotEvaluatedReason.ENVIRONMENT_ISSUE),
+        ("hw03-di", NotEvaluatedReason.EVIDENCE_UNAVAILABLE),
+        ("hw03-di-again", NotEvaluatedReason.EVIDENCE_UNAVAILABLE),
     ]
     assert caplog.text.count("Could not read the architecture evidence (OSError)") == 1
 

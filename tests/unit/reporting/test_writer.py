@@ -301,6 +301,13 @@ def test_every_not_evaluated_reason_has_a_sentence(reason: NotEvaluatedReason) -
     assert sentence[0].isupper() and sentence.endswith(".")
 
 
+def test_unreadable_evidence_is_worded_as_the_code_not_the_machine() -> None:
+    sentence = NOT_EVALUATED_REASONS[NotEvaluatedReason.EVIDENCE_UNAVAILABLE]
+
+    assert "could not be read" in sentence
+    assert "machine" not in sentence
+
+
 @pytest.mark.parametrize("kind", list(FailureKind))
 def test_every_failure_kind_has_a_sentence(kind: FailureKind) -> None:
     sentence = FAILURE_KINDS[kind]

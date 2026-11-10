@@ -118,7 +118,7 @@ def test_partial_coverage_is_still_counted() -> None:
     "found", [None, evidence(status=EvidenceCoverageStatus.UNAVAILABLE)], ids=["unread", "none"]
 )
 def test_without_signals_it_is_not_evaluated(found: ArchitectureEvidence | None) -> None:
-    assert run(found) is NotEvaluatedReason.ENVIRONMENT_ISSUE
+    assert run(found) is NotEvaluatedReason.EVIDENCE_UNAVAILABLE
 
 
 def test_the_thresholds_are_required_data() -> None:
