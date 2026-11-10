@@ -1,9 +1,12 @@
 """Deterministic check service: evaluates the non-LLM requirements of one assignment."""
 
 import logging
+from collections.abc import Callable
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from hw_checker.domain import (
+    ArchitectureEvidence,
     Assignment,
     AssignmentResult,
     CheckInput,
@@ -18,7 +21,7 @@ from hw_checker.domain import (
 )
 from hw_checker.domain.errors import HwCheckerError, InvalidAssignmentError
 from hw_checker.domain.run import MAX_NOT_EVALUATED_DETAIL_CHARS
-from hw_checker.ports import GitClient, RequirementChecker
+from hw_checker.ports import ArchitectureEvidenceReader, GitClient, RequirementChecker
 
 logger = logging.getLogger(__name__)
 
@@ -36,12 +39,21 @@ class DeterministicCheckService:
     not apply to the repo, or the condition cannot be evaluated, none of its requirements
     is (ADR 0023: the path per repo is data). With a
     `git` client, the working copy's tracked files are read once per evaluation for the
-    checks that look at git's state; without one, those checks are not evaluated.
+    checks that look at git's state; without one, those checks are not evaluated. With an
+    `architecture` reader, the working copy's architecture evidence is read at most once
+    per evaluation, and only when a check that declares it reads it runs; without one, or
+    when it cannot be read, those checks are not evaluated.
     """
 
-    def __init__(self, checker: RequirementChecker, git: GitClient | None = None) -> None:
+    def __init__(
+        self,
+        checker: RequirementChecker,
+        git: GitClient | None = None,
+        architecture: ArchitectureEvidenceReader | None = None,
+    ) -> None:
         self._checker = checker
         self._git = git
+        self._architecture = architecture
 
     def evaluate(
         self, assignment: Assignment, repo_dir: Path, execution: ExecutionResult | None
@@ -58,8 +70,15 @@ class DeterministicCheckService:
         """
         findings: list[Finding] = []
         not_evaluated: list[NotEvaluated] = []
-        tracked = self._tracked_files(repo_dir)
-        skipped = self._not_applicable(assignment, repo_dir, execution, tracked)
+        inputs = _Inputs(
+            self._checker,
+            repo_dir,
+            assignment,
+            execution,
+            self._tracked_files(repo_dir),
+            lambda: self._read_architecture(repo_dir),
+        )
+        skipped = self._not_applicable(assignment, inputs)
         if skipped is not None:
             reason, detail = skipped
             return AssignmentResult(
@@ -73,14 +92,7 @@ class DeterministicCheckService:
         for requirement in assignment.requirements:
             if requirement.kind not in DETERMINISTIC_KINDS:
                 continue
-            check_input = CheckInput(
-                repo_dir=repo_dir,
-                assignment=assignment,
-                requirement=requirement,
-                execution=execution,
-                tracked=tracked,
-            )
-            outcome = self._check(requirement, check_input)
+            outcome = self._check(requirement, inputs.for_requirement(requirement))
             if isinstance(outcome, NotEvaluatedReason):
                 detail = paths if outcome is NotEvaluatedReason.WINDOWS_PATH else ""
                 not_evaluated.append(
@@ -99,11 +111,7 @@ class DeterministicCheckService:
         )
 
     def _not_applicable(
-        self,
-        assignment: Assignment,
-        repo_dir: Path,
-        execution: ExecutionResult | None,
-        tracked: TrackedFiles | None,
+        self, assignment: Assignment, inputs: "_Inputs"
     ) -> tuple[NotEvaluatedReason, str] | None:
         """Why the assignment is not checked in this repo, with the condition's words; None
         when it applies (or has no condition)."""
@@ -111,14 +119,7 @@ class DeterministicCheckService:
         requirement = assignment.condition_requirement
         if condition is None or requirement is None:
             return None
-        check_input = CheckInput(
-            repo_dir=repo_dir,
-            assignment=assignment,
-            requirement=requirement,
-            execution=execution,
-            tracked=tracked,
-        )
-        outcome = self._condition(requirement, check_input)
+        outcome = self._condition(requirement, inputs.for_requirement(requirement))
         name = condition.describe()
         if outcome.holds is None:
             reason = outcome.reason.value if outcome.reason else "unknown"
@@ -158,6 +159,21 @@ class DeterministicCheckService:
             )
             return None
 
+    def _read_architecture(self, repo_dir: Path) -> ArchitectureEvidence | None:
+        if self._architecture is None:
+            return None
+        try:
+            return self._architecture.scan(repo_dir)
+        except Exception as error:
+            # Deliberate boundary: the reader walks an untrusted student repo; the checks
+            # that need its evidence are then not evaluated, as without git's state.
+            logger.warning(
+                "Could not read the architecture evidence (%s); the checks that read it are "
+                "not evaluated",
+                type(error).__name__,
+            )
+            return None
+
     def _check(
         self, requirement: Requirement, check_input: CheckInput
     ) -> tuple[Finding, ...] | NotEvaluatedReason:
@@ -175,6 +191,36 @@ class DeterministicCheckService:
                 extra={"requirement_id": requirement.id},
             )
             return NotEvaluatedReason.ENVIRONMENT_ISSUE
+
+
+@dataclass
+class _Inputs:
+    """What every check of one evaluation receives. The architecture evidence is read on
+    the first check that declares it reads it, and kept for the others."""
+
+    checker: RequirementChecker
+    repo_dir: Path
+    assignment: Assignment
+    execution: ExecutionResult | None
+    tracked: TrackedFiles | None
+    read_architecture: Callable[[], ArchitectureEvidence | None]
+    _architecture: list[ArchitectureEvidence | None] = field(default_factory=list)
+    """Empty until read; then the one value read (None when it could not be)."""
+
+    def for_requirement(self, requirement: Requirement) -> CheckInput:
+        return CheckInput(
+            repo_dir=self.repo_dir,
+            assignment=self.assignment,
+            requirement=requirement,
+            execution=self.execution,
+            tracked=self.tracked,
+            architecture=self._evidence() if self.checker.reads_architecture(requirement) else None,
+        )
+
+    def _evidence(self) -> ArchitectureEvidence | None:
+        if not self._architecture:
+            self._architecture.append(self.read_architecture())
+        return self._architecture[0]
 
 
 def _bounded(detail: str) -> str:

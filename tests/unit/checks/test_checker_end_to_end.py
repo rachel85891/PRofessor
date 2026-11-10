@@ -124,6 +124,7 @@ def test_builtin_checks_are_registered() -> None:
         "client_file_refs",
         "client_element_ids",
         "client_fetch_routes",
+        "di_started",
     }
 
 

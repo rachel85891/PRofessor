@@ -10,6 +10,7 @@ from hw_checker.domain import (
     Finding,
     NotEvaluatedReason,
     ParamValue,
+    Requirement,
 )
 
 
@@ -45,11 +46,20 @@ Outcome = tuple[Finding, ...] | NotEvaluatedReason | CheckPassed | Exception
 
 
 class FakeRequirementChecker:
-    """Returns (or raises) a configured outcome per requirement id; passes by default."""
+    """Returns (or raises) a configured outcome per requirement id; passes by default. The
+    checks named in `architecture_checks` read the architecture evidence."""
 
-    def __init__(self, outcomes: Mapping[str, Outcome] | None = None) -> None:
+    def __init__(
+        self,
+        outcomes: Mapping[str, Outcome] | None = None,
+        architecture_checks: Iterable[str] = (),
+    ) -> None:
         self._outcomes = dict(outcomes or {})
+        self._architecture_checks = frozenset(architecture_checks)
         self.checked: list[CheckInput] = []
+
+    def reads_architecture(self, requirement: Requirement) -> bool:
+        return requirement.check in self._architecture_checks
 
     def check(self, check_input: CheckInput) -> tuple[Finding, ...] | NotEvaluatedReason:
         outcome = self._outcome(check_input)

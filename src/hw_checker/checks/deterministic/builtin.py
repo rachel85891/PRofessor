@@ -1,5 +1,6 @@
 """The built-in registered checks, for bootstrap to put in the `CheckRegistry`."""
 
+from hw_checker.checks.deterministic.architecture import di_started
 from hw_checker.checks.deterministic.client import (
     client_element_ids,
     client_fetch_routes,
@@ -24,11 +25,12 @@ CLIENT_CHECKS: tuple[CheckFunction, ...] = (
     client_element_ids,
     client_fetch_routes,
 )
+ARCHITECTURE_CHECKS: tuple[CheckFunction, ...] = (di_started,)
 
 
 def builtin_checks() -> tuple[CheckFunction, ...]:
     """Every built-in registered check: the structure checks, the six naming checks, the
-    repository checks and the client-file checks."""
+    repository checks, the client-file checks and the architecture-evidence checks."""
     return (
         file_exists,
         folder_exists,
@@ -36,4 +38,5 @@ def builtin_checks() -> tuple[CheckFunction, ...]:
         *NAMING_CHECKS,
         *REPOSITORY_CHECKS,
         *CLIENT_CHECKS,
+        *ARCHITECTURE_CHECKS,
     )

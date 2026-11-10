@@ -319,6 +319,25 @@ SHAPE_NAMES: dict[str, Localized] = {
 }
 """How a response shape is named inside the messages above."""
 
+DI_STARTED = MessageTemplate(
+    name="DI_STARTED",
+    he="הזרקת תלויות התחילה ({registrations} רישומים, {constructors} בנאים שמקבלים ממשק).",
+    en="DI has started ({registrations} registrations, {constructors} constructors taking an "
+    "interface).",
+)
+
+DI_NOT_STARTED = MessageTemplate(
+    name="DI_NOT_STARTED",
+    he=(
+        "הזרקת תלויות לא התחילה: נמצאו {registrations} רישומים (לפחות {min_registrations}); "
+        "נמצאו {constructors} בנאים שמקבלים ממשק (לפחות {min_constructors})."
+    ),
+    en=(
+        "DI has not started: {registrations} registrations (at least {min_registrations}) and "
+        "{constructors} constructors taking an interface (at least {min_constructors})."
+    ),
+)
+
 ALL_TEMPLATES: tuple[MessageTemplate, ...] = (
     FILE_MISSING,
     FILE_TOO_FEW,
@@ -354,4 +373,6 @@ ALL_TEMPLATES: tuple[MessageTemplate, ...] = (
     CLIENT_REF_CASE,
     CLIENT_ELEMENT_IDS,
     CLIENT_FETCH_ROUTES,
+    DI_STARTED,
+    DI_NOT_STARTED,
 )

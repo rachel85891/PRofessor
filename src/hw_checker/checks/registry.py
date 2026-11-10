@@ -44,6 +44,8 @@ class CheckSpec:
     description: str
     reads_file_list: bool = False
     """True when the check looks at file names only, so it can run on `CheckInput.files`."""
+    reads_architecture: bool = False
+    """True when the check reads `CheckInput.architecture`, which is then read for it."""
 
 
 def check[F: CheckFunction](
@@ -52,15 +54,18 @@ def check[F: CheckFunction](
     description: str,
     *,
     reads_file_list: bool = False,
+    reads_architecture: bool = False,
 ) -> Callable[[F], F]:
     """Mark a function as the check `name`; return it unchanged. Registers nothing.
 
     `reads_file_list` marks a check that only looks at file names, so it can run on a
     commit's file list (an assignment's `ends_when`) as well as on the working copy.
+    `reads_architecture` marks a check that reads the repo's architecture evidence, so the
+    evidence is read (once per evaluation) only when such a check is selected.
     """
 
     def mark(function: F) -> F:
-        spec = CheckSpec(name, params_model, description, reads_file_list)
+        spec = CheckSpec(name, params_model, description, reads_file_list, reads_architecture)
         setattr(function, _SPEC_ATTRIBUTE, spec)
         return function
 
@@ -130,6 +135,7 @@ class CheckRegistry:
                     for field_name, field in registered.spec.params_model.model_fields.items()
                 ),
                 reads_file_list=registered.spec.reads_file_list,
+                reads_architecture=registered.spec.reads_architecture,
             )
             for name, registered in sorted(self._checks.items())
         )

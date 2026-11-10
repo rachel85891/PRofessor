@@ -11,6 +11,7 @@ from hw_checker.domain import (
     ConditionOutcome,
     Finding,
     NotEvaluatedReason,
+    Requirement,
     RequirementKind,
 )
 from hw_checker.domain.errors import InvalidAssignmentError, NotFoundError
@@ -58,6 +59,12 @@ class DeterministicRequirementChecker:
             return ConditionOutcome(holds=True, message=outcome.message)
         messages = (finding.message_en.strip() for finding in outcome)
         return ConditionOutcome(holds=not outcome, message="; ".join(messages))
+
+    def reads_architecture(self, requirement: Requirement) -> bool:
+        """Whether the requirement's registered check reads the architecture evidence."""
+        if requirement.check is None or requirement.check not in self._registry.check_names():
+            return False
+        return self._registry.get(requirement.check).spec.reads_architecture
 
     def _run_registered(self, check_input: CheckInput) -> CheckResult:
         requirement = check_input.requirement

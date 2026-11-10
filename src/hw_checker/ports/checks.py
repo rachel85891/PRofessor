@@ -10,6 +10,7 @@ from hw_checker.domain import (
     Finding,
     NotEvaluatedReason,
     ParamValue,
+    Requirement,
 )
 
 
@@ -56,4 +57,9 @@ class RequirementChecker(Protocol):
             InvalidAssignmentError: the requirement names an unknown check, or gives it
                 invalid params.
         """
+        ...
+
+    def reads_architecture(self, requirement: Requirement) -> bool:
+        """Whether the requirement's check reads `CheckInput.architecture`. An unknown check
+        reads nothing (it is reported when it runs). Raises nothing."""
         ...
