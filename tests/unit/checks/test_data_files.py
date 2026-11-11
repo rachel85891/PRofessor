@@ -13,6 +13,7 @@ from hw_checker.domain import (
     FailureKind,
     Feedback,
     FindingSource,
+    NotEvaluatedOutcome,
     NotEvaluatedReason,
     PathFixKind,
     PathRewrite,
@@ -125,9 +126,9 @@ def test_with_the_file_created_the_http_probes_are_evaluated() -> None:
     assert isinstance(outcome, tuple) and len(outcome) == 1
     # A path that could not be adapted still makes a failing probe not evaluated.
     unresolved = with_paths(run(probes=(failed,)), UNRESOLVED)
-    assert evaluate_http(check_input(HTTP_REQUIREMENT, unresolved)) is (
-        NotEvaluatedReason.ENVIRONMENT_ISSUE
-    )
+    outcome = evaluate_http(check_input(HTTP_REQUIREMENT, unresolved))
+    assert isinstance(outcome, NotEvaluatedOutcome)
+    assert outcome.reason is NotEvaluatedReason.ENVIRONMENT_ISSUE
 
 
 def test_the_service_reports_the_note_once_per_path(tmp_path: Path) -> None:

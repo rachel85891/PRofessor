@@ -108,7 +108,11 @@ def test_a_check_raising_does_not_stop_the_others(caplog: pytest.LogCaptureFixtu
         result = DeterministicCheckService(checker).evaluate(ASSIGNMENT, REPO, EXECUTION)
 
     assert result.not_evaluated == (
-        NotEvaluated(requirement_id="hw01-r1", reason=NotEvaluatedReason.ENVIRONMENT_ISSUE),
+        NotEvaluated(
+            requirement_id="hw01-r1",
+            reason=NotEvaluatedReason.ENVIRONMENT_ISSUE,
+            detail="the check stopped with an unexpected PermissionError",
+        ),
         NotEvaluated(requirement_id="hw01-r4", reason=NotEvaluatedReason.AWAITING_REVIEWER),
     )
     assert [f.requirement_id for f in result.findings] == ["hw01-r5"]

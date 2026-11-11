@@ -20,6 +20,7 @@ from hw_checker.domain import (
     Finding,
     HttpMethod,
     HttpProbe,
+    NotEvaluatedOutcome,
     NotEvaluatedReason,
     PathFixKind,
     PathNotRewrittenReason,
@@ -128,7 +129,7 @@ def test_build_outcome_per_failure_kind(kind: FailureKind) -> None:
     elif expected == "pass":
         assert outcome == ()
     else:
-        assert outcome is expected
+        assert reason_of(outcome) is expected
 
 
 def test_successful_build_passes() -> None:
@@ -256,7 +257,7 @@ def test_run_timeout_or_environment_error_is_not_evaluated(kind: FailureKind) ->
 
     outcome = evaluate_build(check_input(BUILD_REQUIREMENT, execution))
 
-    assert outcome is NotEvaluatedReason.ENVIRONMENT_ISSUE
+    assert reason_of(outcome) is NotEvaluatedReason.ENVIRONMENT_ISSUE
 
 
 def test_startup_finding_id_depends_on_the_exception_type() -> None:
@@ -308,7 +309,7 @@ def test_startup_crash_with_an_unresolved_path_is_not_evaluated() -> None:
 
     outcome = evaluate_build(check_input(BUILD_REQUIREMENT, execution))
 
-    assert outcome is NotEvaluatedReason.ENVIRONMENT_ISSUE
+    assert reason_of(outcome) is NotEvaluatedReason.ENVIRONMENT_ISSUE
 
 
 def test_startup_crash_with_every_path_rewritten_is_a_finding() -> None:
@@ -323,7 +324,9 @@ def test_compile_error_is_a_finding_even_with_an_unresolved_path() -> None:
     assert len(_findings(evaluate_build(check_input(BUILD_REQUIREMENT, execution)))) == 1
 
 
-def _findings(outcome: tuple[Finding, ...] | NotEvaluatedReason) -> tuple[Finding, ...]:
+def _findings(
+    outcome: tuple[Finding, ...] | NotEvaluatedReason | NotEvaluatedOutcome,
+) -> tuple[Finding, ...]:
     assert isinstance(outcome, tuple)
     return outcome
 
@@ -382,7 +385,7 @@ def test_two_failing_probes_give_a_single_finding_naming_both() -> None:
 def test_http_requirement_not_evaluated_without_a_healthy_run(
     execution: ExecutionResult | None, reason: NotEvaluatedReason
 ) -> None:
-    assert evaluate_http(check_input(HTTP_REQUIREMENT, execution)) is reason
+    assert reason_of(evaluate_http(check_input(HTTP_REQUIREMENT, execution))) is reason
 
 
 def test_failing_probe_with_an_unresolved_path_is_not_evaluated() -> None:
@@ -394,7 +397,7 @@ def test_failing_probe_with_an_unresolved_path_is_not_evaluated() -> None:
 
     outcome = evaluate_http(check_input(HTTP_REQUIREMENT, execution))
 
-    assert outcome is NotEvaluatedReason.ENVIRONMENT_ISSUE
+    assert reason_of(outcome) is NotEvaluatedReason.ENVIRONMENT_ISSUE
 
 
 def test_passing_probes_with_an_unresolved_path_still_pass() -> None:
@@ -410,7 +413,7 @@ def test_unhealthy_run_with_an_unresolved_path_is_an_environment_issue() -> None
 
     outcome = evaluate_http(check_input(HTTP_REQUIREMENT, execution))
 
-    assert outcome is NotEvaluatedReason.ENVIRONMENT_ISSUE
+    assert reason_of(outcome) is NotEvaluatedReason.ENVIRONMENT_ISSUE
 
 
 def test_failing_probe_with_every_path_rewritten_is_a_finding() -> None:
@@ -564,7 +567,9 @@ def answered(
     )
 
 
-def content_outcome(*results: ProbeResult) -> tuple[Finding, ...] | NotEvaluatedReason:
+def content_outcome(
+    *results: ProbeResult,
+) -> tuple[Finding, ...] | NotEvaluatedReason | NotEvaluatedOutcome:
     return evaluate_http(
         CheckInput(
             repo_dir=Path("repo"),
@@ -795,7 +800,7 @@ def test_an_unadapted_hard_coded_path_stays_an_environment_issue_before_a_window
 
     outcome = evaluate_http(check_input(HTTP_REQUIREMENT, execution))
 
-    assert outcome is NotEvaluatedReason.ENVIRONMENT_ISSUE
+    assert reason_of(outcome) is NotEvaluatedReason.ENVIRONMENT_ISSUE
 
 
 def test_a_server_error_with_a_windows_path_in_the_log_is_not_evaluated() -> None:
@@ -806,3 +811,16 @@ def test_a_server_error_with_a_windows_path_in_the_log_is_not_evaluated() -> Non
     outcome = evaluate_http(check_input(HTTP_REQUIREMENT, execution))
 
     assert outcome is NotEvaluatedReason.WINDOWS_PATH
+
+
+def reason_of(
+    outcome: tuple[Finding, ...] | NotEvaluatedReason | NotEvaluatedOutcome,
+) -> tuple[Finding, ...] | NotEvaluatedReason:
+    """The reason of a not-evaluated outcome; an `environment_issue` always has a detail."""
+    if isinstance(outcome, NotEvaluatedOutcome):
+        assert outcome.detail.strip()
+        return outcome.reason
+    assert outcome is not NotEvaluatedReason.ENVIRONMENT_ISSUE, (
+        "an environment_issue needs a detail"
+    )
+    return outcome

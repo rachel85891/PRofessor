@@ -10,6 +10,7 @@ from hw_checker.domain import (
     CheckPassed,
     ConditionOutcome,
     Finding,
+    NotEvaluatedOutcome,
     NotEvaluatedReason,
     Requirement,
     RequirementKind,
@@ -24,7 +25,9 @@ class DeterministicRequirementChecker:
     def __init__(self, registry: CheckRegistry) -> None:
         self._registry = registry
 
-    def check(self, check_input: CheckInput) -> tuple[Finding, ...] | NotEvaluatedReason:
+    def check(
+        self, check_input: CheckInput
+    ) -> tuple[Finding, ...] | NotEvaluatedReason | NotEvaluatedOutcome:
         """Evaluate one structure, custom, build or http requirement; a code requirement
         is not evaluated (`awaiting_reviewer`): the LLM code reviewer checks it.
 

@@ -10,6 +10,11 @@ from pathlib import Path
 
 from pydantic import ValidationError
 
+from hw_checker.checks.deterministic.environment import (
+    build_failed,
+    prepare_failed,
+    run_failed,
+)
 from hw_checker.checks.deterministic.findings import deterministic_finding
 from hw_checker.checks.deterministic.messages import (
     BUILD_FAILED,
@@ -23,6 +28,7 @@ from hw_checker.domain import (
     ExecutionResult,
     FailureKind,
     Finding,
+    NotEvaluatedOutcome,
     NotEvaluatedReason,
     StepStatus,
 )
@@ -62,17 +68,19 @@ class StartupCrash:
     source_line: int | None
 
 
-def evaluate_build(check_input: CheckInput) -> tuple[Finding, ...] | NotEvaluatedReason:
+def evaluate_build(
+    check_input: CheckInput,
+) -> tuple[Finding, ...] | NotEvaluatedReason | NotEvaluatedOutcome:
     """Return a finding when the project does not build, or builds but crashes on startup.
 
     A failure that is not a student issue (environment, timeout, no project) is not
-    evaluated rather than reported.
+    evaluated rather than reported, with a detail of the step that failed.
     """
     execution = check_input.execution
     if execution is None:
         return NotEvaluatedReason.NO_EXECUTION
     if execution.prepare_status is StepStatus.FAILED:
-        return NotEvaluatedReason.ENVIRONMENT_ISSUE
+        return prepare_failed(execution)
     if execution.build_status is StepStatus.FAILED:
         return _build_failure(check_input, execution)
     if execution.run_status is StepStatus.FAILED:
@@ -82,10 +90,10 @@ def evaluate_build(check_input: CheckInput) -> tuple[Finding, ...] | NotEvaluate
 
 def _build_failure(
     check_input: CheckInput, execution: ExecutionResult
-) -> tuple[Finding, ...] | NotEvaluatedReason:
+) -> tuple[Finding, ...] | NotEvaluatedOutcome:
     kind = execution.failure_kind
     if kind is None or not kind.is_student_issue:
-        return NotEvaluatedReason.ENVIRONMENT_ISSUE
+        return build_failed(execution)
     error = first_compiler_error(execution.logs_excerpt)
     if error is None:
         message = BUILD_FAILED_NO_DETAIL.render()
@@ -98,13 +106,13 @@ def _build_failure(
 
 def _run_failure(
     check_input: CheckInput, execution: ExecutionResult
-) -> tuple[Finding, ...] | NotEvaluatedReason:
+) -> tuple[Finding, ...] | NotEvaluatedOutcome:
     kind = execution.failure_kind
     if kind is FailureKind.DB_UNREACHABLE:
         return ()  # the app started; reaching the database is not what `build` checks
     if kind is not FailureKind.STARTUP_FAILED or execution.has_unresolved_paths:
         # A crash with a hard-coded path we could not adapt may be our environment's fault.
-        return NotEvaluatedReason.ENVIRONMENT_ISSUE
+        return run_failed(execution)
     crash = first_startup_crash(execution.logs_excerpt)
     if crash is None:
         message = STARTUP_CRASHED_NO_DETAIL.render()

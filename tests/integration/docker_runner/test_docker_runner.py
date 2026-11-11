@@ -412,6 +412,7 @@ def test_a_path_built_at_run_time_is_flagged_and_gives_no_findings(
     assert [(entry.requirement_id, entry.reason) for entry in checked.not_evaluated] == [
         ("hw01-r1", NotEvaluatedReason.ENVIRONMENT_ISSUE)
     ]
+    assert checked.not_evaluated[0].detail.endswith("(it is built at run time)")
     assert_nothing_left(engine)
 
 
