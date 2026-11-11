@@ -11,7 +11,7 @@ from hw_checker.adapters.docker_runner.discovery import EXCLUDED_DIRS
 
 SOURCE_DIR = "src"
 OUTPUT_DIR = "out"
-PROJECT_DIR = "project"
+REPO_DIR = "repo"
 DIRECTORY_MODE = 0o755
 FILE_MODE = 0o644
 
@@ -80,25 +80,27 @@ def build_work_archive(
     )
 
 
-def build_project_archive(
-    project_dir: Path,
+def build_repo_archive(
+    working_copy: Path,
     uid: int,
     gid: int,
     max_total_bytes: int | None = None,
     max_file_bytes: int | None = None,
     overrides: Mapping[str, bytes] | None = None,
 ) -> WorkArchive:
-    """Tar the Web project's folder under `project/`, owned by `uid:gid`, for the app to write.
+    """Tar the whole working copy under `repo/`, owned by `uid:gid`, for the app to write.
 
-    The same rules as `build_work_archive`: `bin/`, `obj/` and `.git/` are left out, unsafe
-    paths are skipped and listed, the size limits apply, and `overrides` (keyed relative to
-    `project_dir`) replaces file contents in the archive only.
+    Every project's folder keeps its place, so a path from the Web project's folder into a
+    sibling project (`../Repository/users.txt`) resolves as on the student's machine. The
+    same rules as `build_work_archive`: `bin/`, `obj/` and `.git/` are left out, unsafe paths
+    are skipped and listed, the size limits apply, and `overrides` (keyed relative to
+    `working_copy`) replaces file contents in the archive only.
 
     Raises:
         ArchiveTooLargeError: a file, or all files together, exceed the given limits.
     """
     return _tree_archive(
-        project_dir, PROJECT_DIR, (), uid, gid, max_total_bytes, max_file_bytes, overrides or {}
+        working_copy, REPO_DIR, (), uid, gid, max_total_bytes, max_file_bytes, overrides or {}
     )
 
 

@@ -20,6 +20,8 @@ from hw_checker.domain import ExecutionRequest, HttpMethod, HttpProbe, ProbeCapt
 FIXTURES = Path(__file__).parents[2] / "fixtures"
 FIXTURE = FIXTURES / "sample_webapi"
 ABSOLUTE_PATH_FIXTURE = FIXTURES / "sample_webapi_absolute_path"
+LAYERED_FIXTURE = FIXTURES / "sample_webapi_layered"
+"""A Web project and a Repository class library that holds the data file."""
 USER_SIGNIN_FIXTURE = FIXTURES / "sample_webapi_user_signin"
 TWO_CONTROLLERS_FIXTURE = FIXTURES / "sample_webapi_two_controllers"
 NO_ID_FIXTURE = FIXTURES / "sample_webapi_no_id"

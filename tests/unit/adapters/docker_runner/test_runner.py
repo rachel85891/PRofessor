@@ -1,6 +1,7 @@
 import io
 import json
 import logging
+import posixpath
 import tarfile
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -164,7 +165,7 @@ def test_container_settings(repo: Path, tmp_path: Path) -> None:
         Mount(project, "/data", read_only=False),
     )
     assert project != work and project in engine.removed
-    assert app.working_dir == "/data/project"
+    assert app.working_dir == "/data/repo"
     assert restore.working_dir == build.working_dir == "/work"
     assert app.read_only_root and app.tmpfs == {"/tmp": "size=64m"}
     assert app.command == ("dotnet", "/work/out/Shop.Api.dll")
@@ -186,7 +187,9 @@ def test_container_settings(repo: Path, tmp_path: Path) -> None:
         assert spec.labels["hw-checker-test.repo"] == "dana__api"
 
 
-def test_project_copy_holds_only_the_web_project_folder(tmp_path: Path) -> None:
+def test_writable_copy_holds_the_whole_repo_and_the_app_starts_in_its_web_folder(
+    tmp_path: Path,
+) -> None:
     repo = tmp_path / "repo"
     (repo / "WebApi" / "WebApi" / "Data").mkdir(parents=True)
     (repo / "WebApi" / "WebApi.slnx").write_text("<Solution />", encoding="utf-8")
@@ -208,15 +211,20 @@ def test_project_copy_holds_only_the_web_project_folder(tmp_path: Path) -> None:
 
     assert result.failure_kind is None
     assert copied["/data"] == {
-        "project",
-        "project/WebApi.csproj",
-        "project/users.txt",
-        "project/Data",
-        "project/Data/seed.txt",
+        "repo",
+        "repo/WebApi",
+        "repo/WebApi/WebApi.slnx",
+        "repo/WebApi/WebApi",
+        "repo/WebApi/WebApi/WebApi.csproj",
+        "repo/WebApi/WebApi/users.txt",
+        "repo/WebApi/WebApi/Data",
+        "repo/WebApi/WebApi/Data/seed.txt",
     }
     assert "src/WebApi/WebApi.slnx" in copied["/work"]
     (build,) = engine.specs("build")
     assert build.command[2] == "/work/src/WebApi/WebApi/WebApi.csproj"
+    (app,) = engine.specs("app")
+    assert app.working_dir == "/data/repo/WebApi/WebApi"
 
 
 def test_absolute_path_is_rewritten_in_the_copied_code_only(tmp_path: Path) -> None:
@@ -246,7 +254,7 @@ def test_absolute_path_is_rewritten_in_the_copied_code_only(tmp_path: Path) -> N
 
     expected = b'class Store { const string P = @"Data/users.txt"; }'
     assert contents["/work"]["src/Api/Store.cs"] == expected
-    assert contents["/data"]["project/Store.cs"] == expected
+    assert contents["/data"]["repo/Api/Store.cs"] == expected
     assert store.read_bytes() == before
     (rewrite,) = result.path_rewrites
     assert (rewrite.file_path, rewrite.line, rewrite.rewritten) == (
@@ -256,6 +264,44 @@ def test_absolute_path_is_rewritten_in_the_copied_code_only(tmp_path: Path) -> N
     )
     prepare_log = (tmp_path / "logs" / "prepare.log").read_text(encoding="utf-8")
     assert "rewritten to 'Data/users.txt'" in prepare_log
+
+
+def test_absolute_path_to_a_sibling_project_points_at_its_file_in_the_writable_copy(
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "repo"
+    (repo / "Api").mkdir(parents=True)
+    (repo / "Repository").mkdir()
+    (repo / "Api" / "Api.csproj").write_text(WEB_PROJECT, encoding="utf-8")
+    (repo / "Repository" / "Repository.csproj").write_text("<Project />", encoding="utf-8")
+    (repo / "Repository" / "users.txt").write_bytes(b"1\n")
+    (repo / "Repository" / "Store.cs").write_bytes(
+        b'class Store { const string P = @"D:\\Shop\\Repository\\users.txt"; }'
+    )
+    contents: dict[str, dict[str, bytes]] = {}
+    engine = FakeEngine()
+    original = engine.put_archive
+
+    def record(container: str, path: str, data: bytes) -> None:
+        with tarfile.open(fileobj=io.BytesIO(data)) as archive:
+            contents[path] = {
+                member.name: archive.extractfile(member).read()  # type: ignore[union-attr]
+                for member in archive.getmembers()
+                if member.isfile()
+            }
+        original(container, path, data)
+
+    engine.put_archive = record  # type: ignore[method-assign]
+
+    result = runner(engine).execute(request(repo, tmp_path))
+
+    (rewrite,) = result.path_rewrites
+    assert rewrite.rewritten == "../Repository/users.txt"
+    (app,) = engine.specs("app")
+    read = posixpath.normpath(posixpath.join(app.working_dir or "", rewrite.rewritten))
+    assert read == "/data/repo/Repository/users.txt"
+    assert contents["/data"]["repo/Repository/users.txt"] == b"1\n"
+    assert contents["/data"]["repo/Repository/Store.cs"].endswith(b'@"../Repository/users.txt"; }')
 
 
 def test_route_table_is_recorded_on_the_result_and_in_the_prepare_log(

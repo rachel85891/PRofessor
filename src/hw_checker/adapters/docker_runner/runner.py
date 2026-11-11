@@ -3,9 +3,10 @@
 Student code never runs on the host, never has network access during build or run, and
 everything created for a repo is removed in `finally`.
 
-The app runs like `dotnet run` on the student's machine: its working directory is a
-writable copy of the Web project's folder (with its data files), on a per-repo volume of its
-own, while the source and the published output stay read-only.
+The app runs like `dotnet run` on the student's machine: its working directory is the Web
+project's folder in a writable copy of the whole repo, on a per-repo volume of its own, so
+every project's data files keep their places (`../Repository/users.txt` resolves). The
+source and the published output stay read-only.
 """
 
 import dataclasses
@@ -19,9 +20,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from hw_checker.adapters.docker_runner.archive import (
-    PROJECT_DIR,
+    REPO_DIR,
     ArchiveTooLargeError,
-    build_project_archive,
+    build_repo_archive,
     build_work_archive,
     directory_archive,
 )
@@ -90,8 +91,8 @@ WORK_MOUNT = "/work"
 CACHE_MOUNT = "/nuget"
 OUTPUT_DIR = "/work/out"
 DATA_MOUNT = "/data"
-APP_WORKING_DIR = f"{DATA_MOUNT}/{PROJECT_DIR}"
-"""The app's working directory: the writable copy of the Web project's folder."""
+DATA_REPO_DIR = f"{DATA_MOUNT}/{REPO_DIR}"
+"""The writable copy of the whole repo; the app's working directory is its Web folder."""
 DOTNET_ENVIRONMENT = {
     "NUGET_PACKAGES": f"{CACHE_MOUNT}/packages",
     "DOTNET_CLI_TELEMETRY_OPTOUT": "1",
@@ -337,22 +338,12 @@ class _Execution:
     def _prepare_build_run(self, discovery: WebProject, plan: PathPlan) -> ExecutionResult:
         limits = (self.config.max_archive_bytes, self.config.max_file_bytes)
         uid, gid = self.config.app_uid, self.config.app_gid
-        prefix = f"{discovery.folder}/" if discovery.folder else ""
-        project_overrides = {
-            path.removeprefix(prefix): data
-            for path, data in plan.overrides.items()
-            if path.startswith(prefix)
-        }
         try:
             archive = build_work_archive(
                 self.request.working_copy, uid, gid, *limits, overrides=plan.overrides
             )
-            project_archive = build_project_archive(
-                self.request.working_copy / discovery.folder,
-                uid,
-                gid,
-                *limits,
-                overrides=project_overrides,
+            data_archive = build_repo_archive(
+                self.request.working_copy, uid, gid, *limits, overrides=plan.overrides
             )
         except ArchiveTooLargeError as error:
             return self._prepare_failed(f"not run, flagged for review: {error}")
@@ -362,10 +353,10 @@ class _Execution:
             )
         self._preflight()
         work_volume = self._name("work")
-        project_volume = self._name("project")
+        data_volume = self._name("data")
         try:
             self._create_volume(work_volume, "work", WORK_MOUNT, archive.data)
-            self._create_volume(project_volume, "project", DATA_MOUNT, project_archive.data)
+            self._create_volume(data_volume, "data", DATA_MOUNT, data_archive.data)
         except EngineError as error:
             return self._prepare_failed(f"cannot copy the code into Docker: {error}", engine=True)
         self._write_log(
@@ -420,7 +411,7 @@ class _Execution:
         )
         if (kind := classify(build.outcome)) is not None:
             return self._build_failed(kind, build.log)
-        return self._run_and_probe(work_volume, project_volume, discovery.assembly_name)
+        return self._run_and_probe(work_volume, data_volume, discovery)
 
     def _preflight(self) -> None:
         try:
@@ -462,7 +453,7 @@ class _Execution:
         self._remove_container(helper)
 
     def _run_and_probe(
-        self, work_volume: str, project_volume: str, assembly_name: str
+        self, work_volume: str, data_volume: str, discovery: WebProject
     ) -> ExecutionResult:
         network = self._name("net")
         app_name = self._name("app")
@@ -472,7 +463,7 @@ class _Execution:
             self.engine.create_network(network, self._labels("network"), internal=True)
             self.networks.append(network)
             app = self._create(
-                self._app_spec(app_name, network, work_volume, project_volume, assembly_name)
+                self._app_spec(app_name, network, work_volume, data_volume, discovery)
             )
             sidecar = self._create(self._probe_spec(network))
             self.engine.start(sidecar)
@@ -690,7 +681,7 @@ class _Execution:
         )
 
     def _app_spec(
-        self, name: str, network: str, work_volume: str, project_volume: str, assembly_name: str
+        self, name: str, network: str, work_volume: str, data_volume: str, discovery: WebProject
     ) -> ContainerSpec:
         limits = self.config.run_limits
         environment = {
@@ -701,7 +692,7 @@ class _Execution:
         return ContainerSpec(
             name=name,
             image=self._images().runtime,
-            command=("dotnet", f"{OUTPUT_DIR}/{assembly_name}.dll"),
+            command=("dotnet", f"{OUTPUT_DIR}/{discovery.assembly_name}.dll"),
             labels=self._labels("app"),
             user=self.config.user,
             memory_mb=limits.memory_mb,
@@ -709,15 +700,15 @@ class _Execution:
             pids=limits.pids,
             mounts=(
                 Mount(work_volume, WORK_MOUNT, read_only=True),
-                # The only writable place: the project copy, discarded in cleanup.
-                Mount(project_volume, DATA_MOUNT, read_only=False),
+                # The only writable place: the repo's copy, discarded in cleanup.
+                Mount(data_volume, DATA_MOUNT, read_only=False),
             ),
             network=network,
             network_aliases=(APP_ALIAS,),
             environment=environment,
             read_only_root=True,
             tmpfs=TMPFS,
-            working_dir=APP_WORKING_DIR,
+            working_dir=app_working_dir(discovery.folder),
         )
 
     def _probe_spec(self, network: str) -> ContainerSpec:
@@ -832,6 +823,11 @@ class _Execution:
             remove(name)
         except EngineError as error:
             logger.warning("Cleanup could not remove %s %s: %s", kind, name, error)
+
+
+def app_working_dir(web_folder: str) -> str:
+    """The app's working directory: the Web project's folder in the repo's writable copy."""
+    return f"{DATA_REPO_DIR}/{web_folder}" if web_folder else DATA_REPO_DIR
 
 
 def _describe_paths(rewrites: tuple[PathRewrite, ...]) -> str:

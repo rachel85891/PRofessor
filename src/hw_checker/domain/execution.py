@@ -274,6 +274,10 @@ class PathFixKind(StrEnum):
     """A hard-coded absolute host path (`C:\\...`, `\\\\server\\...`)."""
     CASE = "case"
     """A relative path whose letter case differs from the real file (Windows ignores case)."""
+    SEPARATOR = "separator"
+    """A relative path written with `\\`, a folder separator on Windows but not on Linux."""
+    RELATIVE = "relative"
+    """A relative path that leads out of the repo, or to a folder that is not in it."""
 
 
 class PathNotRewrittenReason(StrEnum):
@@ -298,7 +302,8 @@ class PathRewrite(DomainModel):
     kind: PathFixKind
     original: str = Field(min_length=1, max_length=MAX_PATH_TEXT_CHARS)
     rewritten: str | None = Field(default=None, max_length=MAX_PATH_TEXT_CHARS)
-    """The project-relative path used instead, or None when the path was not rewritten."""
+    """The path used instead, relative to the Web project's folder (the app's working
+    directory), or None when the path was not rewritten."""
     not_rewritten_reason: PathNotRewrittenReason | None = None
 
     @model_validator(mode="after")

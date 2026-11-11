@@ -261,3 +261,103 @@ def test_bin_obj_and_non_utf8_files_are_not_scanned(tmp_path: Path) -> None:
     write(repo, "Legacy.cs", b'var p = @"C:\\x\\\xe9.txt";')
 
     assert plan_path_fixes(repo, "").rewrites == ()
+
+
+# ---------------------------------------------------------------- layered repos (stage 22)
+
+
+def layered(tmp_path: Path, source: str) -> Path:
+    """A Web project `Api` and a sibling class library `Repository` holding the data file."""
+    repo = tmp_path / "repo"
+    write(repo, "Api/Api.csproj", "<Project />")
+    write(repo, "Repository/Repository.csproj", "<Project />")
+    write(repo, "Repository/Users.txt", "")
+    write(repo, "Repository/UserRepository.cs", source)
+    return repo
+
+
+def test_absolute_path_to_a_file_in_a_sibling_project_is_rewritten(tmp_path: Path) -> None:
+    repo = layered(tmp_path, r'var p = @"D:\Work\Shop\Repository\users.txt";')
+
+    plan = plan_path_fixes(repo, "Api")
+
+    (rewrite,) = plan.rewrites
+    assert (rewrite.kind, rewrite.rewritten) == (PathFixKind.ABSOLUTE, "../Repository/Users.txt")
+    assert plan.overrides == {
+        "Repository/UserRepository.cs": b'var p = @"../Repository/Users.txt";'
+    }
+
+
+def test_the_longest_matching_tail_picks_the_project_ignoring_case(tmp_path: Path) -> None:
+    repo = layered(tmp_path, r'var p = @"D:\Work\Shop\REPOSITORY\users.TXT";')
+    write(repo, "Api/Users.txt", "")
+
+    plan = plan_path_fixes(repo, "Api")
+
+    assert [r.rewritten for r in plan.rewrites] == ["../Repository/Users.txt"]
+
+
+def test_a_file_name_found_in_two_projects_is_not_guessed(tmp_path: Path) -> None:
+    repo = layered(tmp_path, r'var p = @"D:\Work\users.txt";')
+    write(repo, "Api/Users.txt", "")
+
+    plan = plan_path_fixes(repo, "Api")
+
+    (rewrite,) = plan.rewrites
+    assert rewrite.not_rewritten_reason is PathNotRewrittenReason.SEVERAL_MATCHES
+    assert plan.overrides == {}
+
+
+def test_absolute_folder_path_is_rewritten_to_the_repo_folder(tmp_path: Path) -> None:
+    repo = layered(tmp_path, r'var dir = @"D:\Work\Shop\Repository";')
+
+    plan = plan_path_fixes(repo, "Api")
+
+    assert [r.rewritten for r in plan.rewrites] == ["../Repository"]
+
+
+@pytest.mark.parametrize(
+    ("literal", "kind"),
+    [
+        (r'"..\\Repository\\Users.txt"', PathFixKind.SEPARATOR),
+        (r'@"..\Repository\Users.txt"', PathFixKind.SEPARATOR),
+        (r'"../repository/users.txt"', PathFixKind.CASE),
+        (r'@"..\repository\users.txt"', PathFixKind.CASE),
+    ],
+)
+def test_relative_path_from_the_web_project_into_a_sibling_is_rewritten(
+    tmp_path: Path, literal: str, kind: PathFixKind
+) -> None:
+    repo = layered(tmp_path, f"var p = {literal};")
+
+    plan = plan_path_fixes(repo, "Api")
+
+    (rewrite,) = plan.rewrites
+    assert (rewrite.kind, rewrite.rewritten) == (kind, "../Repository/Users.txt")
+    assert plan.overrides["Repository/UserRepository.cs"].endswith(b'"../Repository/Users.txt";')
+
+
+def test_relative_path_that_works_on_linux_is_left_alone(tmp_path: Path) -> None:
+    repo = layered(tmp_path, 'var p = "../Repository/Users.txt"; var q = "../Repository/new.txt";')
+
+    assert plan_path_fixes(repo, "Api").rewrites == ()
+
+
+def test_relative_backslash_path_to_a_file_the_app_creates_gets_forward_slashes(
+    tmp_path: Path,
+) -> None:
+    repo = layered(tmp_path, r'var p = @"..\Repository\orders.txt";')
+
+    plan = plan_path_fixes(repo, "Api")
+
+    (rewrite,) = plan.rewrites
+    assert (rewrite.kind, rewrite.rewritten) == (PathFixKind.SEPARATOR, "../Repository/orders.txt")
+
+
+def test_relative_path_out_of_the_repo_is_read_by_its_tail(tmp_path: Path) -> None:
+    repo = layered(tmp_path, r'var p = @"..\..\Shop\Repository\users.txt";')
+
+    plan = plan_path_fixes(repo, "Api")
+
+    (rewrite,) = plan.rewrites
+    assert (rewrite.kind, rewrite.rewritten) == (PathFixKind.RELATIVE, "../Repository/Users.txt")

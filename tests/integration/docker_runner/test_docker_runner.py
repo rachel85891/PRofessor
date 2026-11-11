@@ -40,6 +40,7 @@ from tests.integration.docker_runner.conftest import (
     CUSTOM_MODEL_FIXTURE,
     CUSTOM_MODEL_PROBES,
     ITEMS_PROBES,
+    LAYERED_FIXTURE,
     LOGIN_VARIANT_FIXTURES,
     NO_ID_FIXTURE,
     NO_ID_PROBES,
@@ -249,6 +250,64 @@ def test_absolute_path_with_a_matching_file_is_rewritten_and_passes(
         ("GET", "/api/users/2", 200),
     ], result.logs_excerpt
     assert controller.read_bytes() == before
+    assert_nothing_left(engine)
+
+
+LAYERED_REPOSITORY = Path("Repository") / "UserRepository.cs"
+LAYERED_ABSOLUTE = r"C:\Users\Developer\source\repos\Layered\Repository\users.txt"
+LAYERED_RELATIVE = r"..\Repository\users.txt"
+
+
+def test_absolute_path_to_a_sibling_project_is_rewritten_and_read(
+    docker_runner: DockerCodeRunner,
+    engine: SdkDockerEngine,
+    sample_copy: SampleCopy,
+    tmp_path: Path,
+) -> None:
+    repo = sample_copy(source=LAYERED_FIXTURE)
+
+    result = docker_runner.execute(
+        make_request(repo, tmp_path / "logs", probes=ABSOLUTE_PATH_PROBES)
+    )
+
+    (rewrite,) = result.path_rewrites
+    assert (rewrite.kind, rewrite.original, rewrite.rewritten) == (
+        PathFixKind.ABSOLUTE,
+        LAYERED_ABSOLUTE,
+        "../Repository/users.txt",
+    )
+    assert statuses(result) == [
+        ("GET", "/api/users", 200),
+        ("POST", "/api/users", 201),
+        ("GET", "/api/users/2", 200),
+    ], describe(result)
+    assert "tester1" in result.probe_results[0].response_excerpt
+    assert_nothing_left(engine)
+
+
+def test_relative_backslash_path_into_a_sibling_project_works(
+    docker_runner: DockerCodeRunner,
+    engine: SdkDockerEngine,
+    sample_copy: SampleCopy,
+    tmp_path: Path,
+) -> None:
+    def relative(repo: Path) -> None:
+        replace_in(repo / LAYERED_REPOSITORY, f'@"{LAYERED_ABSOLUTE}"', f'@"{LAYERED_RELATIVE}"')
+
+    repo = sample_copy(source=LAYERED_FIXTURE, edit=relative)
+
+    result = docker_runner.execute(
+        make_request(repo, tmp_path / "logs", probes=ABSOLUTE_PATH_PROBES)
+    )
+
+    (rewrite,) = result.path_rewrites
+    assert (rewrite.kind, rewrite.original, rewrite.rewritten) == (
+        PathFixKind.SEPARATOR,
+        LAYERED_RELATIVE,
+        "../Repository/users.txt",
+    )
+    assert all_passed(result), describe(result)
+    assert result.windows_paths == ()
     assert_nothing_left(engine)
 
 
@@ -682,6 +741,6 @@ def test_run_container_is_isolated(
     assert InspectingEngine.network_attributes["Internal"] is True
     mounts = {(mount["Destination"], mount["RW"]) for mount in app["Mounts"]}
     assert mounts == {("/work", False), ("/data", True)}
-    assert app["Config"]["WorkingDir"] == "/data/project"
+    assert app["Config"]["WorkingDir"] == "/data/repo/WebApi/WebApi"
     assert all("docker.sock" not in str(mount.get("Source")) for mount in app["Mounts"])
     assert_nothing_left(engine)

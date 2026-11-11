@@ -8,7 +8,7 @@ import pytest
 
 from hw_checker.adapters.docker_runner.archive import (
     ArchiveTooLargeError,
-    build_project_archive,
+    build_repo_archive,
     build_work_archive,
 )
 
@@ -128,24 +128,24 @@ def test_excluded_folders_do_not_count_towards_the_size_limit(repo: Path) -> Non
     assert build_work_archive(repo, UID, GID, max_total_bytes=10_000, max_file_bytes=10_000)
 
 
-def test_project_archive_puts_the_folder_under_project(repo: Path) -> None:
+def test_repo_archive_puts_the_working_copy_under_repo(repo: Path) -> None:
     write(repo, "users.txt", '{"id":1}\n')
 
-    archive = build_project_archive(repo, UID, GID)
+    archive = build_repo_archive(repo, UID, GID)
 
     assert set(members(archive.data)) == {
-        "project",
-        "project/Api.csproj",
-        "project/users.txt",
-        "project/Controllers",
-        "project/Controllers/ProductsController.cs",
-        "project/Nested",
+        "repo",
+        "repo/Api.csproj",
+        "repo/users.txt",
+        "repo/Controllers",
+        "repo/Controllers/ProductsController.cs",
+        "repo/Nested",
     }
     assert all(m.uid == UID and m.gid == GID for m in members(archive.data).values())
 
 
-def test_project_archive_applies_the_size_limits(repo: Path) -> None:
+def test_repo_archive_applies_the_size_limits(repo: Path) -> None:
     write(repo, "big.txt", "x" * 2000)
 
     with pytest.raises(ArchiveTooLargeError, match=r"big\.txt"):
-        build_project_archive(repo, UID, GID, max_file_bytes=1000)
+        build_repo_archive(repo, UID, GID, max_file_bytes=1000)
