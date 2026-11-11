@@ -454,11 +454,33 @@ def test_a_role_without_its_own_timeout_waits_timeout_seconds(tmp_path: Path) ->
     assert _load(tmp_path, "").llm.role_timeouts == {}
 
 
-def test_the_repo_config_gives_the_fixer_a_longer_timeout(tmp_path: Path) -> None:
+def test_the_repo_config_gives_the_fixer_and_the_author_longer_timeouts(tmp_path: Path) -> None:
     llm = load_settings(config_path=DEFAULT_CONFIG_PATH, env_path=tmp_path / ".env").llm
 
-    assert llm.role_timeouts == {"fixer": 120}
+    assert llm.role_timeouts == {"fixer": 120, "author": 300}
     assert llm.role_timeout("judge") == llm.timeout_seconds == 60
+
+
+def test_the_repo_config_gives_only_the_author_larger_limits(tmp_path: Path) -> None:
+    llm = load_settings(config_path=DEFAULT_CONFIG_PATH, env_path=tmp_path / ".env").llm
+
+    assert (llm.role_prompt_limit("author"), llm.role_output_tokens("author")) == (150000, 16000)
+    for role in ("reviewer", "judge", "fixer", "writer"):
+        assert llm.role_prompt_limit(role) == llm.max_prompt_chars == 60000
+        assert llm.role_output_tokens(role) == llm.max_output_tokens == 4096
+
+
+@pytest.mark.parametrize(
+    "yaml_text",
+    [
+        "llm:\n  role_max_prompt_chars: {author: 0}\n",
+        "llm:\n  role_max_output_tokens: {grader: 10}\n",
+    ],
+    ids=["not-positive", "unknown-role"],
+)
+def test_a_bad_role_limit_is_rejected_at_startup(tmp_path: Path, yaml_text: str) -> None:
+    with pytest.raises(ConfigurationError, match=r"llm\.role_max_"):
+        _load(tmp_path, yaml_text)
 
 
 @pytest.mark.parametrize(

@@ -192,14 +192,25 @@ llm:
   timeout_seconds: 60
   # A role's own wait, instead of timeout_seconds. The fixer's plans took up to 28 s on the
   # pilot repos through Copilot (2026-11-04); 120 s leaves room for a larger repo.
+  # The author's draft (stage 16) is a long reply, so it has its own wait too.
   role_timeouts:
     fixer: 120
+    author: 300
   # Retries after a rate limit, a timeout or a server error, waiting retry_backoff_seconds
   # before the first and doubling each time. Other errors are never retried.
   max_retries: 2
   retry_backoff_seconds: 2
   # A longer prompt is refused before it is sent (about 15,000 tokens).
   max_prompt_chars: 60000
+  # A role's own prompt limit. The author sees the course's and every earlier assignment's
+  # files and the check catalog: about 64,000 characters for a first draft of hw04 and
+  # 77,000 for a revise with the previous draft (measured 2026-11-11, before the schema).
+  role_max_prompt_chars:
+    author: 150000
+  # A role's own reply limit, for openrouter only: the Copilot runtime has no setting for
+  # a reply's length, so on copilot it is not applied. A full draft is a long reply.
+  role_max_output_tokens:
+    author: 16000
   # Sending students' code to the LLM (the fixer) needs the lecturer's approval. Only the
   # developer sets this to true, once the lecturer has approved it.
   student_code_approved: false

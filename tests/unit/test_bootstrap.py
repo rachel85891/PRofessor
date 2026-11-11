@@ -13,6 +13,7 @@ from hw_checker.adapters.git_local import LocalGitClient
 from hw_checker.adapters.github_api import GitHubCodeHost
 from hw_checker.adapters.llm_copilot_sdk import CopilotSdkLLMClient
 from hw_checker.adapters.llm_openai_compatible import OpenAICompatibleLLMClient
+from hw_checker.cli import LlmCheckReply
 from hw_checker.config.errors import ConfigurationError
 from hw_checker.config.settings import (
     REPO_ROOT,
@@ -326,6 +327,25 @@ def test_the_copilot_provider_needs_no_api_key() -> None:
 
     with bootstrap.open_llm_client(settings) as client:
         assert isinstance(client, CopilotSdkLLMClient)
+
+
+def test_the_author_limit_reaches_the_clients_and_a_long_writer_prompt_is_refused() -> None:
+    llm = LlmSettings(
+        role_max_prompt_chars={"author": 150000}, role_max_output_tokens={"author": 16000}
+    )
+
+    openrouter = bootstrap.llm_config(llm)
+    copilot = bootstrap.copilot_config(llm)
+
+    assert openrouter.prompt_limit("author") == copilot.prompt_limit("author") == 150000
+    assert openrouter.prompt_limit("writer") == copilot.prompt_limit("writer") == 60000
+    assert (openrouter.output_tokens("author"), openrouter.output_tokens("writer")) == (
+        16000,
+        4096,
+    )
+    client = OpenAICompatibleLLMClient(openrouter, SecretStr("test-key"))
+    with pytest.raises(LLMError, match="60001 characters, more than the limit of 60000"):
+        client.complete("writer", "x" * 60001, LlmCheckReply)
 
 
 def test_copilot_config_maps_the_copilot_roles_and_the_shared_limits() -> None:

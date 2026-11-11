@@ -59,10 +59,22 @@ class LlmClientConfig:
     """Extra JSON fields for every request (OpenRouter's provider routing)."""
     role_timeouts: Mapping[str, float] = field(default_factory=dict)
     """A role's own longest wait for one reply, instead of `timeout_seconds`."""
+    role_max_prompt_chars: Mapping[str, int] = field(default_factory=dict)
+    """A role's own prompt limit, instead of `max_prompt_chars`."""
+    role_max_output_tokens: Mapping[str, int] = field(default_factory=dict)
+    """A role's own reply limit, instead of `max_output_tokens`."""
 
     def timeout(self, role: str) -> float:
         """The longest wait for one reply of `role`."""
         return self.role_timeouts.get(role, self.timeout_seconds)
+
+    def prompt_limit(self, role: str) -> int:
+        """The longest prompt of `role`, in characters."""
+        return self.role_max_prompt_chars.get(role, self.max_prompt_chars)
+
+    def output_tokens(self, role: str) -> int:
+        """The most tokens one reply of `role` may have."""
+        return self.role_max_output_tokens.get(role, self.max_output_tokens)
 
 
 @dataclass(frozen=True)
@@ -105,7 +117,7 @@ class OpenAICompatibleLLMClient:
                 openai_api_base=config.base_url,
                 openai_api_key=api_key,
                 temperature=config.temperature,
-                max_tokens=config.max_output_tokens,
+                max_tokens=config.output_tokens(role),
                 request_timeout=config.timeout(role),
                 max_retries=0,  # retried here, so only the right errors are
                 extra_body=dict(config.extra_body) or None,
@@ -136,10 +148,11 @@ class OpenAICompatibleLLMClient:
         model = self._config.models.get(role)
         if model is None:
             raise LLMError(f"No model is configured for the LLM role '{role}'.")
-        if len(prompt) > self._config.max_prompt_chars:
+        limit = self._config.prompt_limit(role)
+        if len(prompt) > limit:
             raise LLMError(
                 f"The prompt for {role} has {len(prompt)} characters, more than the limit of "
-                f"{self._config.max_prompt_chars}; it was not sent."
+                f"{limit}; it was not sent."
             )
         started = self._clock()
         attempts = 0

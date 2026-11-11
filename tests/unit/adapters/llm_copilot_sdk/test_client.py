@@ -61,6 +61,7 @@ def make() -> Iterator[MakeClient]:
         start_timeout_seconds: float = 5,
         max_retries: int = 2,
         role_timeouts: dict[str, float] | None = None,
+        role_max_prompt_chars: dict[str, int] | None = None,
         **copilot_options: Any,
     ) -> Harness:
         copilot = FakeCopilot(steps=list(steps) or [PONG], **copilot_options)
@@ -72,6 +73,7 @@ def make() -> Iterator[MakeClient]:
             retry_backoff_seconds=1,
             max_prompt_chars=1000,
             role_timeouts=role_timeouts or {},
+            role_max_prompt_chars=role_max_prompt_chars or {},
         )
         sleeps: list[float] = []
         client = CopilotSdkLLMClient(
@@ -210,6 +212,14 @@ def test_a_prompt_that_is_too_long_is_refused_before_sending(make: MakeClient) -
         harness.client.complete("reviewer", "x" * 1001, Pong)
 
     assert harness.copilot.runtimes == []
+
+
+def test_a_role_has_its_own_prompt_limit_and_the_others_keep_theirs(make: MakeClient) -> None:
+    harness = make(role_max_prompt_chars={"judge": 2000})
+
+    assert harness.client.complete("judge", "x" * 2000, Pong) == Pong(answer="pong")
+    with pytest.raises(LLMError, match="1001 characters, more than the limit of 1000"):
+        harness.client.complete("reviewer", "x" * 1001, Pong)
 
 
 def test_an_unreadable_reply_is_retried_once_with_the_problems_as_feedback(

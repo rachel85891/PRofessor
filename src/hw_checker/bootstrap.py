@@ -573,6 +573,12 @@ def llm_config(llm: LlmSettings) -> LlmClientConfig:
         max_prompt_chars=llm.max_prompt_chars,
         extra_body=llm.extra_body,
         role_timeouts={str(role): seconds for role, seconds in llm.role_timeouts.items()},
+        role_max_prompt_chars={
+            str(role): chars for role, chars in llm.role_max_prompt_chars.items()
+        },
+        role_max_output_tokens={
+            str(role): tokens for role, tokens in llm.role_max_output_tokens.items()
+        },
     )
 
 
@@ -586,6 +592,9 @@ def copilot_config(llm: LlmSettings) -> CopilotClientConfig:
         retry_backoff_seconds=llm.retry_backoff_seconds,
         max_prompt_chars=llm.max_prompt_chars,
         role_timeouts={str(role): seconds for role, seconds in llm.role_timeouts.items()},
+        role_max_prompt_chars={
+            str(role): chars for role, chars in llm.role_max_prompt_chars.items()
+        },
     )
 
 

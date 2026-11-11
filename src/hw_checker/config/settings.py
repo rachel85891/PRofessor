@@ -260,6 +260,12 @@ class LlmSettings(BaseModel):
     """The longest wait for one reply, for a role without its own in `role_timeouts`."""
     role_timeouts: dict[LlmRole, Annotated[float, Field(gt=0)]] = {}
     """A role's own longest wait for one reply (the fixer's long plans, stage 14c)."""
+    role_max_prompt_chars: dict[LlmRole, Annotated[int, Field(ge=1)]] = {}
+    """A role's own prompt limit, instead of `max_prompt_chars` (the author's long input,
+    stage 16)."""
+    role_max_output_tokens: dict[LlmRole, Annotated[int, Field(ge=1)]] = {}
+    """A role's own reply limit, instead of `max_output_tokens` (OpenRouter only: the
+    Copilot runtime has no such setting)."""
     max_retries: int = Field(default=2, ge=0, le=10)
     """Retries after a rate limit, a timeout or a server error; never after other errors."""
     retry_backoff_seconds: float = Field(default=2, ge=0, le=60)
@@ -282,6 +288,14 @@ class LlmSettings(BaseModel):
     def role_timeout(self, role: LlmRole) -> float:
         """The longest wait for one reply of `role`."""
         return self.role_timeouts.get(role, self.timeout_seconds)
+
+    def role_prompt_limit(self, role: LlmRole) -> int:
+        """The longest prompt of `role`, in characters."""
+        return self.role_max_prompt_chars.get(role, self.max_prompt_chars)
+
+    def role_output_tokens(self, role: LlmRole) -> int:
+        """The most tokens one reply of `role` may have (OpenRouter only)."""
+        return self.role_max_output_tokens.get(role, self.max_output_tokens)
 
     def role_models(self) -> dict[LlmRole, str]:
         """The model of each role for the configured provider."""

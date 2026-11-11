@@ -80,6 +80,8 @@ def client(
     max_prompt_chars: int = 1000,
     temperature: float | None = 0,
     role_timeouts: dict[str, float] | None = None,
+    role_max_prompt_chars: dict[str, int] | None = None,
+    role_max_output_tokens: dict[str, int] | None = None,
 ) -> tuple[OpenAICompatibleLLMClient, list[float]]:
     sleeps: list[float] = []
     config = LlmClientConfig(
@@ -93,6 +95,8 @@ def client(
         max_prompt_chars=max_prompt_chars,
         extra_body={"provider": {"data_collection": "deny", "require_parameters": True}},
         role_timeouts=role_timeouts or {},
+        role_max_prompt_chars=role_max_prompt_chars or {},
+        role_max_output_tokens=role_max_output_tokens or {},
     )
     llm = OpenAICompatibleLLMClient(
         config,
@@ -327,6 +331,25 @@ def test_a_prompt_that_is_too_long_is_refused_before_sending() -> None:
     with pytest.raises(LLMError, match="more than the limit of 10; it was not sent"):
         llm.complete("reviewer", "x" * 11, Pong)
     assert transport.requests == []
+
+
+def test_a_role_has_its_own_prompt_and_reply_limits_and_the_others_keep_theirs() -> None:
+    transport = Transport(pong)
+    llm, _ = client(
+        transport,
+        max_prompt_chars=10,
+        role_max_prompt_chars={"judge": 20},
+        role_max_output_tokens={"judge": 999},
+    )
+
+    llm.complete("judge", "x" * 20, Pong)
+    with pytest.raises(LLMError, match="11 characters, more than the limit of 10"):
+        llm.complete("reviewer", "x" * 11, Pong)
+
+    [body] = transport.bodies()
+    assert body["max_completion_tokens"] == 999
+    llm.complete("reviewer", "x" * 10, Pong)
+    assert transport.bodies()[1]["max_completion_tokens"] == 256
 
 
 @pytest.mark.parametrize(
