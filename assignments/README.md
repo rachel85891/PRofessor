@@ -71,11 +71,32 @@ The author is offered every registered check with its params schema (a check add
 - **The drafted items**, each with its summary, origin and flags. The **inferred** ones come first: neither the task text nor the intake says them, so check them, or confirm them with the lecturer, before approving.
 - **The coverage**: each intake item and the drafted items that cover it.
 - **Problems**, all listed together: the file format, unknown checks or invalid params, `depends_on`, `applies_when` / `skip_when`, review-rule ids, `until`, `replaces`, and origins (a `task_text` quote must be in `task.md`).
-- **The dry run** on `reference/`: it is built and run, and every drafted requirement must pass (a `code` requirement is not run). Without a reference solution it says **"Skipped (no reference solution)"**.
+- **The dry run** on `reference/`: it is built and run, and every drafted requirement must pass (a `code` requirement, or one of an assignment that does not apply, is not run). It is:
+  - **passed** when every other requirement was evaluated there and passed;
+  - **failed** when one fails: the draft goes back to the author;
+  - **incomplete** when nothing failed but some requirement could not be evaluated there (for example, the reference does not build, so no `http` requirement runs). It is shown **at the top** of the report with each requirement and its reason: the draft is not verified on them. It is not the author's fault, so the draft still comes to you;
+  - **"Skipped (no reference solution)"** without a `reference/` folder.
 - **The preview** on the workspace clones (what the rounds left in `workspace/clones`), at each clone's current working copy: for each drafted requirement, how many repos fail, pass or could not be evaluated, never which. By default only the checks that read files run (`structure` and `custom`); `--with-execution` also builds and runs every clone, like a round with the fixer off. A requirement that fails at least `authoring.preview_flag_share` of the repos it evaluated is flagged; a flag never fails the draft.
 - **The review rules against the previous assignment**: new, replaced and ended.
 
-While it waits, the drafted files are in the assignment's folder with `status: draft`, so a round refuses the assignment. Approve writes exactly the validated draft: if you edit the files while it waits, approve refuses them and never overwrites them; say what to change with `revise --note` instead. If the draft still fails after the last attempt, the run ends with the report and nothing is written to the assignment's folder.
+While it waits, the drafted files are in the assignment's folder with `status: draft`, so a round refuses the assignment. If the draft still fails after the last attempt, the run ends with the report and nothing is written to the assignment's folder.
+
+### Editing the draft before approving
+
+You may edit the drafted files while they wait (change a word, a severity or a param) instead of another LLM round. On `approve`, when the files differ from the draft:
+
+- They are read back and validated again with no LLM, like a draft: the schemas and the catalog, the coverage, the dry run and the preview.
+- Every item you changed or added gets `origin: developer`; the others keep theirs. An item you add without `origin` and `status` gets them.
+- A new report is written, marked **"Edited by hand"** at the top with the items changed, and the run waits again: "Your edits were validated; review the report and approve again." Nothing is approved in that step.
+- If the edits have problems (for example an unknown check), the report lists them and the run keeps waiting: edit again, `revise --note`, or `stop`.
+- The basics (`id`, `order`, `title`, `taught_techniques`, `ends_when`) come from `intake.yaml`: change them there and draft again.
+- A second `approve` with no further edits writes the files, as you edited them, with `status: approved`. The approved files are written anew from the draft, so comments you added in them are not kept.
+
+`stop` removes only the files the draft wrote; files you edited are kept.
+
+### The author's limits
+
+The author's prompt is long: it holds the course's files, every earlier assignment's files and the check catalog (about 64,000 characters for a fourth assignment, more on a revise, which adds the previous draft). So the `author` role has its own limits in `config.yaml`: `llm.role_max_prompt_chars` (150,000 characters), `llm.role_max_output_tokens` (16,000 tokens) and `llm.role_timeouts` (300 s). The other roles keep `max_prompt_chars` and `max_output_tokens`. The Copilot runtime has no setting for a reply's length, so the token limit applies to `openrouter` only.
 
 ## The file
 
