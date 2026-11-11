@@ -452,3 +452,57 @@ def test_a_relative_path_whose_folder_exists_creates_nothing(tmp_path: Path) -> 
     plan = plan_path_fixes(repo, "Api")
 
     assert plan.rewrites == () and plan.created == ()
+
+
+# ---------------------------------------------------------------- windows_path forms (stage 22)
+
+
+@pytest.mark.parametrize(
+    ("literal", "rewritten"),
+    [
+        # A folder given to Path.Combine, with or without a trailing separator.
+        (r'@"..\Repository"', "../Repository"),
+        (r'"..\\Repository\\"', "../Repository/"),
+        (r'@"..\repository"', "../Repository"),
+        # A path appended to the working directory: the leading separator is kept, as `/`.
+        (r'"\\..\\Repository\\Users.txt"', "/../Repository/Users.txt"),
+        (r'@"\..\Repository\Users.txt"', "/../Repository/Users.txt"),
+    ],
+)
+def test_backslash_folders_and_appended_paths_into_a_sibling_are_rewritten(
+    tmp_path: Path, literal: str, rewritten: str
+) -> None:
+    repo = layered(tmp_path, f"var p = {literal};")
+
+    plan = plan_path_fixes(repo, "Api")
+
+    (rewrite,) = plan.rewrites
+    assert (rewrite.kind, rewrite.rewritten) == (PathFixKind.SEPARATOR, rewritten)
+    assert plan.overrides["Repository/UserRepository.cs"].endswith(f'"{rewritten}";'.encode())
+
+
+def test_an_appended_path_to_a_missing_data_file_creates_it(tmp_path: Path) -> None:
+    repo = layered(tmp_path, r'var p = Directory.GetCurrentDirectory() + "\\Data\\users.txt";')
+
+    plan = plan_path_fixes(repo, "Api")
+
+    (rewrite,) = plan.rewrites
+    assert (rewrite.rewritten, rewrite.created_path) == ("/Data/users.txt", "Api/Data/users.txt")
+
+
+@pytest.mark.parametrize(
+    "literal",
+    [
+        r'"\\d+"',  # a regex, not a path
+        r'"Hello\\World"',  # text with a backslash: no such folder
+        r'"\\\\server"',  # the start of a network path
+        r'@"..\Missing"',  # a folder that is not in the repo
+        r'"\\"',  # a lone separator: built at run time, see the stage report
+    ],
+)
+def test_backslash_text_that_leads_to_no_repo_folder_is_left_alone(
+    tmp_path: Path, literal: str
+) -> None:
+    repo = layered(tmp_path, f"var p = {literal};")
+
+    assert plan_path_fixes(repo, "Api").rewrites == ()

@@ -261,6 +261,45 @@ LAYERED_ABSOLUTE = r"C:\Users\Developer\source\repos\Layered\Repository\users.tx
 LAYERED_RELATIVE = r"..\Repository\users.txt"
 
 
+@pytest.mark.parametrize(
+    ("expression", "rewritten"),
+    [
+        (r'Path.Combine(@"..\Repository", "users.txt")', "../Repository"),
+        (
+            r'Directory.GetCurrentDirectory() + @"\..\Repository\users.txt"',
+            "/../Repository/users.txt",
+        ),
+    ],
+)
+def test_backslash_folder_and_appended_paths_into_a_sibling_project_work(
+    docker_runner: DockerCodeRunner,
+    engine: SdkDockerEngine,
+    sample_copy: SampleCopy,
+    tmp_path: Path,
+    expression: str,
+    rewritten: str,
+) -> None:
+    def combine(repo: Path) -> None:
+        replace_in(
+            repo / LAYERED_REPOSITORY,
+            f'private const string FilePath = @"{LAYERED_ABSOLUTE}";',
+            f"private static readonly string FilePath = {expression};",
+        )
+
+    repo = sample_copy(source=LAYERED_FIXTURE, edit=combine)
+
+    result = docker_runner.execute(
+        make_request(repo, tmp_path / "logs", probes=ABSOLUTE_PATH_PROBES)
+    )
+
+    assert [(r.kind, r.rewritten) for r in result.path_rewrites] == [
+        (PathFixKind.SEPARATOR, rewritten)
+    ]
+    assert all_passed(result), describe(result)
+    assert result.windows_paths == ()
+    assert_nothing_left(engine)
+
+
 def test_absolute_path_to_a_sibling_project_is_rewritten_and_read(
     docker_runner: DockerCodeRunner,
     engine: SdkDockerEngine,

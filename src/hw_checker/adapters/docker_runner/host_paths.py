@@ -8,7 +8,10 @@ Three kinds of path are handled, all only in the runner's temporary copy (design
 - a relative path whose letter case differs from the real file (`"users.txt"` for a committed
   `Users.txt`), or that is written with `\\` (`"..\\Repository\\users.txt"`): Windows ignores
   case and reads `\\` as a separator, and Linux does neither, so the literal is rewritten to
-  the real file's path with `/`, or flagged when two files differ only in case;
+  the real file's path with `/`, or flagged when two files differ only in case. The same
+  holds for a relative folder written with `\\` (`"..\\Repository"` given to
+  `Path.Combine`) and for a path that starts with `\\` (`cwd + "\\Data\\users.txt"`),
+  when they lead to the repo; their leading and trailing separators are kept, as `/`;
 - a path to a data file that is not in the repo (the student has it on their own machine
   only): an absolute path that matches nothing, or a relative one whose folder is missing too.
   It is rewritten to the place in the copy where its trailing part points (the Web project's
@@ -22,6 +25,7 @@ literal changes; the student's working copy is never written to. The C# source i
 text and scanned for string literals; nothing is compiled or executed.
 """
 
+import dataclasses
 import posixpath
 import re
 from dataclasses import dataclass, field
@@ -41,6 +45,8 @@ _UNC_PATH = re.compile(r"^\\\\[^\\/\s]+[\\/][^\\/\s]+(?P<rest>.*)$", re.DOTALL)
 _NAME = r"[^<>:\"|?*{}\\/\s][^<>:\"|?*{}\\/]*"
 _RELATIVE_FILE = re.compile(rf"^(?:\./)?(?:{_NAME}[\\/])*{_NAME}\.[A-Za-z0-9]{{1,8}}$")
 """A relative file path with an extension, like `users.txt` or `..\\Data\\users.txt`."""
+_RELATIVE_FOLDER = re.compile(rf"^(?:{_NAME}[\\/])*{_NAME}[\\/]?$")
+"""A relative folder path, like `..\\Repository` or `Data\\`; only read with a `\\`."""
 _FILE_NAME = re.compile(rf"^{_NAME}\.[A-Za-z0-9]{{1,8}}$")
 """One file name with an extension: what an empty file may be created as."""
 _SAFE_SEGMENT = re.compile(rf"^{_NAME}$")
@@ -175,6 +181,14 @@ class _Target:
 
     path: str
     created: bool = False
+    lead: str = ""
+    """`/` when the literal starts with a separator (it is appended to another path)."""
+    trail: str = ""
+    """`/` when the literal is a folder that ends with a separator."""
+
+    def literal(self, layout: RepoLayout) -> str:
+        """The literal's new text, from the Web project's folder."""
+        return f"{self.lead}{layout.from_web(self.path)}{self.trail}"
 
 
 def fix_source(
@@ -200,17 +214,17 @@ def fix_source(
                 if literal.has_holes
                 else _place_by_tail(_segments(value), layout)
             )
-        elif literal.has_holes or not _RELATIVE_FILE.match(value):
+        elif literal.has_holes:
             continue
         else:
-            detected = _relative(value, layout)
+            detected = _relative_literal(value, layout)
             if detected is None:
                 continue
             kind, outcome = detected
         found.append(_record(relative, literal, kind, outcome, layout))
         # The reasons are a StrEnum, so test for them, not for str.
         if not isinstance(outcome, PathNotRewrittenReason):
-            replacements.append((literal, layout.from_web(outcome.path)))
+            replacements.append((literal, outcome.literal(layout)))
     for literal, new_path in sorted(replacements, key=lambda item: -item[0].content_start):
         text = (
             text[: literal.content_start] + _escape(new_path, literal) + text[literal.content_end :]
@@ -218,18 +232,54 @@ def fix_source(
     return found, text
 
 
-def _relative(
-    value: str, layout: RepoLayout
-) -> tuple[PathFixKind, _Target | PathNotRewrittenReason] | None:
-    """What a relative path needs, or None when it works in the container as written."""
+Detected = tuple[PathFixKind, _Target | PathNotRewrittenReason]
+
+
+def _relative_literal(value: str, layout: RepoLayout) -> Detected | None:
+    """What a relative literal needs, or None when it is no path or works as written. A
+    leading `\\` (the literal is appended to another path) is kept as `/`."""
+    if value.startswith(WINDOWS_SEPARATOR * 2):
+        return None  # the start of a network path, not a relative one
+    lead = "/" if value.startswith(WINDOWS_SEPARATOR) else ""
+    body = value[len(lead) :]
+    if _RELATIVE_FILE.match(body):
+        detected = _relative(body, layout, separators=bool(lead))
+    elif WINDOWS_SEPARATOR in body and _RELATIVE_FOLDER.match(body):
+        detected = _relative_folder(body, layout)
+    else:
+        return None
+    if detected is None or not lead:
+        return detected
+    kind, target = detected
+    if isinstance(target, PathNotRewrittenReason):
+        return detected
+    return kind, dataclasses.replace(target, lead=lead)
+
+
+def _relative_folder(value: str, layout: RepoLayout) -> Detected | None:
+    """A folder written with `\\` that leads to a folder of the repo, rewritten with `/`;
+    None for any other (it is left as written)."""
     normalized = value.replace(WINDOWS_SEPARATOR, "/")
+    resolved = layout.resolve(normalized.rstrip("/"))
+    real = None if resolved is None else _real_folder(resolved, layout)
+    if real is None:
+        return None
+    trail = "/" if normalized.endswith("/") else ""
+    return PathFixKind.SEPARATOR, _Target(real, trail=trail)
+
+
+def _relative(value: str, layout: RepoLayout, separators: bool = False) -> Detected | None:
+    """What a relative path needs, or None when it works in the container as written.
+    `separators` says the literal needs `/` whatever `value` holds (it started with `\\`)."""
+    normalized = value.replace(WINDOWS_SEPARATOR, "/")
+    separators = separators or normalized != value
     resolved = layout.resolve(normalized)
     if resolved is None:
         # It leads out of the repo, to a file on the student's machine: read it like an
         # absolute path, by its trailing part.
         return PathFixKind.RELATIVE, _place_by_tail(_segments(value), layout)
     if resolved in layout.files:
-        return None if normalized == value else (PathFixKind.SEPARATOR, _Target(resolved))
+        return (PathFixKind.SEPARATOR, _Target(resolved)) if separators else None
     same_name = [path for path in layout.files if path.lower() == resolved.lower()]
     if len(same_name) == 1:
         return PathFixKind.CASE, _Target(same_name[0])
@@ -238,9 +288,9 @@ def _relative(
     folder, name = posixpath.split(resolved)
     real_folder = _real_folder(folder, layout)
     if real_folder is not None:
-        if normalized == value and real_folder == folder:
+        if not separators and real_folder == folder:
             return None  # the file may be created by the app, as on Windows
-        kind = PathFixKind.SEPARATOR if normalized != value else PathFixKind.CASE
+        kind = PathFixKind.SEPARATOR if separators else PathFixKind.CASE
         return kind, _Target(posixpath.join(real_folder, name))
     return PathFixKind.RELATIVE, _created(resolved, layout)
 
@@ -314,7 +364,7 @@ def _record(
         line=literal.line,
         kind=kind,
         original=literal.value,
-        rewritten=layout.from_web(outcome.path),
+        rewritten=outcome.literal(layout),
         created_path=outcome.path if outcome.created else None,
     )
 
