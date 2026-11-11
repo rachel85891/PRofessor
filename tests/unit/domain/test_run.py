@@ -219,6 +219,7 @@ def test_not_evaluated_reasons() -> None:
         "assignment_not_applicable",
         "assignment_condition_unknown",
         "awaiting_reviewer",
+        "evidence_unavailable",
     }
 
 
@@ -438,3 +439,36 @@ def test_a_repo_summary_lists_the_assignments_whose_condition_is_unknown() -> No
     assert [(u.repo_id, u.assignment_id, u.detail) for u in line.unknown_conditions] == [
         ("dana-api", "hw03", "why")
     ]
+
+
+def test_an_assignment_that_does_not_apply_is_not_counted_as_skipped_checks() -> None:
+    def entry(requirement_id: str, reason: NotEvaluatedReason) -> NotEvaluated:
+        return NotEvaluated(requirement_id=requirement_id, reason=reason)
+
+    repo_run = RepoRunResult(
+        repo_run_id="run-1/dana-api",
+        repo=builders.repo_target(),
+        status=RepoRunStatus.DONE,
+        assignment_results=(
+            AssignmentResult(
+                assignment_id="hw02",
+                not_evaluated=(entry("hw02-r1", NotEvaluatedReason.EVIDENCE_UNAVAILABLE),),
+            ),
+            AssignmentResult(
+                assignment_id="hw03",
+                not_evaluated=(
+                    entry("hw03-r1", NotEvaluatedReason.ASSIGNMENT_NOT_APPLICABLE),
+                    entry("hw03-r2", NotEvaluatedReason.ASSIGNMENT_NOT_APPLICABLE),
+                ),
+            ),
+            AssignmentResult(
+                assignment_id="hw04",
+                not_evaluated=(entry("hw04-r1", NotEvaluatedReason.ASSIGNMENT_CONDITION_UNKNOWN),),
+            ),
+        ),
+    )
+
+    line = RepoSummary.from_repo_run(repo_run)
+
+    assert line.not_evaluated == 1
+    assert [item.assignment_id for item in line.unknown_conditions] == ["hw04"]

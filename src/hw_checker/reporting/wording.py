@@ -30,6 +30,10 @@ NOT_EVALUATED_REASONS: dict[NotEvaluatedReason, str] = {
         "The request body did not fit the student's model, so the failure may not be the "
         "student's; check by hand."
     ),
+    NotEvaluatedReason.EVIDENCE_UNAVAILABLE: (
+        "The repo's projects or C# code could not be read, so this could not be checked; "
+        "look at the code by hand."
+    ),
     NotEvaluatedReason.DEPENDENCY_FAILED: (
         "The request needed a value (such as a new user's id) that an earlier request did "
         "not return, so it was not sent."

@@ -84,7 +84,9 @@ class HttpMethod(StrEnum):
 
 
 ParamScalar = bool | int | float | str
-ParamValue = ParamScalar | tuple[ParamScalar, ...]
+type ParamValue = ParamScalar | tuple[ParamValue, ...] | Mapping[str, ParamValue]
+"""A check parameter: a scalar, a list, or a mapping of named values (such as the layer
+roles of stage 21: `{api: {sdk: ..., name: ...}}`), nested to any depth."""
 
 SHA256_HEX_PATTERN = r"^[0-9a-f]{64}$"
 
@@ -92,16 +94,36 @@ SHA256_HEX_PATTERN = r"^[0-9a-f]{64}$"
 KINDS_WITH_CHECK = frozenset({RequirementKind.STRUCTURE, RequirementKind.CUSTOM})
 
 
+def _frozen(value: ParamValue) -> ParamValue:
+    if isinstance(value, Mapping):
+        return MappingProxyType({key: _frozen(item) for key, item in value.items()})
+    if isinstance(value, tuple):
+        return tuple(_frozen(item) for item in value)
+    return value
+
+
 def _freeze_params(value: Mapping[str, ParamValue]) -> Mapping[str, ParamValue]:
-    return MappingProxyType(dict(value))
+    return MappingProxyType({key: _frozen(item) for key, item in value.items()})
+
+
+def _thawed(value: ParamValue) -> object:
+    if isinstance(value, Mapping):
+        return {key: _thawed(item) for key, item in value.items()}
+    if isinstance(value, tuple):
+        return [_thawed(item) for item in value]
+    return value
+
+
+def _thaw_params(value: Mapping[str, ParamValue]) -> dict[str, object]:
+    return {key: _thawed(item) for key, item in value.items()}
 
 
 CheckParams = Annotated[
     Mapping[str, ParamValue],
     AfterValidator(_freeze_params),
-    PlainSerializer(dict, return_type=dict[str, ParamValue]),
+    PlainSerializer(_thaw_params, return_type=dict[str, object]),
 ]
-"""Named check parameters, stored as a read-only mapping."""
+"""Named check parameters, stored as a read-only mapping (nested mappings too)."""
 
 
 ProbePath = Annotated[str, StringConstraints(pattern=r"^/")]

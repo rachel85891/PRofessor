@@ -173,3 +173,44 @@ def test_without_a_git_client_tracked_files_are_not_read() -> None:
     DeterministicCheckService(checker).evaluate(ASSIGNMENT, REPO, EXECUTION)
 
     assert all(c.tracked is None for c in checker.checked)
+
+
+def test_a_registered_check_whose_dependency_failed_is_not_run() -> None:
+    def needing(base: Requirement, *depends_on: str) -> Requirement:
+        return base.model_copy(update={"depends_on": depends_on})
+
+    layers = requirement("hw02-layers", RequirementKind.STRUCTURE)
+    references = needing(requirement("hw02-references", RequirementKind.STRUCTURE), "hw02-layers")
+    deeper = needing(requirement("hw02-deeper", RequirementKind.CUSTOM), "hw02-references")
+    probe = needing(requirement("hw01-r3", RequirementKind.HTTP), "hw02-layers")
+    passing = requirement("hw02-passing", RequirementKind.STRUCTURE)
+    after_pass = needing(requirement("hw02-after-pass", RequirementKind.STRUCTURE), "hw02-passing")
+    assignment = Assignment(
+        id="hw01",
+        order=1,
+        title="Layers",
+        requirements=(layers, references, deeper, probe, passing, after_pass),
+    )
+    checker = FakeRequirementChecker({"hw02-layers": (finding("hw02-layers"),)})
+
+    result = DeterministicCheckService(checker).evaluate(assignment, REPO, EXECUTION)
+
+    assert [f.requirement_id for f in result.findings] == ["hw02-layers"]
+    assert result.not_evaluated == (
+        NotEvaluated(
+            requirement_id="hw02-references",
+            reason=NotEvaluatedReason.DEPENDENCY_FAILED,
+            detail="`hw02-layers`",
+        ),
+        NotEvaluated(
+            requirement_id="hw02-deeper",
+            reason=NotEvaluatedReason.DEPENDENCY_FAILED,
+            detail="`hw02-references`",
+        ),
+    )
+    assert [item.requirement.id for item in checker.checked] == [
+        "hw02-layers",
+        "hw01-r3",
+        "hw02-passing",
+        "hw02-after-pass",
+    ]

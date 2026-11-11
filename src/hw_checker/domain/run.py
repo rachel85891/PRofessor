@@ -54,7 +54,9 @@ class NotEvaluatedReason(StrEnum):
     BODY_MISMATCH = "body_mismatch"
     """A failing probe's body had fields that do not fit the student's model."""
     DEPENDENCY_FAILED = "dependency_failed"
-    """A probe needed a value an earlier probe failed to capture, so it was not sent."""
+    """A probe needed a value an earlier probe failed to capture, so it was not sent; or a
+    structure or custom requirement needs (`depends_on`, or a layer role it reads) one that
+    failed, so it was not run (the detail names it, when known)."""
     WINDOWS_PATH = "windows_path"
     """A request failed with a 5xx while the app could not open a path written with
     Windows folder separators, which likely works on Windows but not in the Linux
@@ -67,6 +69,9 @@ class NotEvaluatedReason(StrEnum):
     its requirements was checked; a reviewer decides which path the repo is on."""
     AWAITING_REVIEWER = "awaiting_reviewer"
     """A `code` requirement: the LLM code reviewer checks it, and it is not enabled yet."""
+    EVIDENCE_UNAVAILABLE = "evidence_unavailable"
+    """The repo's projects or C# code could not be read (the architecture evidence, or its
+    signal coverage, is unavailable), so a check that reads them could not decide."""
 
 
 CONDITION_REASONS = frozenset(
@@ -196,6 +201,8 @@ class RepoSummary(DomainModel):
     major: int = Field(default=0, ge=0)
     minor: int = Field(default=0, ge=0)
     not_evaluated: int = Field(default=0, ge=0)
+    """Requirements not checked, without those of an assignment that does not apply (or
+    whose condition is unknown)."""
     findings: tuple[FindingBrief, ...] = ()
     """Each finding (before judging), briefly, in the order the checks reported them."""
     errors: tuple[NonBlankStr, ...] = ()
@@ -210,7 +217,11 @@ class RepoSummary(DomainModel):
 
     @classmethod
     def from_repo_run(cls, repo_run: RepoRunResult, report_path: Path | None = None) -> Self:
-        """Count the repo's findings (before judging) by severity, and its skipped checks."""
+        """Count the repo's findings (before judging) by severity, and its skipped checks.
+
+        An assignment that does not apply to the repo, or whose condition is unknown, is
+        not counted as skipped checks: the repo report lists it under "Assignments", and an
+        unknown condition is in `unknown_conditions`."""
         findings = [
             finding for result in repo_run.assignment_results for finding in result.findings
         ]
@@ -220,7 +231,11 @@ class RepoSummary(DomainModel):
             critical=sum(finding.severity is Severity.CRITICAL for finding in findings),
             major=sum(finding.severity is Severity.MAJOR for finding in findings),
             minor=sum(finding.severity is Severity.MINOR for finding in findings),
-            not_evaluated=sum(len(result.not_evaluated) for result in repo_run.assignment_results),
+            not_evaluated=sum(
+                entry.reason not in CONDITION_REASONS
+                for result in repo_run.assignment_results
+                for entry in result.not_evaluated
+            ),
             findings=tuple(
                 FindingBrief(
                     requirement_id=finding.requirement_id,

@@ -1,10 +1,13 @@
 # Local architecture evidence
 
 `ArchitectureEvidenceReader.scan(root)` is a read-only, repository-local capability for
-collecting project inventory and a small set of C# syntax signals. It is not connected to
-the round graph, assignment selection, findings, severities, fixer, LLM or publishing.
-Call it with the root of one already-checked local repository; it does not fetch, build,
-execute, or transmit repository content.
+collecting project inventory and a small set of C# syntax signals. Since stage 20 the
+round's check service reads it once per assignment evaluation, through the port, when a
+selected requirement or condition uses a check that reads it (`CheckInput.architecture`):
+`di_started` and the layer and DI checks of stage 21. The evidence itself holds facts only;
+the checks decide findings from the assignment's data. Call it with the root of one
+already-checked local repository; it does not fetch, build, execute, or transmit
+repository content.
 
 The immutable `ArchitectureEvidence` result contains:
 
@@ -48,6 +51,27 @@ another. The second reads constructors and registrations:
   and `lifetime`. For `AddScoped<IX, X>()` and `AddScoped(typeof(IX), typeof(X))`,
   `subject` is the service type and `related_subject` the implementation type. Any other
   call shape (a factory lambda, an instance, a key, a method group) has no types.
+
+- a class or record (not a struct or interface) gives `type_declaration`: `subject` is its
+  name, `related_subjects` the names in its base list as written (without generic
+  constraints or a base call's arguments, so `record P(int X) : Shape(X), IShape` gives
+  `Shape` and `IShape`), and `keywords` its modifiers and `class` or `record`. A base list
+  that cannot be read gives no declaration and an `ambiguous_syntax` issue;
+- every constructor parameter gives `constructor_parameter` (`subject` = its type as
+  written, `related_subject` = the constructor's type), whatever its type; the
+  `constructor_interface_parameter` signals above are unchanged;
+- `new T(…)` and `new T { … }` give `object_creation` (`subject` = `T` as written, with its
+  namespace and generic arguments, `related_subject` = the innermost enclosing class,
+  record, struct or interface, or none in top-level statements). A target-typed `new()`,
+  an anonymous `new { … }` and an array `new T[…]` name no class and give none.
+
+Two limits are kept as they are:
+
+- an expression-bodied constructor (`public C(IX x) => _x = x;`) is not read: it gives no
+  `constructor_candidate` and no parameter signals;
+- a keyed registration with a key argument (`AddKeyedScoped<IX, X>("k")`, consumed with
+  `[FromKeyedServices("k")]`) gives a `registration_candidate` without types, so it
+  registers no service type for a check.
 
 This is a lexical scan, not a compiler, and that is a property of the reader, not a
 per-scan issue. It does not evaluate MSBuild, C# aliases, namespaces, overloads,

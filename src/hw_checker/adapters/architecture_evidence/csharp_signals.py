@@ -1,4 +1,5 @@
-"""Lexical C# signals for dependency injection: interfaces, constructors and registrations.
+"""Lexical C# signals for layers and dependency injection: interfaces, classes and their
+base lists, constructors and their parameters, object creations and registrations.
 
 Comments and strings are masked first. Interfaces are collected from every file before any
 constructor is matched, so a parameter matches an interface declared in another project.
@@ -57,6 +58,25 @@ _TYPEOF_CALL = re.compile(
     rf"\(\s*typeof\s*\(\s*(?P<service>{_TYPE_TEXT})\s*\)\s*"
     rf"(?:,\s*typeof\s*\(\s*(?P<implementation>{_TYPE_TEXT})\s*\)\s*)?\)"
 )
+_ANY_TYPE = re.compile(
+    r"\b(?P<keyword>record(?:\s+(?:class|struct))?|class|struct|interface)\s+"
+    r"(?P<name>[A-Za-z_]\w*)"
+)
+"""Every type with a body, for the enclosing type of an object creation."""
+_DECLARED_KEYWORDS = frozenset({"class", "record", "record class"})
+"""The declarations that give `type_declaration`: classes and records, not structs."""
+_NOT_A_NAME = frozenset({"class", "struct", "where", "interface", "record"})
+_MODIFIER = re.compile(
+    r"(?:public|private|protected|internal|static|abstract|sealed|partial|file|unsafe|"
+    r"readonly|new)$"
+)
+_BASE_TYPE = re.compile(rf"{_TYPE_TEXT}")
+_WHERE = re.compile(r"\bwhere\b")
+_CREATION = re.compile(r"\bnew\s+(?P<type>[A-Za-z_]\w*(?:\s*\.\s*[A-Za-z_]\w*)*)")
+_SPACE = re.compile(r"\s+")
+_LEADING_SPACE = re.compile(r"\s*")
+_MODIFIERS_WINDOW: Final = 200
+"""How far before a type keyword its modifiers are looked for."""
 
 
 def signals_in_sources(
@@ -204,7 +224,173 @@ def _signals_in_file(
                 signals,
                 issues,
             )
+    bodies = _type_signals(masked, file_path, signals, issues)
+    _creation_signals(masked, file_path, bodies, signals, issues)
     return signals, issues
+
+
+def _type_signals(
+    masked: str,
+    file_path: str,
+    signals: list[ArchitectureSignal],
+    issues: list[EvidenceCoverageIssue],
+) -> list[tuple[int, int, str]]:
+    """A `type_declaration` per class and record, with its base list; returns every type
+    body as (opening, closing, name), for the enclosing type of an object creation."""
+    bodies: list[tuple[int, int, str]] = []
+    for match in _ANY_TYPE.finditer(masked):
+        name = match["name"]
+        if name in _NOT_A_NAME:
+            continue
+        line = masked.count("\n", 0, match.start("name")) + 1
+        header_end = _header_end(masked, match.end())
+        if header_end is None:
+            continue  # not a declaration with a body or `;` (such as `where T : class`)
+        if masked[header_end] == "{":
+            closing = _matching_close(masked, header_end)
+            if closing is not None:
+                bodies.append((header_end, closing, name))
+        keyword = _SPACE.sub(" ", match["keyword"])
+        if keyword not in _DECLARED_KEYWORDS:
+            continue
+        bases = _base_list(masked, match.end(), header_end)
+        if bases is None or len(name) > MAX_IDENTIFIER_CHARS:
+            issues.append(
+                EvidenceCoverageIssue(
+                    kind=EvidenceIssueKind.AMBIGUOUS_SYNTAX, file_path=file_path, line=line
+                )
+            )
+            continue
+        signals.append(
+            ArchitectureSignal(
+                kind=ArchitectureSignalKind.TYPE_DECLARATION,
+                file_path=file_path,
+                line=line,
+                subject=name,
+                related_subjects=bases,
+                keywords=(*_modifiers_before(masked, match.start()), *keyword.split()),
+            )
+        )
+    return bodies
+
+
+def _header_end(masked: str, position: int) -> int | None:
+    """The `{` or `;` that ends a type's header, skipping its generic parameters and its
+    primary constructor; None when a `)`, `}` or `=` comes first (not a declaration)."""
+    index = position
+    while index < len(masked):
+        character = masked[index]
+        if character in "{;":
+            return index
+        if character == "(":
+            closing = _matching_close(masked, index)
+            if closing is None:
+                return None
+            index = closing + 1
+            continue
+        if character in ")}=":
+            return None
+        index += 1
+    return None
+
+
+def _base_list(masked: str, name_end: int, header_end: int) -> tuple[str, ...] | None:
+    """The base types after `:` as written, without generic constraints or a base call's
+    arguments; None when one cannot be read."""
+    header = masked[name_end:header_end]
+    if header.lstrip().startswith("<"):
+        start = header.index("<")
+        closing = _closing_angle(header, start)
+        if closing is None:
+            return None
+        header = header[closing + 1 :]
+    if header.lstrip().startswith("("):
+        start = header.index("(")
+        closing = _matching_close(header, start)
+        if closing is None:
+            return None
+        header = header[closing + 1 :]
+    header = _WHERE.split(header, maxsplit=1)[0].strip()
+    if not header:
+        return ()
+    if not header.startswith(":"):
+        return None
+    parts = _split_top_level(_without_arguments(header[1:]))
+    if parts is None:
+        return None
+    bases = tuple(_SPACE.sub("", part) for part in parts)
+    if any(not _BASE_TYPE.fullmatch(base) or len(base) > MAX_IDENTIFIER_CHARS for base in bases):
+        return None
+    return bases
+
+
+def _without_arguments(text: str) -> str:
+    """`Base(x, y), IX` as `Base, IX`: a record's base call keeps only the base's name."""
+    result: list[str] = []
+    depth = 0
+    for character in text:
+        if character == "(":
+            depth += 1
+        elif character == ")":
+            depth -= 1
+        elif depth == 0:
+            result.append(character)
+    return "".join(result)
+
+
+def _after_space(masked: str, position: int) -> int:
+    space = _LEADING_SPACE.match(masked, position)
+    return position if space is None else space.end()
+
+
+def _modifiers_before(masked: str, position: int) -> tuple[str, ...]:
+    """The modifiers written directly before a type keyword (`public static`)."""
+    words = masked[max(0, position - _MODIFIERS_WINDOW) : position].split()
+    found: list[str] = []
+    while words and _MODIFIER.match(words[-1]):
+        found.insert(0, words.pop())
+    return tuple(found)
+
+
+def _creation_signals(
+    masked: str,
+    file_path: str,
+    bodies: list[tuple[int, int, str]],
+    signals: list[ArchitectureSignal],
+    issues: list[EvidenceCoverageIssue],
+) -> None:
+    """An `object_creation` per `new T(…)` and `new T { … }`. A target-typed `new()`, an
+    anonymous `new { … }` and an array `new T[…]` name no class, so they give none."""
+    for match in _CREATION.finditer(masked):
+        end = match.end()
+        following = _after_space(masked, end)
+        if masked.startswith("<", following):
+            closing = _closing_angle(masked, following)
+            if closing is None:
+                continue
+            end = closing + 1
+            following = _after_space(masked, end)
+        if not masked.startswith(("(", "{"), following):
+            continue
+        type_text = _SPACE.sub("", masked[match.start("type") : end])
+        line = masked.count("\n", 0, match.start("type")) + 1
+        if len(type_text) > MAX_IDENTIFIER_CHARS:
+            issues.append(
+                EvidenceCoverageIssue(
+                    kind=EvidenceIssueKind.AMBIGUOUS_SYNTAX, file_path=file_path, line=line
+                )
+            )
+            continue
+        enclosing = [body for body in bodies if body[0] < match.start() < body[1]]
+        signals.append(
+            ArchitectureSignal(
+                kind=ArchitectureSignalKind.OBJECT_CREATION,
+                file_path=file_path,
+                line=line,
+                subject=type_text,
+                related_subject=max(enclosing)[2] if enclosing else None,
+            )
+        )
 
 
 def _constructor_signals(
@@ -216,7 +402,8 @@ def _constructor_signals(
     signals: list[ArchitectureSignal],
     issues: list[EvidenceCoverageIssue],
 ) -> None:
-    """A classic or primary constructor, and each parameter typed by a declared interface."""
+    """A classic or primary constructor, each of its parameters, and each parameter typed
+    by a declared interface."""
     signals.append(
         ArchitectureSignal(
             kind=ArchitectureSignalKind.CONSTRUCTOR_CANDIDATE,
@@ -234,6 +421,15 @@ def _constructor_signals(
         )
         return
     for parameter_type in parameter_types:
+        signals.append(
+            ArchitectureSignal(
+                kind=ArchitectureSignalKind.CONSTRUCTOR_PARAMETER,
+                file_path=file_path,
+                line=line,
+                subject=parameter_type,
+                related_subject=type_name,
+            )
+        )
         count = declarations.get(parameter_type.rstrip("?").split("<", 1)[0].split(".")[-1], 0)
         if not count:
             continue

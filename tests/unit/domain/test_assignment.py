@@ -1,3 +1,5 @@
+from collections.abc import Mapping
+
 import pytest
 from pydantic import ValidationError
 
@@ -249,9 +251,30 @@ def test_params_keep_value_types_and_round_trip() -> None:
     assert type(requirement).model_validate_json(requirement.model_dump_json()) == requirement
 
 
-def test_params_reject_nested_mappings() -> None:
+def test_nested_params_are_immutable_and_round_trip() -> None:
+    requirement = builders.requirement(
+        kind=RequirementKind.CUSTOM,
+        check="layer_references",
+        params={
+            "roles": {"api": {"sdk": "Microsoft.NET.Sdk.Web", "name": "api|web"}},
+            "required": [["api", "services"]],
+        },
+    )
+
+    roles = requirement.params["roles"]
+    assert isinstance(roles, Mapping)
+    api = roles["api"]
+    assert isinstance(api, Mapping)
+    assert api["name"] == "api|web"
+    assert requirement.params["required"] == (("api", "services"),)
+    with pytest.raises(TypeError):
+        api["name"] = "other"  # type: ignore[index]
+    assert type(requirement).model_validate_json(requirement.model_dump_json()) == requirement
+
+
+def test_params_reject_values_that_are_not_data() -> None:
     with pytest.raises(ValidationError):
-        builders.requirement(kind=RequirementKind.CUSTOM, check="x", params={"a": {"b": 1}})
+        builders.requirement(kind=RequirementKind.CUSTOM, check="x", params={"a": {"b": None}})
 
 
 def test_source_hash_is_optional_and_validated() -> None:

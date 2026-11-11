@@ -5,6 +5,7 @@ import pytest
 from hw_checker.adapters.architecture_evidence import LocalArchitectureEvidenceReader
 from hw_checker.domain import (
     ArchitectureEvidence,
+    ArchitectureSignal,
     ArchitectureSignalKind,
     EvidenceCoverageStatus,
     EvidenceIssueKind,
@@ -22,8 +23,23 @@ def write(root: Path, relative: str, contents: str | bytes) -> None:
         path.write_text(contents, encoding="utf-8")
 
 
+DI_KINDS = frozenset(
+    {
+        ArchitectureSignalKind.INTERFACE_DECLARATION,
+        ArchitectureSignalKind.CONSTRUCTOR_CANDIDATE,
+        ArchitectureSignalKind.CONSTRUCTOR_INTERFACE_PARAMETER,
+        ArchitectureSignalKind.REGISTRATION_CANDIDATE,
+    }
+)
+"""The stage 19 signals; the layer signals of stage 21 are tested in test_layer_signals."""
+
+
 def signal_kinds(result: ArchitectureEvidence) -> set[ArchitectureSignalKind]:
     return {signal.kind for signal in result.signals}
+
+
+def di_signals(result: ArchitectureEvidence) -> list[ArchitectureSignal]:
+    return [signal for signal in result.signals if signal.kind in DI_KINDS]
 
 
 def test_inventory_references_and_di_candidates_are_factual(tmp_path: Path) -> None:
@@ -67,12 +83,7 @@ def test_inventory_references_and_di_candidates_are_factual(tmp_path: Path) -> N
     assert evidence.project_references[0].status is ProjectReferenceStatus.MATCHED
     assert evidence.inventory_coverage.status is EvidenceCoverageStatus.COMPLETE
     assert evidence.signal_coverage.status is EvidenceCoverageStatus.COMPLETE
-    assert signal_kinds(evidence) == {
-        ArchitectureSignalKind.INTERFACE_DECLARATION,
-        ArchitectureSignalKind.CONSTRUCTOR_CANDIDATE,
-        ArchitectureSignalKind.CONSTRUCTOR_INTERFACE_PARAMETER,
-        ArchitectureSignalKind.REGISTRATION_CANDIDATE,
-    }
+    assert signal_kinds(evidence) & DI_KINDS == DI_KINDS
     parameter_signal = next(
         signal
         for signal in evidence.signals
@@ -144,7 +155,7 @@ def test_constructor_with_attributes_is_still_a_constructor(tmp_path: Path) -> N
 
     assert [
         (signal.kind, signal.line, signal.subject)
-        for signal in evidence.signals
+        for signal in di_signals(evidence)
         if signal.kind is not ArchitectureSignalKind.INTERFACE_DECLARATION
     ] == [
         (ArchitectureSignalKind.CONSTRUCTOR_CANDIDATE, 6, "Timer"),
@@ -175,7 +186,7 @@ def test_registrations_name_their_types_only_when_written_literally(tmp_path: Pa
             signal.registration_method,
             signal.lifetime,
         )
-        for signal in evidence.signals
+        for signal in di_signals(evidence)
     ] == [
         (1, "IUserRepository", "UserRepository", "AddScoped", ServiceLifetime.SCOPED),
         (2, "Clock", None, "AddSingleton", ServiceLifetime.SINGLETON),
@@ -185,7 +196,7 @@ def test_registrations_name_their_types_only_when_written_literally(tmp_path: Pa
         (6, None, None, "AddKeyedSingleton", ServiceLifetime.SINGLETON),
         (7, None, None, "AddScoped", ServiceLifetime.SCOPED),
     ]
-    assert {signal.kind for signal in evidence.signals} == {
+    assert {signal.kind for signal in di_signals(evidence)} == {
         ArchitectureSignalKind.REGISTRATION_CANDIDATE
     }
 
@@ -311,7 +322,7 @@ def test_primary_constructor_is_read_like_a_classic_one(tmp_path: Path) -> None:
 
     assert [
         (signal.kind, signal.line, signal.subject, signal.related_subject)
-        for signal in evidence.signals
+        for signal in di_signals(evidence)
         if signal.file_path == "Service.cs"
     ] == [
         (ArchitectureSignalKind.CONSTRUCTOR_CANDIDATE, 1, "Service", None),

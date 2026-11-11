@@ -125,6 +125,13 @@ def test_builtin_checks_are_registered() -> None:
         "client_element_ids",
         "client_fetch_routes",
         "di_started",
+        "layer_projects",
+        "layer_references",
+        "code_only_in_layer",
+        "implements_interface",
+        "constructor_takes_interface",
+        "interfaces_registered",
+        "no_concrete_construction",
     }
 
 
