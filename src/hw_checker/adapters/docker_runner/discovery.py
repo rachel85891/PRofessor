@@ -1,9 +1,12 @@
-"""Finds the single ASP.NET Core Web project in an untrusted student working copy.
+"""Finds the ASP.NET Core Web project in an untrusted student working copy.
 
 Only reads `.csproj` files as XML text; nothing from the repo is executed or evaluated.
+With exactly one `Microsoft.NET.Sdk.Web` project, that is the one; with several, the failure
+lists them as candidates, and `web_choice` picks one by its rule.
 """
 
 import os
+import posixpath
 import re
 import xml.etree.ElementTree as ElementTree
 from collections.abc import Collection
@@ -43,6 +46,9 @@ class WebProject:
     other_projects: tuple[ProjectFolder, ...] = ()
     """The solution's other projects (class libraries such as entities), where request
     body models may live."""
+    references: tuple[str, ...] = ()
+    """The repo's projects (paths relative to the working copy) this one references with
+    `<ProjectReference>`."""
 
     @property
     def folder(self) -> str:
@@ -86,6 +92,8 @@ class DiscoveryFailure:
     web_projects: tuple[str, ...] = ()
     other_projects: tuple[str, ...] = ()
     unreadable: tuple[str, ...] = ()
+    candidates: tuple[WebProject, ...] = ()
+    """With several Web projects: each of them, for `web_choice` to pick from."""
 
 
 @dataclass(frozen=True)
@@ -95,6 +103,8 @@ class _ParsedProject:
     assembly_name: str
     target_framework: str | None
     nullable: bool
+    references: tuple[str, ...] = ()
+    """The `Include` of each `<ProjectReference>`, as written."""
 
 
 def discover_web_project(working_copy: Path) -> WebProject | DiscoveryFailure:
@@ -113,25 +123,49 @@ def discover_web_project(working_copy: Path) -> WebProject | DiscoveryFailure:
             parsed.append(project)
     web = [project for project in parsed if project.is_web]
     others = tuple(project.path for project in parsed if not project.is_web)
-    if len(web) == 1:
-        return WebProject(
-            web[0].path,
-            web[0].assembly_name,
-            tuple(unreadable),
-            web[0].target_framework,
-            web[0].nullable,
-            tuple(
-                ProjectFolder(project.path.rpartition("/")[0], project.nullable)
-                for project in parsed
-                if not project.is_web
-            ),
-        )
+    candidates = tuple(_web_project(project, parsed, unreadable) for project in web)
+    if len(candidates) == 1:
+        return candidates[0]
     return DiscoveryFailure(
         message=_failure_message(web, others, unreadable),
         web_projects=tuple(project.path for project in web),
         other_projects=others,
         unreadable=tuple(unreadable),
+        candidates=candidates if len(candidates) > 1 else (),
     )
+
+
+def _web_project(
+    project: _ParsedProject, parsed: list[_ParsedProject], unreadable: list[str]
+) -> WebProject:
+    """`project` as the Web project to build, with every other project of the repo."""
+    return WebProject(
+        project.path,
+        project.assembly_name,
+        tuple(unreadable),
+        project.target_framework,
+        project.nullable,
+        tuple(
+            ProjectFolder(other.path.rpartition("/")[0], other.nullable)
+            for other in parsed
+            if other is not project
+        ),
+        _resolved_references(project, [other.path for other in parsed]),
+    )
+
+
+def _resolved_references(project: _ParsedProject, paths: list[str]) -> tuple[str, ...]:
+    """The repo's projects that `project`'s `<ProjectReference>` items name, compared
+    ignoring case and with `\\` read as a separator, as on Windows."""
+    folder = project.path.rpartition("/")[0]
+    by_lower = {path.lower(): path for path in paths}
+    found: dict[str, None] = {}
+    for include in project.references:
+        joined = posixpath.normpath(posixpath.join(folder or ".", include.replace("\\", "/")))
+        match = by_lower.get(joined.lower())
+        if match is not None and match != project.path:
+            found.setdefault(match)
+    return tuple(found)
 
 
 def _project_files(root: Path) -> list[Path]:
@@ -163,6 +197,7 @@ def _parse_project(path: Path, relative: str) -> _ParsedProject | None:
         _assembly_name(root, path),
         _target_framework(root),
         _nullable_enabled(root),
+        _project_references(root),
     )
 
 
@@ -198,6 +233,15 @@ def _target_framework(root: ElementTree.Element) -> str | None:
             if _local_name(element.tag) == name and (element.text or "").strip():
                 return (element.text or "").strip()
     return None
+
+
+def _project_references(root: ElementTree.Element) -> tuple[str, ...]:
+    return tuple(
+        include
+        for element in root.iter()
+        if _local_name(element.tag) == "ProjectReference"
+        and (include := (element.get("Include") or "").strip())
+    )
 
 
 def _nullable_enabled(root: ElementTree.Element) -> bool:

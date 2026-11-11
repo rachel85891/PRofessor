@@ -168,6 +168,9 @@ class RunnerSettings(BaseModel):
     max_response_kb: int = Field(default=64, ge=1)
     engine_timeout_seconds: int = Field(default=120, ge=1)
     """Seconds the Docker client waits for one engine API call."""
+    web_project_commits: int = Field(default=20, ge=0)
+    """How many of the latest commits are read to choose between several Web projects
+    (the one they changed last); 0 reads none."""
     logs_root: Path = Path("logs")
     """Folder for full build and run logs inside each run's folder:
     `<workspace_dir>/runs/<run_id>/<logs_root>/<repo_id>`."""

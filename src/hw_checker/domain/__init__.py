@@ -86,6 +86,8 @@ from hw_checker.domain.execution import (
     TypeFact,
     TypeKind,
     UnsupportedRouting,
+    WebProjectChoice,
+    WebProjectChoiceReason,
 )
 from hw_checker.domain.findings import (
     Evidence,
@@ -293,6 +295,8 @@ __all__ = [
     "UnsupportedRouting",
     "Verdict",
     "VerifyResult",
+    "WebProjectChoice",
+    "WebProjectChoiceReason",
     "new_run_id",
     "parse_github_url",
 ]

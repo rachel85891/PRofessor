@@ -41,6 +41,8 @@ class FakeGitClient:
         self._history = None if history is None else tuple(history)
         self.checked_out: list[tuple[Path, str]] = []
         self._ignored = ignored
+        self.recent: tuple[tuple[str, ...], ...] | None = None
+        """Set to give `recent_changes` these file lists (newest first) instead."""
         self.cloned: list[tuple[str, Path]] = []
         self.pushed: list[tuple[Path, str, str]] = []
         self.branches: list[tuple[Path, str, str]] = []
@@ -134,6 +136,14 @@ class FakeGitClient:
         if self._push_error is not None:
             raise self._push_error
         self.pushed.append((repo_dir, branch_name, remote_url))
+
+    def recent_changes(self, repo_dir: Path, max_commits: int) -> tuple[tuple[str, ...], ...]:
+        """The history's file lists, newest first (one commit with every file without one)."""
+        if not repo_dir.is_dir():
+            raise RepoUnavailableError(f"{repo_dir} is not a working copy")
+        if self.recent is not None:
+            return self.recent[:max_commits]
+        return tuple(files for _, files in reversed(self._commits(repo_dir)))[:max_commits]
 
     def tracked_files(self, repo_dir: Path) -> TrackedFiles:
         """Every file in the folder is tracked; `ignored` (given at construction) is ignored."""

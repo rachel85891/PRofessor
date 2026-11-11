@@ -25,6 +25,8 @@ from hw_checker.domain import (
     ResponseShape,
     RouteResolution,
     StepStatus,
+    WebProjectChoice,
+    WebProjectChoiceReason,
 )
 from hw_checker.domain.errors import ExecutionEnvironmentError
 from tests.unit.adapters.docker_runner.fake_engine import FakeClock, FakeEngine
@@ -343,6 +345,60 @@ def test_a_data_file_the_repo_lacks_is_created_empty_in_the_writable_copy_only(
     assert result.probe_results, "the app is probed"
     prepare_log = (tmp_path / "logs" / "prepare.log").read_text(encoding="utf-8")
     assert "created empty at 'Repository/users.txt'" in prepare_log
+
+
+def two_web_projects(tmp_path: Path) -> Path:
+    repo = tmp_path / "repo"
+    for name in ("OldApi", "NewApi"):
+        (repo / name).mkdir(parents=True)
+        (repo / name / f"{name}.csproj").write_text(WEB_PROJECT, encoding="utf-8")
+        (repo / name / "Program.cs").write_text("var b = 1;", encoding="utf-8")
+    return repo
+
+
+def test_of_several_web_projects_the_chosen_one_is_built_and_recorded(tmp_path: Path) -> None:
+    repo = two_web_projects(tmp_path)
+    engine = FakeEngine()
+    recent = (("NewApi/Program.cs",),)
+
+    result = runner(engine).execute(request(repo, tmp_path, recent_changes=recent))
+
+    assert result.failure_kind is None
+    assert result.web_project == WebProjectChoice(
+        path="NewApi/NewApi.csproj",
+        reason=WebProjectChoiceReason.RECENTLY_CHANGED,
+        candidates=("NewApi/NewApi.csproj", "OldApi/OldApi.csproj"),
+    )
+    (build,) = engine.specs("build")
+    assert build.command[2] == "/work/src/NewApi/NewApi.csproj"
+    prepare_log = (tmp_path / "logs" / "prepare.log").read_text(encoding="utf-8")
+    assert (
+        "chosen of the Web projects NewApi/NewApi.csproj, OldApi/OldApi.csproj: the one the "
+        "latest commits changed (recently_changed)"
+    ) in prepare_log
+
+
+def test_a_single_web_project_is_recorded_as_the_only_one(repo: Path, tmp_path: Path) -> None:
+    result = runner(FakeEngine()).execute(request(repo, tmp_path))
+
+    assert result.web_project == WebProjectChoice(
+        path="Shop.Api.csproj",
+        reason=WebProjectChoiceReason.SINGLE,
+        candidates=("Shop.Api.csproj",),
+    )
+
+
+def test_web_projects_the_rule_cannot_tell_apart_are_not_run(tmp_path: Path) -> None:
+    engine = FakeEngine()
+
+    result = runner(engine).execute(request(two_web_projects(tmp_path), tmp_path))
+
+    assert result.failure_kind is FailureKind.PROJECT_NOT_FOUND
+    assert result.web_project is None
+    assert "NewApi/NewApi.csproj, OldApi/OldApi.csproj; none could be chosen" in (
+        result.logs_excerpt
+    )
+    assert engine.specs("build") == []
 
 
 def test_route_table_is_recorded_on_the_result_and_in_the_prepare_log(

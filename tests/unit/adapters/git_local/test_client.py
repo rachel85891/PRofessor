@@ -410,3 +410,21 @@ def test_tracked_files_in_a_folder_of_another_repo_is_rejected(tmp_path: Path) -
 
     with pytest.raises(RepoUnavailableError, match="not a Git working copy"):
         client(runner).tracked_files(tmp_path)
+
+
+def test_recent_changes_lists_each_commits_paths_newest_first(tmp_path: Path) -> None:
+    def respond(args: list[str]) -> subprocess.CompletedProcess[str]:
+        if args[:2] == ["rev-parse", "--show-toplevel"]:
+            return ok(str(tmp_path))
+        # Two commits, then a merge that lists no paths.
+        return ok("\x1e\0\nNew Api/Program.cs\0Repo/Store.cs\0\x1e\0\nOld/Program.cs\0\x1e\0")
+
+    runner = FakeCommandRunner(respond)
+
+    changes = client(runner).recent_changes(tmp_path, 3)
+
+    assert changes == (("New Api/Program.cs", "Repo/Store.cs"), ("Old/Program.cs",), ())
+    call = runner.commands[-1]
+    assert "--max-count=3" in call and "--name-only" in call and "--no-renames" in call
+    assert "--format=%x1e" in call
+    assert call[-1] == "HEAD"

@@ -67,6 +67,7 @@ from hw_checker.adapters.docker_runner.runner_config import (
     DockerRunnerConfig,
     FrameworkImages,
 )
+from hw_checker.adapters.docker_runner.web_choice import choose_web_project
 from hw_checker.adapters.docker_runner.windows_paths import windows_paths_in_log
 from hw_checker.config.logging_setup import log_context
 from hw_checker.domain import (
@@ -81,6 +82,8 @@ from hw_checker.domain import (
     RouteResolution,
     RouteTable,
     StepStatus,
+    WebProjectChoice,
+    WebProjectChoiceReason,
 )
 from hw_checker.domain.errors import ExecutionEnvironmentError
 from hw_checker.domain.execution import MAX_PROBE_ERROR_CHARS
@@ -298,10 +301,12 @@ class _Execution:
     # ------------------------------------------------------------------ pipeline
 
     def _pipeline(self) -> ExecutionResult:
-        discovery = discover_web_project(self.request.working_copy)
-        if isinstance(discovery, DiscoveryFailure):
-            return self._prepare_failed(discovery.message, project_found=False)
+        found = self._web_project()
+        if isinstance(found, str):
+            return self._prepare_failed(found, project_found=False)
+        discovery, choice = found
         framework = {
+            "web_project": choice,
             "target_framework": discovery.target_framework,
             "framework_outdated": is_older_framework(
                 discovery.framework, self.config.course_framework
@@ -321,7 +326,7 @@ class _Execution:
             ProjectFolder(discovery.folder, discovery.nullable),
             discovery.other_projects,
         )
-        result = self._prepare_build_run(discovery, plan)
+        result = self._prepare_build_run(discovery, plan, choice)
         # Every result after this point records the detected paths, the route table and the
         # controller choice.
         return result.model_copy(
@@ -335,7 +340,36 @@ class _Execution:
             }
         )
 
-    def _prepare_build_run(self, discovery: WebProject, plan: PathPlan) -> ExecutionResult:
+    def _web_project(self) -> tuple[WebProject, WebProjectChoice] | str:
+        """The Web project to run and why, or why there is none (stage 22 rule)."""
+        discovery = discover_web_project(self.request.working_copy)
+        if isinstance(discovery, WebProject):
+            single = WebProjectChoiceReason.SINGLE
+            return discovery, WebProjectChoice(
+                path=discovery.path, reason=single, candidates=(discovery.path,)
+            )
+        if not discovery.candidates:
+            return discovery.message
+        candidates = tuple(candidate.path for candidate in discovery.candidates)
+        chosen = choose_web_project(
+            self.request.working_copy, discovery.candidates, self.request.recent_changes
+        )
+        if isinstance(chosen, str):
+            return _with_unreadable(chosen, discovery)
+        logger.info(
+            "Chose the Web project %s of %d (%s)",
+            chosen.project.path,
+            len(candidates),
+            chosen.reason.value,
+            extra={"web_project": chosen.project.path, "web_project_reason": chosen.reason.value},
+        )
+        return chosen.project, WebProjectChoice(
+            path=chosen.project.path, reason=chosen.reason, candidates=candidates
+        )
+
+    def _prepare_build_run(
+        self, discovery: WebProject, plan: PathPlan, choice: WebProjectChoice
+    ) -> ExecutionResult:
         limits = (self.config.max_archive_bytes, self.config.max_file_bytes)
         uid, gid = self.config.app_uid, self.config.app_gid
         try:
@@ -367,6 +401,7 @@ class _Execution:
         self._write_log(
             RunnerStep.PREPARE,
             f"Web project: {discovery.path} ({discovery.framework})\n"
+            + _describe_choice(choice)
             + _describe_paths(plan.rewrites)
             + _describe_routes(self.routes)
             + _describe_controllers(self.routes, self.controllers),
@@ -839,6 +874,29 @@ class _Execution:
 def app_working_dir(web_folder: str) -> str:
     """The app's working directory: the Web project's folder in the repo's writable copy."""
     return f"{DATA_REPO_DIR}/{web_folder}" if web_folder else DATA_REPO_DIR
+
+
+CHOICE_REASONS = {
+    WebProjectChoiceReason.ENTRY_POINT: "the only one with an entry point",
+    WebProjectChoiceReason.REFERENCES_PROJECTS: "the only one that references other projects",
+    WebProjectChoiceReason.RECENTLY_CHANGED: "the one the latest commits changed",
+}
+
+
+def _describe_choice(choice: WebProjectChoice) -> str:
+    """Which Web project was chosen of several, and why; nothing when there was one."""
+    if choice.reason is WebProjectChoiceReason.SINGLE:
+        return ""
+    return (
+        f"chosen of the Web projects {', '.join(choice.candidates)}: "
+        f"{CHOICE_REASONS[choice.reason]} ({choice.reason.value})\n"
+    )
+
+
+def _with_unreadable(message: str, discovery: DiscoveryFailure) -> str:
+    if not discovery.unreadable:
+        return message
+    return f"{message}; unreadable project files: {', '.join(discovery.unreadable)}"
 
 
 def _describe_paths(rewrites: tuple[PathRewrite, ...]) -> str:

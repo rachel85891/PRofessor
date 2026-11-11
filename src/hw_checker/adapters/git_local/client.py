@@ -27,6 +27,8 @@ logger = logging.getLogger(__name__)
 
 _SHA_PATTERN = re.compile(r"^[0-9a-f]{40}(?:[0-9a-f]{24})?$")
 _REMOTE_HEAD_PREFIX = "origin/"
+COMMIT_SEPARATOR = "\x1e"
+"""Starts each commit in `recent_changes`' log output; no path holds it."""
 PUSH_TOKEN_VARIABLE = "HWC_GIT_PUSH_TOKEN"
 """The environment variable that holds the push token, set for the push command only."""
 # Answers git's credential request with the token from that variable. The helper's text
@@ -353,6 +355,31 @@ class LocalGitClient:
             repo_dir,
             PublishError,
             secret_env={PUSH_TOKEN_VARIABLE: self._push_token.get_secret_value()},
+        )
+
+    def recent_changes(self, repo_dir: Path, max_commits: int) -> tuple[tuple[str, ...], ...]:
+        """Return the paths each of the latest `max_commits` commits of `HEAD` changed,
+        newest first (`git log --name-only`, renames as a delete and an add; a merge lists
+        none).
+
+        Raises:
+            RepoUnavailableError: `repo_dir` is not a readable Git working copy.
+            ExecutionEnvironmentError: the git executable is not available.
+        """
+        self._require_own_working_copy(repo_dir)
+        output = self._git.run(
+            [
+                *("-c", "core.quotePath=false", "log", "-z", "--no-renames", "--name-only"),
+                "--format=%x1e",  # git writes COMMIT_SEPARATOR; a raw one cannot be an argument
+                f"--max-count={max(max_commits, 0)}",
+                "HEAD",
+            ],
+            repo_dir,
+            RepoUnavailableError,
+        )
+        return tuple(
+            tuple(path for item in chunk.split("\0") if (path := item.strip("\n")))
+            for chunk in output.split(COMMIT_SEPARATOR)[1:]
         )
 
     def tracked_files(self, repo_dir: Path) -> TrackedFiles:
