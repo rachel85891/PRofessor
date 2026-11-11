@@ -48,8 +48,10 @@ FILE_KINDS = frozenset({RequirementKind.STRUCTURE, RequirementKind.CUSTOM})
 """The requirements the preview runs without building: their checks read files."""
 RUN_KINDS = frozenset({RequirementKind.BUILD, RequirementKind.HTTP})
 """The requirements the preview adds when it builds and runs (`--with-execution`)."""
-NOT_A_FAILURE = frozenset({NotEvaluatedReason.AWAITING_REVIEWER})
-"""Not evaluated on the reference solution, and expected: nothing to show."""
+NOT_RUN_ON_PURPOSE = frozenset(
+    {NotEvaluatedReason.AWAITING_REVIEWER, NotEvaluatedReason.ASSIGNMENT_NOT_APPLICABLE}
+)
+"""Not evaluated on the reference solution, and expected: the dry run is still complete."""
 _SPACE = re.compile(r"\s+")
 
 
@@ -135,9 +137,14 @@ class DraftValidator:
         not_evaluated = tuple(
             f"{entry.requirement_id}: not evaluated ({entry.reason.value})"
             for entry in result.not_evaluated
-            if entry.reason not in NOT_A_FAILURE
+            if entry.reason not in NOT_RUN_ON_PURPOSE
         )
-        status = DryRunStatus.FAILED if failures else DryRunStatus.PASSED
+        if failures:
+            status = DryRunStatus.FAILED
+        elif not_evaluated:
+            status = DryRunStatus.INCOMPLETE
+        else:
+            status = DryRunStatus.PASSED
         logger.info("The dry run of %s on its reference solution: %s", target.id, status.value)
         return DryRun(status=status, failures=failures, not_evaluated=not_evaluated)
 

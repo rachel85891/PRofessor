@@ -4,6 +4,7 @@ and the rule changes. Synthetic data and a fake runner only."""
 
 from pathlib import Path
 
+from hw_checker.domain import ExecutionResult, FailureKind, StepStatus
 from hw_checker.domain.authoring import (
     AuthorReply,
     DryRunStatus,
@@ -224,3 +225,47 @@ def test_the_changes_list_new_and_ended_rules(tmp_path: Path) -> None:
     assert changes.new == ("hw02-not-yet-taught",)
     assert changes.ended == ("hw01-only",)
     assert changes.replaced == ()
+
+
+def test_a_reference_that_does_not_build_is_incomplete_not_passed(tmp_path: Path) -> None:
+    failed = ExecutionResult(
+        build_status=StepStatus.FAILED,
+        run_status=StepStatus.SKIPPED,
+        failure_kind=FailureKind.BUILD_FAILED,
+    )
+    service = build_service(tmp_path, runner=FakeCodeRunner(results={"reference": failed}))
+    make_repo(tmp_path / "assignments" / "hw02" / "reference", projects=4)
+    intake = service.load_intake("hw02")
+
+    report = service.validate(intake, valid_reply())
+
+    assert report.dry_run.status is DryRunStatus.INCOMPLETE
+    assert report.dry_run.failures == ()
+    assert report.dry_run.not_evaluated == ("hw02-post: not evaluated (build_failed)",)
+    assert report.passed  # not the author's fault: it goes to approval
+    text = service.write_report(intake, valid_reply(), report, 1, 3).read_text("utf-8")
+    top = text.split("## Drafted items")[0]
+    assert "**The dry run is incomplete.** The reference solution could not check these" in top
+    assert "- hw02-post: not evaluated (build_failed)" in top
+
+
+def test_a_reference_that_passes_every_requirement_is_passed(tmp_path: Path) -> None:
+    service = build_service(tmp_path)
+    make_repo(tmp_path / "assignments" / "hw02" / "reference", projects=4)
+    intake = service.load_intake("hw02")
+    covered = [
+        "requirements.architecture.1",
+        "requirements.return_values.1",
+        "lecturer_decisions.accepted_alternatives.1",
+    ]
+    reply = AuthorReply(
+        requirements=(projects_requirement(intake_items=covered),),
+        rules=(not_yet_taught_rule(),),
+    )
+
+    report = service.validate(intake, reply)
+
+    assert report.dry_run.status is DryRunStatus.PASSED
+    assert report.dry_run.not_evaluated == ()
+    text = service.write_report(intake, reply, report, 1, 3).read_text("utf-8")
+    assert "The dry run is incomplete" not in text

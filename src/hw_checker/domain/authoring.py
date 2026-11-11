@@ -236,7 +236,13 @@ class DryRunStatus(StrEnum):
     """What the dry run on the reference solution found."""
 
     PASSED = "passed"
+    """Every drafted requirement was evaluated on the reference solution and passed (a
+    `code` requirement, or one of an assignment that does not apply, is not run)."""
     FAILED = "failed"
+    INCOMPLETE = "incomplete"
+    """Nothing failed, but some requirements could not be evaluated there (for example,
+    the reference does not build): the draft is not verified on them. Not the author's
+    fault, so the draft still goes to approval."""
     SKIPPED = "skipped"
     """There is no `reference/` folder."""
     NOT_RUN = "not_run"
@@ -247,7 +253,7 @@ class DryRun(DomainModel):
     """The drafted requirements on the reference solution: every one must pass.
 
     `failures` and `not_evaluated` are `<requirement id>: <what happened>` lines; a
-    requirement that cannot be evaluated there is shown, but is not a failure.
+    requirement that cannot be evaluated there makes the dry run incomplete, not failed.
     """
 
     status: DryRunStatus

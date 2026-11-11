@@ -6,6 +6,13 @@
 - Draft: attempt {{ attempt }}{% if max_attempts %} of {{ max_attempts }}{% endif %}
 
 - Validation: {{ "passed" if report.passed else "FAILED" }}
+{% if report.dry_run.status.value == "incomplete" %}
+
+> **The dry run is incomplete.** The reference solution could not check these; the draft is not verified on them:
+{% for line in report.dry_run.not_evaluated %}
+> - {{ line }}
+{% endfor %}
+{% endif %}
 {% if not report.passed and stopped %}
 - The draft still fails after the last attempt, so nothing was written to the assignment's folder. Fix the intake or the task text and run the draft again.
 {% endif %}
@@ -46,7 +53,9 @@ Inferred items come first: neither the task text nor the intake says them, so ch
 {% elif report.dry_run.status.value == "not_run" %}
 Not run: the draft is invalid.
 {% elif report.dry_run.status.value == "passed" %}
-Passed: no drafted requirement fails the reference solution.
+Passed: every drafted requirement was checked on the reference solution and passed.
+{% elif report.dry_run.status.value == "incomplete" %}
+**Incomplete:** nothing failed, but the reference solution could not check some requirements (listed at the top and below), so the draft is not verified on them.
 {% else %}
 **Failed:** the reference solution must pass every requirement.
 {% for line in report.dry_run.failures %}
@@ -55,7 +64,7 @@ Passed: no drafted requirement fails the reference solution.
 {% endif %}
 {% if report.dry_run.not_evaluated %}
 
-Not evaluated on the reference solution (not a failure):
+Not evaluated on the reference solution:
 {% for line in report.dry_run.not_evaluated %}
 - {{ line }}
 {% endfor %}
