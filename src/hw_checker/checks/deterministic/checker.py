@@ -25,11 +25,12 @@ class DeterministicRequirementChecker:
         self._registry = registry
 
     def check(self, check_input: CheckInput) -> tuple[Finding, ...] | NotEvaluatedReason:
-        """Evaluate one structure, custom, build or http requirement.
+        """Evaluate one structure, custom, build or http requirement; a code requirement
+        is not evaluated (`awaiting_reviewer`): the LLM code reviewer checks it.
 
         Raises:
-            InvalidAssignmentError: a code requirement, an unknown check, invalid params, or
-                a file list (`check_input.files`) given to a check that reads file contents.
+            InvalidAssignmentError: an unknown check, invalid params, or a file list
+                (`check_input.files`) given to a check that reads file contents.
         """
         requirement = check_input.requirement
         match requirement.kind:
@@ -41,9 +42,7 @@ class DeterministicRequirementChecker:
                 outcome = self._run_registered(check_input)
                 return () if isinstance(outcome, CheckPassed) else outcome
             case RequirementKind.CODE:
-                raise InvalidAssignmentError(
-                    f"requirement {requirement.id!r} is a code requirement, not a deterministic one"
-                )
+                return NotEvaluatedReason.AWAITING_REVIEWER
 
     def condition(self, check_input: CheckInput) -> ConditionOutcome:
         """Run the requirement's registered check as a condition; it holds when it passes.

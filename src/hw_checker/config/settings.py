@@ -197,7 +197,7 @@ class StorageSettings(BaseModel):
     database_url: NonBlankText = "sqlite:///workspace/hw_checker.db"
 
 
-LlmRole = Literal["reviewer", "judge", "fixer", "writer"]
+LlmRole = Literal["reviewer", "judge", "fixer", "writer", "author"]
 """The roles the LLM is called for (ADR 0008); code names a role, never a model."""
 LLM_ROLES: tuple[LlmRole, ...] = get_args(LlmRole)
 LlmProvider = Literal["openrouter", "copilot"]
@@ -220,6 +220,7 @@ class CopilotSettings(BaseModel):
         "judge": "claude-sonnet-5.5",
         "fixer": "claude-sonnet-5.5",
         "writer": "claude-haiku-5.5",
+        "author": "claude-sonnet-5.5",
     }
     """The Copilot model id for each role, as the seat's model list names it."""
     start_timeout_seconds: float = Field(default=60, gt=0)
@@ -246,6 +247,7 @@ class LlmSettings(BaseModel):
         "judge": "anthropic/claude-sonnet-5.5",
         "fixer": "anthropic/claude-sonnet-5.5",
         "writer": "anthropic/claude-haiku-5.5",
+        "author": "anthropic/claude-sonnet-5.5",
     }
     """The model id for each role, as the endpoint names it."""
     temperature: float | None = Field(default=None, ge=0, le=1)
@@ -258,6 +260,12 @@ class LlmSettings(BaseModel):
     """The longest wait for one reply, for a role without its own in `role_timeouts`."""
     role_timeouts: dict[LlmRole, Annotated[float, Field(gt=0)]] = {}
     """A role's own longest wait for one reply (the fixer's long plans, stage 14c)."""
+    role_max_prompt_chars: dict[LlmRole, Annotated[int, Field(ge=1)]] = {}
+    """A role's own prompt limit, instead of `max_prompt_chars` (the author's long input,
+    stage 16)."""
+    role_max_output_tokens: dict[LlmRole, Annotated[int, Field(ge=1)]] = {}
+    """A role's own reply limit, instead of `max_output_tokens` (OpenRouter only: the
+    Copilot runtime has no such setting)."""
     max_retries: int = Field(default=2, ge=0, le=10)
     """Retries after a rate limit, a timeout or a server error; never after other errors."""
     retry_backoff_seconds: float = Field(default=2, ge=0, le=60)
@@ -280,6 +288,14 @@ class LlmSettings(BaseModel):
     def role_timeout(self, role: LlmRole) -> float:
         """The longest wait for one reply of `role`."""
         return self.role_timeouts.get(role, self.timeout_seconds)
+
+    def role_prompt_limit(self, role: LlmRole) -> int:
+        """The longest prompt of `role`, in characters."""
+        return self.role_max_prompt_chars.get(role, self.max_prompt_chars)
+
+    def role_output_tokens(self, role: LlmRole) -> int:
+        """The most tokens one reply of `role` may have (OpenRouter only)."""
+        return self.role_max_output_tokens.get(role, self.max_output_tokens)
 
     def role_models(self) -> dict[LlmRole, str]:
         """The model of each role for the configured provider."""
@@ -339,6 +355,20 @@ class FixerSettings(BaseModel):
     skip_dirs: tuple[NonBlankText, ...] = ("bin", "obj", ".git", ".vs", ".vscode", "node_modules")
 
 
+class AuthoringSettings(BaseModel):
+    """Adding an assignment (stage 16, design §8.3)."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    max_attempts: int = Field(default=3, ge=1, le=10)
+    """Drafts per run while validation fails; then the run stops with the report."""
+    reply_attempts: int = Field(default=2, ge=1, le=5)
+    """Calls per draft when the author's reply cannot be read (RetryPolicy)."""
+    preview_flag_share: float = Field(default=0.9, gt=0, le=1)
+    """A drafted requirement that fails at least this share of the repos it could evaluate
+    in the preview is flagged in the report."""
+
+
 class Settings(BaseSettings):
     """All runtime settings.
 
@@ -371,6 +401,7 @@ class Settings(BaseSettings):
     github_token: SecretStr | None = None
     fixer: FixerSettings = FixerSettings()
     """The publishing account's token: a classic PAT with the `public_repo` scope only."""
+    authoring: AuthoringSettings = AuthoringSettings()
 
     @model_validator(mode="after")
     def _fixer_needs_the_lecturers_approval(self) -> Self:

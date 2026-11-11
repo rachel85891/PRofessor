@@ -53,7 +53,14 @@ class FixError(HwCheckerError):
 
 
 class InvalidAssignmentError(HwCheckerError):
-    """Assignment data exists but is invalid (for example a malformed requirements file)."""
+    """Assignment data exists but is invalid (for example a malformed requirements file).
+
+    `problems` lists each problem on its own, when the loader collected them.
+    """
+
+    def __init__(self, message: str, problems: tuple[str, ...] = ()) -> None:
+        super().__init__(message)
+        self.problems = problems
 
 
 class StorageError(HwCheckerError):
@@ -66,3 +73,7 @@ class NotFoundError(HwCheckerError):
 
 class CheckRegistrationError(HwCheckerError):
     """The set of registered checks is inconsistent (duplicate name, unmarked function)."""
+
+
+class AuthoringError(HwCheckerError):
+    """A new assignment cannot be created, drafted, approved or stopped (design §8.3)."""

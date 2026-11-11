@@ -84,10 +84,17 @@ class CopilotClientConfig:
     max_prompt_chars: int
     role_timeouts: Mapping[str, float] = field(default_factory=dict)
     """A role's own longest wait, instead of `timeout_seconds`."""
+    role_max_prompt_chars: Mapping[str, int] = field(default_factory=dict)
+    """A role's own prompt limit, instead of `max_prompt_chars`. There is no reply limit:
+    the Copilot runtime has no such setting."""
 
     def timeout(self, role: str) -> float:
         """The longest wait for a session or one reply of `role`."""
         return self.role_timeouts.get(role, self.timeout_seconds)
+
+    def prompt_limit(self, role: str) -> int:
+        """The longest prompt of `role`, in characters."""
+        return self.role_max_prompt_chars.get(role, self.max_prompt_chars)
 
 
 @dataclass
@@ -160,10 +167,11 @@ class CopilotSdkLLMClient:
         model = self._config.models.get(role)
         if model is None:
             raise LLMError(f"No model is configured for the LLM role '{role}'.")
-        if len(prompt) > self._config.max_prompt_chars:
+        limit = self._config.prompt_limit(role)
+        if len(prompt) > limit:
             raise LLMError(
                 f"The prompt for {role} has {len(prompt)} characters, more than the limit of "
-                f"{self._config.max_prompt_chars}; it was not sent."
+                f"{limit}; it was not sent."
             )
         timeout = self._config.timeout(role)
         started = self._clock()

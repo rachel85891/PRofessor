@@ -67,6 +67,8 @@ class NotEvaluatedReason(StrEnum):
     ASSIGNMENT_CONDITION_UNKNOWN = "assignment_condition_unknown"
     """The assignment's `applies_when` or `skip_when` could not be evaluated, so none of
     its requirements was checked; a reviewer decides which path the repo is on."""
+    AWAITING_REVIEWER = "awaiting_reviewer"
+    """A `code` requirement: the LLM code reviewer checks it, and it is not enabled yet."""
     EVIDENCE_UNAVAILABLE = "evidence_unavailable"
     """The repo's projects or C# code could not be read (the architecture evidence, or its
     signal coverage, is unavailable), so a check that reads them could not decide."""

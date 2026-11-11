@@ -81,6 +81,7 @@ def test_mixed_assignment_gives_findings_and_not_evaluated_entries() -> None:
     assert [f.requirement_id for f in result.findings] == ["hw01-r1"]
     assert result.not_evaluated == (
         NotEvaluated(requirement_id="hw01-r3", reason=NotEvaluatedReason.BUILD_FAILED),
+        NotEvaluated(requirement_id="hw01-r4", reason=NotEvaluatedReason.AWAITING_REVIEWER),
     )
 
 
@@ -108,6 +109,7 @@ def test_a_check_raising_does_not_stop_the_others(caplog: pytest.LogCaptureFixtu
 
     assert result.not_evaluated == (
         NotEvaluated(requirement_id="hw01-r1", reason=NotEvaluatedReason.ENVIRONMENT_ISSUE),
+        NotEvaluated(requirement_id="hw01-r4", reason=NotEvaluatedReason.AWAITING_REVIEWER),
     )
     assert [f.requirement_id for f in result.findings] == ["hw01-r5"]
     (record,) = caplog.records
@@ -122,7 +124,7 @@ def test_invalid_requirement_data_stops_the_evaluation() -> None:
         DeterministicCheckService(checker).evaluate(ASSIGNMENT, REPO, EXECUTION)
 
 
-def test_an_assignment_without_deterministic_requirements_gives_an_empty_result() -> None:
+def test_a_code_requirement_waits_for_the_reviewer_and_is_never_a_finding() -> None:
     only_code = Assignment(
         id="hw01",
         order=1,
@@ -130,9 +132,14 @@ def test_an_assignment_without_deterministic_requirements_gives_an_empty_result(
         requirements=(requirement("hw01-r4", RequirementKind.CODE),),
     )
 
-    result = DeterministicCheckService(FakeRequirementChecker()).evaluate(only_code, REPO, None)
+    checker = FakeRequirementChecker()
+    result = DeterministicCheckService(checker).evaluate(only_code, REPO, None)
 
-    assert (result.findings, result.not_evaluated) == ((), ())
+    assert result.findings == ()
+    assert result.not_evaluated == (
+        NotEvaluated(requirement_id="hw01-r4", reason=NotEvaluatedReason.AWAITING_REVIEWER),
+    )
+    assert checker.checked == []
 
 
 def test_tracked_files_are_read_once_and_given_to_every_check(tmp_path: Path) -> None:

@@ -1,5 +1,6 @@
 """Command line: `python -m hw_checker round --assignment hw01 --roster <xlsx>`, the
-approval gate's `review <run_id>` and `approve <run_id> --repo <id>`, and `llm-check`.
+approval gate's `review <run_id>` and `approve <run_id> --repo <id>`, `llm-check`, and
+adding an assignment: `assignment new|draft|approve|revise|stop <id>`.
 
 This is the only module that writes to stdout and stderr; everything else logs.
 """
@@ -17,7 +18,10 @@ from langgraph.types import Command
 from pydantic import BaseModel
 
 from hw_checker.bootstrap import (
+    build_authoring_graph_from_settings,
+    build_authoring_service,
     build_round_graph_from_settings,
+    open_author_llm,
     open_checkpointer,
     open_fixer_llm,
     open_llm_client,
@@ -36,8 +40,14 @@ from hw_checker.domain import (
     RunSummary,
     new_run_id,
 )
+from hw_checker.domain.authoring import (
+    AuthoringAction,
+    AuthoringDecision,
+    AuthoringOutcome,
+    AuthoringPrompt,
+)
 from hw_checker.domain.errors import HwCheckerError, LLMError
-from hw_checker.graph import RoundGraph, RoundInput
+from hw_checker.graph import AUTHORING_RUN, AuthoringInput, RoundGraph, RoundInput
 from hw_checker.ports import LLMClient
 from hw_checker.reporting.wording import describe_checked_commit
 
@@ -112,7 +122,48 @@ def build_parser() -> argparse.ArgumentParser:
         "llm-check",
         help="send one synthetic prompt to each LLM role's model (checks key, models, network)",
     )
+    _add_assignment_commands(commands)
     return parser
+
+
+def _add_assignment_commands(commands: "argparse._SubParsersAction[Any]") -> None:
+    assignment = commands.add_parser(
+        "assignment", help="add a new assignment: intake, draft, validation and approval"
+    )
+    actions = assignment.add_subparsers(dest="action", required=True)
+    new_parser = actions.add_parser(
+        "new", help="create assignments/<id>/ with an intake.yaml template and an empty task.md"
+    )
+    new_parser.add_argument("assignment_id", help="the new assignment's id, e.g. hw02")
+    new_parser.add_argument(
+        "--order", type=_positive_int, help="its order (default: after the last assignment)"
+    )
+    draft_parser = actions.add_parser(
+        "draft", help="draft and validate the requirements and rules; stops for approval"
+    )
+    draft_parser.add_argument("assignment_id", help="the assignment's id")
+    draft_parser.add_argument(
+        "--with-execution",
+        action="store_true",
+        help="the preview also builds and runs the workspace clones (needs Docker)",
+    )
+    for action, text in (
+        ("approve", "approve the draft: write it with status approved"),
+        ("stop", "stop: remove the drafted files; nothing is written"),
+    ):
+        actions.add_parser(action, help=text).add_argument(
+            "assignment_id", help="the assignment's id"
+        )
+    revise_parser = actions.add_parser("revise", help="draft again with your notes")
+    revise_parser.add_argument("assignment_id", help="the assignment's id")
+    revise_parser.add_argument(
+        "--note",
+        action="append",
+        required=True,
+        dest="notes",
+        metavar="TEXT",
+        help="what must change; repeat for more",
+    )
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -128,6 +179,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             return review_round(settings, args.run_id, sys.stdout)
         if args.command == "approve":
             return approve_round(settings, args, sys.stdout)
+        if args.command == "assignment":
+            return run_assignment_command(settings, args, sys.stdout)
         return run_round(settings, args, sys.stdout)
     except HwCheckerError as error:
         print(f"Error: {error}", file=sys.stderr)
@@ -206,6 +259,78 @@ def approve_round(settings: Settings, args: argparse.Namespace, out: TextIO) -> 
     print_gate(args.run_id, interrupts, out)
     failed = any(record.outcome is PublishOutcome.FAILED for record in records)
     return EXIT_FAILED if failed else EXIT_OK
+
+
+def run_assignment_command(settings: Settings, args: argparse.Namespace, out: TextIO) -> int:
+    """Run one `assignment` command (design §8.3).
+
+    Raises:
+        HwCheckerError: the command could not be carried out.
+    """
+    if args.action == "new":
+        with open_author_llm(settings) as author_llm:
+            service = build_authoring_service(settings, author_llm)
+            folder = service.new_assignment(args.assignment_id, args.order)
+        print(f"Created {folder}: fill in intake.yaml and task.md, then run:", file=out)
+        print(f"  python -m hw_checker assignment draft {args.assignment_id}", file=out)
+        return EXIT_OK
+    config = _thread(AUTHORING_RUN.format(id=args.assignment_id))
+    with open_checkpointer(settings) as checkpointer, open_author_llm(settings) as author_llm:
+        graph = build_authoring_graph_from_settings(settings, author_llm, checkpointer)
+        waiting = bool(graph.get_state(config).interrupts)
+        if args.action == "draft":
+            if waiting:
+                print(
+                    f"{args.assignment_id} is waiting for your answer: approve, revise or "
+                    "stop it first.",
+                    file=out,
+                )
+                return EXIT_FAILED
+            run_input = AuthoringInput(
+                assignment_id=args.assignment_id, with_execution=args.with_execution
+            )
+            output: dict[str, Any] = graph.invoke(run_input, config)
+        else:
+            if not waiting:
+                print(f"{args.assignment_id} is not waiting for approval.", file=out)
+                return EXIT_FAILED
+            decision = AuthoringDecision(
+                action=AuthoringAction(args.action), notes=tuple(getattr(args, "notes", ()))
+            )
+            output = graph.invoke(Command(resume=decision.model_dump(mode="json")), config)
+    return print_authoring(output, out)
+
+
+def print_authoring(output: dict[str, Any], out: TextIO) -> int:
+    """Print how an authoring run stopped: waiting for approval, approved, stopped, or
+    failed after the last attempt, with the report's path."""
+    interrupts = output.get(INTERRUPT_KEY, ())
+    if interrupts:
+        prompt = AuthoringPrompt.model_validate(interrupts[0].value)
+        if prompt.message:
+            print(f"Not applied: {prompt.message}", file=out)
+        print(f"The draft of {prompt.assignment_id} is valid. Read the report:", file=out)
+        print(f"  {prompt.report_path}", file=out)
+        print(
+            f"Then: python -m hw_checker assignment approve|stop {prompt.assignment_id}, or "
+            f'revise {prompt.assignment_id} --note "..."',
+            file=out,
+        )
+        return EXIT_OK
+    outcome = output.get("outcome")
+    report = output.get("report_path", "not written")
+    if outcome is AuthoringOutcome.APPROVED:
+        print(f"Approved {output['assignment_id']}:", file=out)
+        for path in output.get("written", []):
+            print(f"  {path}", file=out)
+        print("Commit them; restart Studio's server before the next round.", file=out)
+        return EXIT_OK
+    if outcome is AuthoringOutcome.STOPPED:
+        print(f"Stopped {output['assignment_id']}; no drafted files are kept.", file=out)
+        return EXIT_OK
+    print(f"The draft of {output['assignment_id']} still fails validation. Report:", file=out)
+    print(f"  {report}", file=out)
+    return EXIT_FAILED
 
 
 def llm_check(

@@ -39,11 +39,12 @@ class RequirementChecker(Protocol):
     def check(self, check_input: CheckInput) -> tuple[Finding, ...] | NotEvaluatedReason:
         """Return the findings for `check_input.requirement`, or why it was not evaluated.
 
-        An empty tuple means the requirement passed. Only reads the working copy.
+        An empty tuple means the requirement passed. A `code` requirement is not evaluated
+        (`awaiting_reviewer`). Only reads the working copy.
 
         Raises:
-            InvalidAssignmentError: the requirement is a `code` requirement, names an unknown
-                check, or gives it invalid params.
+            InvalidAssignmentError: the requirement names an unknown check, or gives it
+                invalid params.
         """
         ...
 

@@ -4,6 +4,7 @@ The decorator only marks a function; nothing is registered globally. A `CheckReg
 built from an explicit collection of marked functions, so two registries never share state.
 """
 
+import json
 import types
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
@@ -136,6 +137,7 @@ class CheckRegistry:
                 ),
                 reads_file_list=registered.spec.reads_file_list,
                 reads_architecture=registered.spec.reads_architecture,
+                params_schema=_schema_text(registered.spec.params_model),
             )
             for name, registered in sorted(self._checks.items())
         )
@@ -169,6 +171,19 @@ def _describe_param_error(item: ErrorDetails) -> str:
     if item["type"] == "missing":
         return f"param '{location}': this required param is missing"
     return f"param '{location}': {item['msg']}"
+
+
+def _schema_text(model: type[BaseModel]) -> str:
+    """`model`'s JSON Schema without its titles, as compact JSON."""
+    return json.dumps(_without_titles(model.model_json_schema()), separators=(",", ":"))
+
+
+def _without_titles(node: object) -> object:
+    if isinstance(node, dict):
+        return {key: _without_titles(value) for key, value in node.items() if key != "title"}
+    if isinstance(node, list):
+        return [_without_titles(item) for item in node]
+    return node
 
 
 def _describe_field(name: str, field: FieldInfo) -> CheckParamDescription:

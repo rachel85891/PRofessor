@@ -1,5 +1,7 @@
 """Assignment catalog service: lists assignments and selects those checked in a round."""
 
+from collections.abc import Sequence
+
 from hw_checker.domain import Assignment
 from hw_checker.domain.errors import InvalidAssignmentError, NotFoundError
 from hw_checker.ports import AssignmentSource, CheckCatalog
@@ -11,7 +13,7 @@ COURSE_LABEL = "course"
 
 class AssignmentCatalogService:
     """Selects `_general` plus assignments 1..N, refusing requirements with invalid checks
-    and review rules that are still drafts."""
+    and requirements and review rules that are still drafts."""
 
     def __init__(self, source: AssignmentSource, catalog: CheckCatalog) -> None:
         self._source = source
@@ -34,8 +36,9 @@ class AssignmentCatalogService:
         Raises:
             NotFoundError: `assignment_id` is unknown, or is `_general` itself.
             InvalidAssignmentError: the data cannot be loaded, a selected requirement
-                names an unknown check or gives it invalid params, or a review rule or
-                example of the course or of a selected assignment is still a draft.
+                names an unknown check or gives it invalid params, or a requirement,
+                review rule or example of the course or of a selected assignment is still
+                a draft.
         """
         assignments = self._source.load_all()
         target = next((a for a in assignments if a.id == assignment_id), None)
@@ -74,50 +77,56 @@ class AssignmentCatalogService:
         return self._check_problems(self._source.load_all())
 
     def _drafts(self, selected: tuple[Assignment, ...]) -> list[str]:
-        sets = [(COURSE_LABEL, self._source.load_course().rules)]
-        sets += [(assignment.id, assignment.review_rules) for assignment in selected]
-        return [f"{label}: {draft}" for label, rules in sets for draft in rules.drafts]
+        drafts = [f"{COURSE_LABEL}: {draft}" for draft in self._source.load_course().rules.drafts]
+        return drafts + [f"{a.id}: {draft}" for a in selected for draft in a.drafts]
 
     def _check_problems(self, assignments: tuple[Assignment, ...]) -> tuple[str, ...]:
-        problems = [
-            f"{assignment.id}: requirement '{requirement.id}', check '{requirement.check}': "
-            f"{problem}"
-            for assignment in assignments
-            for requirement in assignment.requirements
-            if requirement.check is not None
-            for problem in self._catalog.validate_params(requirement.check, requirement.params)
-        ]
-        for assignment in assignments:
-            problems.extend(self._end_problems(assignment))
-            problems.extend(self._condition_problems(assignment))
-        return tuple(problems)
+        return check_problems(assignments, self._catalog)
 
-    def _condition_problems(self, assignment: Assignment) -> list[str]:
-        """`applies_when` or `skip_when` names a known check with valid params. Unlike
-        `ends_when`, it may read file contents: it runs on the checked working copy."""
-        condition = assignment.condition
-        if condition is None:
-            return []
-        check = condition.condition
-        prefix = f"{assignment.id}: {condition.kind.value}, check '{check.check}'"
-        return [
-            f"{prefix}: {problem}"
-            for problem in self._catalog.validate_params(check.check, check.params)
-        ]
 
-    def _end_problems(self, assignment: Assignment) -> list[str]:
-        """`ends_when` names a known check that reads file names only, with valid params."""
-        end = assignment.ends_when
-        if end is None:
-            return []
-        prefix = f"{assignment.id}: ends_when, check '{end.check}'"
-        problems = self._catalog.validate_params(end.check, end.params)
-        if problems:
-            return [f"{prefix}: {problem}" for problem in problems]
-        file_list_checks = {d.name for d in self._catalog.describe() if d.reads_file_list}
-        if end.check not in file_list_checks:
-            return [
-                f"{prefix}: this check reads file contents; ends_when needs a check that "
-                f"looks at file names only ({', '.join(sorted(file_list_checks)) or 'none'})"
-            ]
+def check_problems(assignments: Sequence[Assignment], catalog: CheckCatalog) -> tuple[str, ...]:
+    """What is wrong with the checks of `assignments`: an unknown check or invalid params of
+    a requirement, `ends_when` (which must read file names only), `applies_when` or
+    `skip_when`. Raises nothing."""
+    problems = [
+        f"{assignment.id}: requirement '{requirement.id}', check '{requirement.check}': {problem}"
+        for assignment in assignments
+        for requirement in assignment.requirements
+        if requirement.check is not None
+        for problem in catalog.validate_params(requirement.check, requirement.params)
+    ]
+    for assignment in assignments:
+        problems.extend(_end_problems(assignment, catalog))
+        problems.extend(_condition_problems(assignment, catalog))
+    return tuple(problems)
+
+
+def _condition_problems(assignment: Assignment, catalog: CheckCatalog) -> list[str]:
+    """`applies_when` or `skip_when` names a known check with valid params. Unlike
+    `ends_when`, it may read file contents: it runs on the checked working copy."""
+    condition = assignment.condition
+    if condition is None:
         return []
+    check = condition.condition
+    prefix = f"{assignment.id}: {condition.kind.value}, check '{check.check}'"
+    return [
+        f"{prefix}: {problem}" for problem in catalog.validate_params(check.check, check.params)
+    ]
+
+
+def _end_problems(assignment: Assignment, catalog: CheckCatalog) -> list[str]:
+    """`ends_when` names a known check that reads file names only, with valid params."""
+    end = assignment.ends_when
+    if end is None:
+        return []
+    prefix = f"{assignment.id}: ends_when, check '{end.check}'"
+    problems = catalog.validate_params(end.check, end.params)
+    if problems:
+        return [f"{prefix}: {problem}" for problem in problems]
+    file_list_checks = {d.name for d in catalog.describe() if d.reads_file_list}
+    if end.check not in file_list_checks:
+        return [
+            f"{prefix}: this check reads file contents; ends_when needs a check that "
+            f"looks at file names only ({', '.join(sorted(file_list_checks)) or 'none'})"
+        ]
+    return []

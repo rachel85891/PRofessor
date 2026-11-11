@@ -424,6 +424,25 @@ def test_the_repo_report_words_a_windows_path_with_the_path(tmp_path: Path) -> N
     ) in text
 
 
+def test_the_repo_report_says_a_code_requirement_waits_for_the_code_reviewer(
+    tmp_path: Path,
+) -> None:
+    report = data.full_report()
+    [first, *rest] = report.repo_run.assignment_results
+    waiting = NotEvaluated(requirement_id="hw01-r9", reason=NotEvaluatedReason.AWAITING_REVIEWER)
+    result = first.model_copy(update={"not_evaluated": (*first.not_evaluated, waiting)})
+    repo_run = report.repo_run.model_copy(update={"assignment_results": (result, *rest)})
+
+    path = MarkdownReportWriter(tmp_path).write_repo_report(
+        report.model_copy(update={"repo_run": repo_run})
+    )
+
+    text = path.read_text(encoding="utf-8")
+    assert (
+        "Checked by the code reviewer, which isn't enabled yet; never counted against the student."
+    ) in text
+
+
 def test_the_repo_report_names_the_failed_requirement_a_check_needs(tmp_path: Path) -> None:
     report = data.full_report()
     [first, *rest] = report.repo_run.assignment_results

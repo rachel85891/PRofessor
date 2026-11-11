@@ -35,8 +35,9 @@ REGISTERED_KINDS = frozenset({RequirementKind.STRUCTURE, RequirementKind.CUSTOM}
 class DeterministicCheckService:
     """Turns an assignment's structure, custom, build and http requirements into findings.
 
-    `code` requirements are left to the LLM reviewer. A requirement that cannot be checked
-    is listed as not evaluated, with its reason, instead of becoming a finding. An
+    `code` requirements are the LLM reviewer's; until it is enabled, each is not evaluated
+    with `awaiting_reviewer`, never a failure. A requirement that cannot be checked is
+    listed as not evaluated, with its reason, instead of becoming a finding. An
     assignment's `applies_when` or `skip_when` is evaluated first: when the assignment does
     not apply to the repo, or the condition cannot be evaluated, none of its requirements
     is (ADR 0023: the path per repo is data). A structure or custom requirement whose
@@ -97,6 +98,11 @@ class DeterministicCheckService:
         blocked: set[str] = set()  # failed, or not run because one they need failed
         for requirement in assignment.requirements:
             if requirement.kind not in DETERMINISTIC_KINDS:
+                not_evaluated.append(
+                    NotEvaluated(
+                        requirement_id=requirement.id, reason=NotEvaluatedReason.AWAITING_REVIEWER
+                    )
+                )
                 continue
             needed = [item for item in requirement.depends_on if item in blocked]
             if needed and requirement.kind in REGISTERED_KINDS:

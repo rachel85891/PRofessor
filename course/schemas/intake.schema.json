@@ -1,0 +1,258 @@
+{
+  "$defs": {
+    "EndsWhenChoice": {
+      "additionalProperties": false,
+      "description": "`check_commit: {ends_when: ...}`: the round checks the last commit before the next\ntask starts, as an assignment's `ends_when` says.",
+      "properties": {
+        "ends_when": {
+          "$ref": "#/$defs/TaskEnd"
+        }
+      },
+      "required": [
+        "ends_when"
+      ],
+      "title": "EndsWhenChoice",
+      "type": "object"
+    },
+    "IntakeItem": {
+      "additionalProperties": false,
+      "description": "One thing the developer asks for, in their own words, with an optional severity.",
+      "properties": {
+        "text": {
+          "title": "Text",
+          "type": "string"
+        },
+        "severity": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Severity"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "text"
+      ],
+      "title": "IntakeItem",
+      "type": "object"
+    },
+    "IntakeRequirements": {
+      "additionalProperties": false,
+      "description": "The task's requirements under the four headings of the intake, each matching the\nkinds of requirement the author drafts for it.",
+      "properties": {
+        "return_values": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/IntakeItem"
+          },
+          "title": "Return Values",
+          "type": "array"
+        },
+        "clean_code": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/IntakeItem"
+          },
+          "title": "Clean Code",
+          "type": "array"
+        },
+        "architecture": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/IntakeItem"
+          },
+          "title": "Architecture",
+          "type": "array"
+        },
+        "general": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/IntakeItem"
+          },
+          "title": "General",
+          "type": "array"
+        }
+      },
+      "title": "IntakeRequirements",
+      "type": "object"
+    },
+    "LecturerDecisions": {
+      "additionalProperties": false,
+      "description": "What the lecturer decided for this assignment.",
+      "properties": {
+        "accepted_alternatives": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "Accepted Alternatives",
+          "type": "array"
+        },
+        "not_to_mention": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "Not To Mention",
+          "type": "array"
+        },
+        "required_statuses": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "Required Statuses",
+          "type": "array"
+        }
+      },
+      "title": "LecturerDecisions",
+      "type": "object"
+    },
+    "ParamValue": {
+      "anyOf": [
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "integer"
+        },
+        {
+          "type": "number"
+        },
+        {
+          "type": "string"
+        },
+        {
+          "items": {
+            "$ref": "#/$defs/ParamValue"
+          },
+          "type": "array"
+        },
+        {
+          "additionalProperties": {
+            "$ref": "#/$defs/ParamValue"
+          },
+          "type": "object"
+        }
+      ]
+    },
+    "Severity": {
+      "description": "How serious a finding is. Ordered: minor < major < critical.",
+      "enum": [
+        "minor",
+        "major",
+        "critical"
+      ],
+      "title": "Severity",
+      "type": "string"
+    },
+    "TaskEnd": {
+      "additionalProperties": false,
+      "description": "When a student has moved on to the next task: a structure check (with its params)\nthat becomes true on the first commit of the next task.\n\nThe round checks the last commit before that one, so later work does not change the\nresult of this assignment.",
+      "properties": {
+        "check": {
+          "title": "Check",
+          "type": "string"
+        },
+        "params": {
+          "additionalProperties": {
+            "$ref": "#/$defs/ParamValue"
+          },
+          "title": "Params",
+          "type": "object"
+        }
+      },
+      "required": [
+        "check"
+      ],
+      "title": "TaskEnd",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "`assignments/<id>/intake.yaml`: what the developer gives for a new assignment.\n\n`taught` and `not_yet_taught` start as the previous assignment's (by `order`), when it\nhas an intake. `short_name` is the name students know the assignment by; it is derived\nfrom the id (`hw02` → `HW2`), so the intake may only confirm it.",
+  "properties": {
+    "id": {
+      "title": "Id",
+      "type": "string"
+    },
+    "order": {
+      "minimum": 1,
+      "title": "Order",
+      "type": "integer"
+    },
+    "title": {
+      "title": "Title",
+      "type": "string"
+    },
+    "short_name": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Short Name"
+    },
+    "check_commit": {
+      "anyOf": [
+        {
+          "const": "latest",
+          "type": "string"
+        },
+        {
+          "$ref": "#/$defs/EndsWhenChoice"
+        }
+      ],
+      "default": "latest",
+      "title": "Check Commit"
+    },
+    "taught": {
+      "default": [],
+      "items": {
+        "type": "string"
+      },
+      "title": "Taught",
+      "type": "array"
+    },
+    "not_yet_taught": {
+      "default": [],
+      "items": {
+        "type": "string"
+      },
+      "title": "Not Yet Taught",
+      "type": "array"
+    },
+    "lecturer_decisions": {
+      "$ref": "#/$defs/LecturerDecisions",
+      "default": {
+        "accepted_alternatives": [],
+        "not_to_mention": [],
+        "required_statuses": []
+      }
+    },
+    "requirements": {
+      "$ref": "#/$defs/IntakeRequirements",
+      "default": {
+        "return_values": [],
+        "clean_code": [],
+        "architecture": [],
+        "general": []
+      }
+    }
+  },
+  "required": [
+    "id",
+    "order",
+    "title"
+  ],
+  "title": "AssignmentIntake",
+  "type": "object"
+}

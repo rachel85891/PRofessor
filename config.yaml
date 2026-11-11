@@ -155,6 +155,8 @@ llm:
     writer: anthropic/claude-haiku-5.5
     judge: anthropic/claude-sonnet-5.5
     fixer: anthropic/claude-sonnet-5.5
+    # The author drafts a new assignment from its task text (stage 16); never student code.
+    author: anthropic/claude-sonnet-5.5
   # null: not sent. These models do not accept temperature on OpenRouter, and with
   # require_parameters (below) any parameter a model does not support makes the request
   # unroutable (HTTP 404 "No endpoints found"). Set a number only for models that list
@@ -182,6 +184,7 @@ llm:
       writer: claude-haiku-5.5
       judge: claude-sonnet-5.5
       fixer: claude-sonnet-5.5
+      author: claude-sonnet-5.5
     # Seconds to wait for the Copilot CLI to start and report its login.
     start_timeout_seconds: 60
   # --- both providers ---
@@ -189,14 +192,25 @@ llm:
   timeout_seconds: 60
   # A role's own wait, instead of timeout_seconds. The fixer's plans took up to 28 s on the
   # pilot repos through Copilot (2026-11-04); 120 s leaves room for a larger repo.
+  # The author's draft (stage 16) is a long reply, so it has its own wait too.
   role_timeouts:
     fixer: 120
+    author: 300
   # Retries after a rate limit, a timeout or a server error, waiting retry_backoff_seconds
   # before the first and doubling each time. Other errors are never retried.
   max_retries: 2
   retry_backoff_seconds: 2
   # A longer prompt is refused before it is sent (about 15,000 tokens).
   max_prompt_chars: 60000
+  # A role's own prompt limit. The author sees the course's and every earlier assignment's
+  # files and the check catalog: about 64,000 characters for a first draft of hw04 and
+  # 77,000 for a revise with the previous draft (measured 2026-11-11, before the schema).
+  role_max_prompt_chars:
+    author: 150000
+  # A role's own reply limit, for openrouter only: the Copilot runtime has no setting for
+  # a reply's length, so on copilot it is not applied. A full draft is a long reply.
+  role_max_output_tokens:
+    author: 16000
   # Sending students' code to the LLM (the fixer) needs the lecturer's approval. Only the
   # developer sets this to true, once the lecturer has approved it.
   student_code_approved: false
@@ -224,3 +238,14 @@ fixer:
   data_suffixes: [.txt, .json]
   ignored_globs: [launchSettings.json, "*.deps.json", "*.runtimeconfig.json", global.json]
   skip_dirs: [bin, obj, .git, .vs, .vscode, node_modules]
+
+authoring:
+  # Adding an assignment (stage 16, assignments/README.md "Adding an assignment"). The author
+  # role sees the task text, the intake and the course's files, never students' code.
+  # Drafts per run while validation fails; then the run stops with its report.
+  max_attempts: 3
+  # Calls per draft when the author's reply cannot be read.
+  reply_attempts: 2
+  # The preview flags a drafted requirement that fails at least this share of the
+  # workspace clones it could evaluate.
+  preview_flag_share: 0.9

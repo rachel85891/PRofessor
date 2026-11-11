@@ -81,7 +81,9 @@ Nothing to report: every checked requirement passed.
 ## Not evaluated
 
 {% for item in not_evaluated %}
-{% if item.reason_id == "windows_path" %}
+{% if item.reason_id == "awaiting_reviewer" %}
+- **{{ item.requirement_id }}**: {{ item.title }}. Checked by the code reviewer, which isn't enabled yet; never counted against the student.
+{% elif item.reason_id == "windows_path" %}
 - **{{ item.requirement_id }}**: {{ item.title }}. A request it needs answered with a server error after the app could not open {% for path in item.detail.split(", ") %}`{{ path }}`{% if not loop.last %}, {% endif %}{% endfor %}: a path written with `\` as the folder separator, which works on Windows but not in the Linux container, so this was not held against the student. Check it by hand on Windows if needed.
 {% elif item.reason_id == "dependency_failed" and item.detail %}
 - **{{ item.requirement_id }}**: {{ item.title }}. It needs {{ item.detail }}, which failed, so it was not checked.

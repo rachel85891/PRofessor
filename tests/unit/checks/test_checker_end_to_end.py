@@ -147,7 +147,9 @@ def test_realistic_assignment_over_the_sample_api() -> None:
         "POST /api/products: expected 201, got 500"
     )
     assert by_requirement["hw01-r6"].severity is Severity.CRITICAL
-    assert result.not_evaluated == ()
+    assert result.not_evaluated == (
+        NotEvaluated(requirement_id="hw01-r7", reason=NotEvaluatedReason.AWAITING_REVIEWER),
+    )
 
 
 def test_same_round_twice_gives_the_same_finding_ids() -> None:
@@ -163,17 +165,21 @@ def test_without_execution_only_structure_is_judged() -> None:
     result = DeterministicCheckService(checker()).evaluate(ASSIGNMENT, FIXTURE, None)
 
     assert [f.requirement_id for f in result.findings] == ["hw01-r3"]
-    assert result.not_evaluated == tuple(
-        NotEvaluated(requirement_id=requirement_id, reason=NotEvaluatedReason.NO_EXECUTION)
-        for requirement_id in ("hw01-r4", "hw01-r5", "hw01-r6")
+    assert result.not_evaluated == (
+        *(
+            NotEvaluated(requirement_id=requirement_id, reason=NotEvaluatedReason.NO_EXECUTION)
+            for requirement_id in ("hw01-r4", "hw01-r5", "hw01-r6")
+        ),
+        NotEvaluated(requirement_id="hw01-r7", reason=NotEvaluatedReason.AWAITING_REVIEWER),
     )
 
 
-def test_code_requirement_is_rejected_by_the_checker() -> None:
+def test_a_code_requirement_waits_for_the_code_reviewer() -> None:
     code = ASSIGNMENT.requirements[-1]
 
-    with pytest.raises(InvalidAssignmentError, match="code requirement"):
-        checker().check(CheckInput(repo_dir=FIXTURE, assignment=ASSIGNMENT, requirement=code))
+    outcome = checker().check(CheckInput(repo_dir=FIXTURE, assignment=ASSIGNMENT, requirement=code))
+
+    assert outcome is NotEvaluatedReason.AWAITING_REVIEWER
 
 
 def test_unknown_check_and_invalid_params_are_invalid_assignment_data() -> None:

@@ -1,6 +1,6 @@
 # Assignment requirements: file format
 
-Each assignment's requirements live in a YAML file that HW Checker reads at the start of every round. Until the requirements editor screen exists, you write these files by hand. This guide covers everything you need.
+Each assignment's requirements live in a YAML file that HW Checker reads at the start of every round. A new assignment is drafted for you from its task text and your intake, validated, and written once you approve it (see "Adding an assignment" below); you can still write or edit the files by hand. This guide covers everything you need.
 
 ## Folders
 
@@ -9,13 +9,94 @@ assignments/
 ├── _general/requirements.yaml   general requirements, checked in every round
 ├── hw01/requirements.yaml       assignment 1
 ├── hw02/requirements.yaml       assignment 2 (layers)
-└── hw03/requirements.yaml       assignment 3 (dependency injection) ...
+├── hw03/requirements.yaml       assignment 3 (dependency injection)
+└── hw04/                        a new assignment, while it is added ...
+    ├── task.md                  the task's text (for drafting)
+    ├── intake.yaml              your intake (for drafting)
+    ├── reference/               optional: a reference solution
+    ├── requirements.yaml        what the round checks
+    └── review_rules.yaml        the assignment's own review rules
 ```
 
 - One folder per assignment. The folder name must be exactly the `id` written inside the file.
 - The file must be named `requirements.yaml` (not `.yml`). Folders without it, and folders whose name starts with `.`, are skipped and listed in the log, so a misnamed file is easy to spot.
 - `_general` must exist and has `order: 0`. Every other assignment has its own `order` of 1 or more.
 - Save files as UTF-8 (the default in VS Code). Hebrew text is fine.
+
+## Adding an assignment
+
+Adding a task needs no code change. You give the task's text and your intake; the `author` role (an LLM, `llm.*.roles.author`) drafts `requirements.yaml` and `review_rules.yaml`; the system validates the draft and waits for your approval. The author sees only the task text, the intake, the course's files, the earlier assignments' files and the check catalog, never students' code, so it does not need `llm.student_code_approved`.
+
+1. `python -m hw_checker assignment new hw02 [--order 2]` creates `assignments/hw02/` with a commented `intake.yaml` and an empty `task.md`. It refuses an id that exists. `taught` and `not_yet_taught` start as the previous assignment's intake says (by `order`).
+2. Paste the task's text into `task.md`, fill in `intake.yaml`, and optionally put a reference solution in `reference/`.
+3. `python -m hw_checker assignment draft hw02 [--with-execution]` drafts, validates (going back to the author with the reasons, up to `authoring.max_attempts` drafts), writes the report and stops for your answer. It prints where the report is.
+4. Answer with one of:
+   - `python -m hw_checker assignment approve hw02`: the files are written with `status: approved`, the origins kept, and a first comment line with the day. Commit them, and restart Studio's server before the next round.
+   - `python -m hw_checker assignment revise hw02 --note "POST returns 201 only"` (repeat `--note` for more): the author drafts again with your notes; this does not count against `max_attempts`.
+   - `python -m hw_checker assignment stop hw02`: the drafted files are removed; nothing is written.
+
+In Studio, the `authoring` graph is next to `round`: start it with `{"assignment_id": "hw02"}` and answer its interrupt with `{"action": "approve"}`, `{"action": "revise", "notes": ["..."]}` or `{"action": "stop"}`. The command line uses the round's SQLite checkpointer, with the thread `authoring-<id>`.
+
+### The intake, by category
+
+```yaml
+id: hw02
+order: 2
+title: Layers
+check_commit: latest           # or: {ends_when: {check: project_count, params: {min: 2}}}
+taught: [controllers, layers]
+not_yet_taught: [dependency injection]
+lecturer_decisions:
+  accepted_alternatives: ["Returning 200 from POST is fine"]
+  not_to_mention: ["async/await"]
+  required_statuses: ["GET by id returns 404 for an unknown user"]
+requirements:                  # each item: text in your words, and an optional severity
+  return_values:               # return values and statuses: http probes
+    - {text: "POST /api/users returns 201", severity: critical}
+  clean_code:                  # clean code: naming checks, or code requirements
+    - {text: "Services end with Service"}
+  architecture:                # architecture: the architecture checks
+    - {text: "Four projects: API, Services, Repositories, Entities"}
+  general: []                  # anything else
+```
+
+`short_name` is derived from the id (`hw02` gives `HW2`); give it only to confirm it. Every item of the four lists, of `lecturer_decisions` and of `not_yet_taught` must be covered by at least one drafted requirement, rule or example. `taught` becomes the assignment's `taught_techniques`, and `check_commit` its `ends_when`. The schema is `course/schemas/intake.schema.json`.
+
+The author is offered every registered check with its params schema (a check added later is offered automatically), and uses `code` only when no check fits. Each drafted item has `status: draft`, an `origin` (`task_text` with a quote, `intake` with the item's key, or `inferred`) and a one-line summary for the report.
+
+### What the report shows
+
+`workspace/authoring/<id>/authoring_report.md` (private; the draft is next to it as `draft.json`):
+
+- **The drafted items**, each with its summary, origin and flags. The **inferred** ones come first: neither the task text nor the intake says them, so check them, or confirm them with the lecturer, before approving.
+- **The coverage**: each intake item and the drafted items that cover it.
+- **Problems**, all listed together: the file format, unknown checks or invalid params, `depends_on`, `applies_when` / `skip_when`, review-rule ids, `until`, `replaces`, and origins (a `task_text` quote must be in `task.md`).
+- **The dry run** on `reference/`: it is built and run, and every drafted requirement must pass (a `code` requirement, or one of an assignment that does not apply, is not run). It is:
+  - **passed** when every other requirement was evaluated there and passed;
+  - **failed** when one fails: the draft goes back to the author;
+  - **incomplete** when nothing failed but some requirement could not be evaluated there (for example, the reference does not build, so no `http` requirement runs). It is shown **at the top** of the report with each requirement and its reason: the draft is not verified on them. It is not the author's fault, so the draft still comes to you;
+  - **"Skipped (no reference solution)"** without a `reference/` folder.
+- **The preview** on the workspace clones (what the rounds left in `workspace/clones`), at each clone's current working copy: for each drafted requirement, how many repos fail, pass or could not be evaluated, never which. By default only the checks that read files run (`structure` and `custom`); `--with-execution` also builds and runs every clone, like a round with the fixer off. A requirement that fails at least `authoring.preview_flag_share` of the repos it evaluated is flagged; a flag never fails the draft.
+- **The review rules against the previous assignment**: new, replaced and ended.
+
+While it waits, the drafted files are in the assignment's folder with `status: draft`, so a round refuses the assignment. If the draft still fails after the last attempt, the run ends with the report and nothing is written to the assignment's folder.
+
+### Editing the draft before approving
+
+You may edit the drafted files while they wait (change a word, a severity or a param) instead of another LLM round. On `approve`, when the files differ from the draft:
+
+- They are read back and validated again with no LLM, like a draft: the schemas and the catalog, the coverage, the dry run and the preview.
+- Every item you changed or added gets `origin: developer`; the others keep theirs. An item you add without `origin` and `status` gets them.
+- A new report is written, marked **"Edited by hand"** at the top with the items changed, and the run waits again: "Your edits were validated; review the report and approve again." Nothing is approved in that step.
+- If the edits have problems (for example an unknown check), the report lists them and the run keeps waiting: edit again, `revise --note`, or `stop`.
+- The basics (`id`, `order`, `title`, `taught_techniques`, `ends_when`) come from `intake.yaml`: change them there and draft again.
+- A second `approve` with no further edits writes the files, as you edited them, with `status: approved`. The approved files are written anew from the draft, so comments you added in them are not kept.
+
+`stop` removes only the files the draft wrote; files you edited are kept.
+
+### The author's limits
+
+The author's prompt is long: it holds the course's files, every earlier assignment's files and the check catalog (about 64,000 characters for a fourth assignment, more on a revise, which adds the previous draft). So the `author` role has its own limits in `config.yaml`: `llm.role_max_prompt_chars` (150,000 characters), `llm.role_max_output_tokens` (16,000 tokens) and `llm.role_timeouts` (300 s). The other roles keep `max_prompt_chars` and `max_output_tokens`. The Copilot runtime has no setting for a reply's length, so the token limit applies to `openrouter` only.
 
 ## The file
 
@@ -106,6 +187,11 @@ skip_when:                    # hw02: not this assignment once DI has started
 | `params` | no | Named values for the check, for example a file pattern. Only together with `check`. Values may be text, numbers, `true`/`false`, a list of those, or a mapping of named values (such as the layer `roles`), nested to any depth. |
 | `probes` | `http` only, at least one | HTTP requests to send to the running app (see below). |
 | `depends_on` | no | Ids of requirements that must pass before this one can, for example reading back an updated user needs GET by id. Each id must exist (in any assignment), and a requirement cannot depend on itself, also not through others. The fixer's recheck does not hold a fix's claim on this requirement against it while one of these still fails. A `structure` or `custom` requirement whose dependency, checked before it in the same file, failed (or was itself not run for this reason) is not run: it is "not evaluated" (`dependency_failed`), and the report names the requirement it needs. List the dependency first. |
+| `origin` | no | Where the requirement comes from, as in a review rule: `source` (`task_text`, `intake`, `inferred` or `developer`), `quote`, and `item` (an intake item's key). Drafted requirements have it. |
+| `status` | no | `approved` (the default, for a file written by hand) or `draft`: a round refuses an assignment with a draft requirement. |
+| `reviewer_guidance` | `code` only | What the code reviewer looks for, and what is a finding. |
+| `lenient_notes` | `code` only | What the reviewer and the judge must not be strict about for this requirement, besides the assignment's own `lenient_notes`. |
+| `concerns` | `code` only | The files (`files`: repo globs) or the projects' roles (`roles`) the requirement is about, so the reviewer reads only those. |
 | `feedback` | no | `fixes_allowed` (the default) or `notes_only`: the fixer may only leave notes about this requirement's findings (architecture feedback). This is enforced in code: a `fix` that claims the requirement (or one of its findings) is rejected with "<id> allows notes only", and so is a `fix` that claims nothing in a file only notes-only findings point to; notes and `final_newline` edits are not affected. The rejection goes back to the fixer like any other, and the course rule `notes-only-requirements` names the failing notes-only requirements in the fixer's prompt. |
 
 Unknown fields are rejected, so a typo such as `chek` is reported instead of being silently ignored.
@@ -161,7 +247,7 @@ The available checks:
 
 These checks ignore upper and lower case (`controllers/` matches `Controllers`), skip `bin/`, `obj/` and `.git/`, and only read the files; nothing from the student's repo is run. `glob` and `path` are relative to the repository root, with forward slashes, and may not contain `..`.
 
-**code**: reviewed by reading the code. Evidence is required for every finding.
+**code**: reviewed by reading the code (the code reviewer, stage 8b). Evidence is required for every finding. Until the reviewer is enabled, a round marks each `code` requirement "not evaluated" with the reason `awaiting_reviewer` ("checked by the code reviewer, which isn't enabled yet"): never a failure, and never sent to the fixer.
 
 ```yaml
   - id: hw01-r2
@@ -171,6 +257,9 @@ These checks ignore upper and lower case (`controllers/` matches `Controllers`),
     description: The action should not return 200 with null.
     allowed_alternatives:
       - Returning 204 NoContent is acceptable
+    reviewer_guidance: Look at GET by id; a missing product returns NotFound.
+    concerns:
+      files: ["**/Controllers/*.cs"]
 ```
 
 **http**: requests to the running app.

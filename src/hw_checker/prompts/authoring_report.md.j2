@@ -1,0 +1,136 @@
+{#- The authoring report for the developer (design §8.3), in English. Context: see
+    AuthoringService.write_report. It holds course data and counts only: no student's
+    name, repo or code. -#}
+# Authoring report: {{ assignment.id }} ({{ assignment.title }})
+{% if edited is not none %}
+
+> **Edited by hand.** You edited the drafted files; this report validates them as you left them, with no new draft. {% if edited %}Changed or added (their origin is now `developer`): {% for id in edited %}`{{ id }}`{{ ", " if not loop.last }}{% endfor %}.{% else %}No item changed.{% endif %}
+
+{% endif %}
+
+- Draft: attempt {{ attempt }}{% if max_attempts %} of {{ max_attempts }}{% endif %}
+
+- Validation: {{ "passed" if report.passed else "FAILED" }}
+{% if report.dry_run.status.value == "incomplete" %}
+
+> **The dry run is incomplete.** The reference solution could not check these; the draft is not verified on them:
+{% for line in report.dry_run.not_evaluated %}
+> - {{ line }}
+{% endfor %}
+{% endif %}
+{% if not report.passed and stopped %}
+- The draft still fails after the last attempt, so nothing was written to the assignment's folder. Fix the intake or the task text and run the draft again.
+{% endif %}
+{% if report.problems %}
+
+## Problems
+
+{% for problem in report.problems %}
+- {{ problem }}
+{% endfor %}
+{% endif %}
+
+## Drafted items
+
+Inferred items come first: neither the task text nor the intake says them, so check them, or confirm them with the lecturer, before approving.
+
+{% for item in items %}
+- {% if item.flags %}**{{ item.flags | join("; ") }}**: {% endif %}`{{ item.id }}`, {{ item.what }}: {{ item.summary }}
+
+  Origin: {{ item.origin }}
+{% else %}
+- None.
+{% endfor %}
+
+## Coverage of the intake
+
+{% for item in report.coverage %}
+- `{{ item.key }}` ({{ item.text }}): {% if item.covered_by %}{% for id in item.covered_by %}`{{ id }}`{{ ", " if not loop.last }}{% endfor %}{% else %}**not covered**{% endif %}
+
+{% else %}
+- The intake lists no items.
+{% endfor %}
+
+## Dry run on the reference solution
+
+{% if report.dry_run.status.value == "skipped" %}
+**Skipped (no reference solution).** No requirement was run against a solution that must pass; put one in `assignments/{{ assignment.id }}/reference/` to run it.
+{% elif report.dry_run.status.value == "not_run" %}
+Not run: the draft is invalid.
+{% elif report.dry_run.status.value == "passed" %}
+Passed: every drafted requirement was checked on the reference solution and passed.
+{% elif report.dry_run.status.value == "incomplete" %}
+**Incomplete:** nothing failed, but the reference solution could not check some requirements (listed at the top and below), so the draft is not verified on them.
+{% else %}
+**Failed:** the reference solution must pass every requirement.
+{% for line in report.dry_run.failures %}
+- {{ line }}
+{% endfor %}
+{% endif %}
+{% if report.dry_run.not_evaluated %}
+
+Not evaluated on the reference solution:
+{% for line in report.dry_run.not_evaluated %}
+- {{ line }}
+{% endfor %}
+{% endif %}
+
+## Preview on the workspace clones
+
+{% set preview = report.preview %}
+{% if preview.status.value == "not_run" %}
+Not run: the draft is invalid.
+{% elif preview.status.value == "no_repos" %}
+No clones in the workspace yet; a round leaves them there.
+{% else %}
+{{ preview.repos }} repos at their current working copy, {{ "built and run" if preview.with_execution else "not built or run (file checks only)" }}{% if preview.errors %}; {{ preview.errors }} could not be previewed{% endif %}. Counts only.
+
+| Requirement | Fails | Passes | Not evaluated |
+| --- | --- | --- | --- |
+{% for count in preview.counts %}
+| `{{ count.requirement_id }}`{% if count.flagged %} (fails almost every repo){% endif %} | {{ count.failed }} | {{ count.passed }} | {{ count.not_evaluated }} |
+{% endfor %}
+{% if preview.left_out %}
+
+Not in this preview{% if not preview.with_execution %} (they need the app built and run: `--with-execution`){% endif %}: {% for id in preview.left_out %}`{{ id }}`{{ ", " if not loop.last }}{% endfor %}.
+{% endif %}
+{% endif %}
+
+## Review rules against the previous assignment
+
+{% set changes = report.changes %}
+{% if changes.new or changes.replaced or changes.ended %}
+{% if changes.new %}
+- New: {% for id in changes.new %}`{{ id }}`{{ ", " if not loop.last }}{% endfor %}
+
+{% endif %}
+{% if changes.replaced %}
+- Replaced: {{ changes.replaced | join(", ") }}
+{% endif %}
+{% if changes.ended %}
+- Ended: {% for id in changes.ended %}`{{ id }}`{{ ", " if not loop.last }}{% endfor %}
+
+{% endif %}
+{% else %}
+No change.
+{% endif %}
+{% if suggestions %}
+
+## Frame suggestions
+
+The author suggests changing a prompt's frame. Only you apply such a change, by a commit.
+
+{% for suggestion in suggestions %}
+- `{{ suggestion.template }}`: {{ suggestion.suggestion }} ({{ suggestion.reason }})
+{% endfor %}
+{% endif %}
+{% if report.passed %}
+
+## Your answer
+
+The drafted files are in `assignments/{{ assignment.id }}/` with `status: draft`, so a round refuses {{ assignment.id }} until you answer:
+
+- `python -m hw_checker assignment approve {{ assignment.id }}`: write them with `status: approved`.
+- `python -m hw_checker assignment revise {{ assignment.id }} --note "..."`: draft again with your notes.
+- `python -m hw_checker assignment stop {{ assignment.id }}`: remove the drafted files; nothing is written.
+{% endif %}

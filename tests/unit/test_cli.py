@@ -418,7 +418,7 @@ def test_llm_check_reports_a_failing_role_and_fails() -> None:
     assert code == cli.EXIT_FAILED
     [judge] = [line for line in out.getvalue().splitlines() if line.startswith("  judge")]
     assert judge.endswith("error: The LLM endpoint's rate limit was reached.")
-    assert out.getvalue().count("  ok") == 3
+    assert out.getvalue().count("  ok") == len(LLM_ROLES) - 1
 
 
 def test_llm_check_flags_a_wrong_answer() -> None:

@@ -50,6 +50,11 @@ class RequirementEntry(_FileModel):
     probes: list[ProbeEntry] = []
     depends_on: list[str] = []
     feedback: str = "fixes_allowed"
+    origin: dict[str, Any] | None = None
+    status: str = "approved"
+    reviewer_guidance: str = ""
+    lenient_notes: list[str] = []
+    concerns: dict[str, Any] | None = None
 
 
 class CheckConditionEntry(_FileModel):
