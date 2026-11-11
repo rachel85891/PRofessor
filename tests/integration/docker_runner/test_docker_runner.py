@@ -14,6 +14,7 @@ from hw_checker.checks.deterministic.checker import DeterministicRequirementChec
 from hw_checker.checks.registry import CheckRegistry
 from hw_checker.domain import (
     Assignment,
+    AssignmentResult,
     CaptureFailure,
     CaptureResult,
     ExecutionResult,
@@ -40,6 +41,7 @@ from tests.integration.docker_runner.conftest import (
     CUSTOM_MODEL_FIXTURE,
     CUSTOM_MODEL_PROBES,
     ITEMS_PROBES,
+    LAYERED_FIXTURE,
     LOGIN_VARIANT_FIXTURES,
     NO_ID_FIXTURE,
     NO_ID_PROBES,
@@ -55,8 +57,10 @@ from tests.integration.docker_runner.conftest import (
     leftovers,
     login_variant_probes,
     make_request,
+    probe,
     replace_in,
     runner_config,
+    user_body,
 )
 
 pytestmark = pytest.mark.integration
@@ -252,42 +256,202 @@ def test_absolute_path_with_a_matching_file_is_rewritten_and_passes(
     assert_nothing_left(engine)
 
 
-def test_absolute_path_without_a_matching_file_is_flagged_and_gives_no_findings(
+LAYERED_REPOSITORY = Path("Repository") / "UserRepository.cs"
+LAYERED_ABSOLUTE = r"C:\Users\Developer\source\repos\Layered\Repository\users.txt"
+LAYERED_RELATIVE = r"..\Repository\users.txt"
+
+
+@pytest.mark.parametrize(
+    ("expression", "rewritten"),
+    [
+        (r'Path.Combine(@"..\Repository", "users.txt")', "../Repository"),
+        (
+            r'Directory.GetCurrentDirectory() + @"\..\Repository\users.txt"',
+            "/../Repository/users.txt",
+        ),
+    ],
+)
+def test_backslash_folder_and_appended_paths_into_a_sibling_project_work(
+    docker_runner: DockerCodeRunner,
+    engine: SdkDockerEngine,
+    sample_copy: SampleCopy,
+    tmp_path: Path,
+    expression: str,
+    rewritten: str,
+) -> None:
+    def combine(repo: Path) -> None:
+        replace_in(
+            repo / LAYERED_REPOSITORY,
+            f'private const string FilePath = @"{LAYERED_ABSOLUTE}";',
+            f"private static readonly string FilePath = {expression};",
+        )
+
+    repo = sample_copy(source=LAYERED_FIXTURE, edit=combine)
+
+    result = docker_runner.execute(
+        make_request(repo, tmp_path / "logs", probes=ABSOLUTE_PATH_PROBES)
+    )
+
+    assert [(r.kind, r.rewritten) for r in result.path_rewrites] == [
+        (PathFixKind.SEPARATOR, rewritten)
+    ]
+    assert all_passed(result), describe(result)
+    assert result.windows_paths == ()
+    assert_nothing_left(engine)
+
+
+def test_absolute_path_to_a_sibling_project_is_rewritten_and_read(
     docker_runner: DockerCodeRunner,
     engine: SdkDockerEngine,
     sample_copy: SampleCopy,
     tmp_path: Path,
 ) -> None:
-    def remove_data(repo: Path) -> None:
-        (repo / "Data" / "users.txt").unlink()
+    repo = sample_copy(source=LAYERED_FIXTURE)
 
     result = docker_runner.execute(
-        make_request(
-            sample_copy(edit=remove_data, source=ABSOLUTE_PATH_FIXTURE),
-            tmp_path / "logs",
-            probes=ABSOLUTE_PATH_PROBES,
-        )
+        make_request(repo, tmp_path / "logs", probes=ABSOLUTE_PATH_PROBES)
     )
 
     (rewrite,) = result.path_rewrites
-    assert rewrite.not_rewritten_reason is PathNotRewrittenReason.NO_MATCH
-    assert result.has_unresolved_paths
-    assert result.run_status is StepStatus.SUCCEEDED, result.logs_excerpt
-    assert result.probe_results and not all_passed(result), describe(result)
+    assert (rewrite.kind, rewrite.original, rewrite.rewritten) == (
+        PathFixKind.ABSOLUTE,
+        LAYERED_ABSOLUTE,
+        "../Repository/users.txt",
+    )
+    assert statuses(result) == [
+        ("GET", "/api/users", 200),
+        ("POST", "/api/users", 201),
+        ("GET", "/api/users/2", 200),
+    ], describe(result)
+    assert "tester1" in result.probe_results[0].response_excerpt
+    assert_nothing_left(engine)
+
+
+def test_relative_backslash_path_into_a_sibling_project_works(
+    docker_runner: DockerCodeRunner,
+    engine: SdkDockerEngine,
+    sample_copy: SampleCopy,
+    tmp_path: Path,
+) -> None:
+    def relative(repo: Path) -> None:
+        replace_in(repo / LAYERED_REPOSITORY, f'@"{LAYERED_ABSOLUTE}"', f'@"{LAYERED_RELATIVE}"')
+
+    repo = sample_copy(source=LAYERED_FIXTURE, edit=relative)
+
+    result = docker_runner.execute(
+        make_request(repo, tmp_path / "logs", probes=ABSOLUTE_PATH_PROBES)
+    )
+
+    (rewrite,) = result.path_rewrites
+    assert (rewrite.kind, rewrite.original, rewrite.rewritten) == (
+        PathFixKind.SEPARATOR,
+        LAYERED_RELATIVE,
+        "../Repository/users.txt",
+    )
+    assert all_passed(result), describe(result)
+    assert result.windows_paths == ()
+    assert_nothing_left(engine)
+
+
+READ_BACK_PROBES = (
+    probe("hw01-r1", HttpMethod.GET, "/api/users", 200),
+    probe("hw01-r1", HttpMethod.POST, "/api/users", 201, user_body("u1", TEST_PASSWORD)),
+    probe("hw01-r1", HttpMethod.GET, "/api/users/1", 200),
+)
+"""Against a users API whose data file starts empty: the first user gets id 1."""
+DATA_FILE_REQUIREMENT = Requirement(
+    id="hw01-data-file-in-repo",
+    title="The data file the code reads is in the repo",
+    severity=Severity.MINOR,
+    kind=RequirementKind.CUSTOM,
+    check="data_files_in_repo",
+)
+
+
+def check_users_api(result: ExecutionResult, repo: Path) -> AssignmentResult:
+    """The http requirement of `READ_BACK_PROBES` and the data-file note, checked."""
     requirement = Requirement(
         id="hw01-r1",
         title="Users API",
         severity=Severity.MAJOR,
         kind=RequirementKind.HTTP,
-        http_probes=ABSOLUTE_PATH_PROBES,
+        http_probes=READ_BACK_PROBES,
     )
-    assignment = Assignment(id="hw01", order=1, title="Users", requirements=(requirement,))
+    assignment = Assignment(
+        id="hw01", order=1, title="Users", requirements=(requirement, DATA_FILE_REQUIREMENT)
+    )
     checker = DeterministicRequirementChecker(CheckRegistry(builtin_checks()))
-    checked = DeterministicCheckService(checker).evaluate(assignment, tmp_path, result)
-    assert checked.findings == ()
-    assert checked.not_evaluated == (
-        NotEvaluated(requirement_id="hw01-r1", reason=NotEvaluatedReason.ENVIRONMENT_ISSUE),
+    return DeterministicCheckService(checker).evaluate(assignment, repo, result)
+
+
+@pytest.mark.parametrize(
+    ("fixture", "data_file", "created"),
+    [
+        (ABSOLUTE_PATH_FIXTURE, Path("Data") / "users.txt", "users.txt"),
+        (LAYERED_FIXTURE, Path("Repository") / "users.txt", "Repository/users.txt"),
+    ],
+)
+def test_a_data_file_the_repo_lacks_is_created_empty_so_the_probes_are_evaluated(
+    docker_runner: DockerCodeRunner,
+    engine: SdkDockerEngine,
+    sample_copy: SampleCopy,
+    tmp_path: Path,
+    fixture: Path,
+    data_file: Path,
+    created: str,
+) -> None:
+    def remove_data(repo: Path) -> None:
+        (repo / data_file).unlink()
+
+    repo = sample_copy(edit=remove_data, source=fixture)
+
+    result = docker_runner.execute(make_request(repo, tmp_path / "logs", probes=READ_BACK_PROBES))
+
+    (rewrite,) = result.path_rewrites
+    assert rewrite.created_path == created
+    assert not result.has_unresolved_paths
+    assert all_passed(result), describe(result)
+    assert not (repo / data_file).exists(), "the working copy is never changed"
+    checked = check_users_api(result, tmp_path)
+    assert checked.not_evaluated == ()
+    (note,) = checked.findings
+    assert note.requirement_id == "hw01-data-file-in-repo"
+    assert note.message_en.startswith(f"`{created}` isn't in the repo")
+    assert_nothing_left(engine)
+
+
+def test_a_path_built_at_run_time_is_flagged_and_gives_no_findings(
+    docker_runner: DockerCodeRunner,
+    engine: SdkDockerEngine,
+    sample_copy: SampleCopy,
+    tmp_path: Path,
+) -> None:
+    def interpolate(repo: Path) -> None:
+        replace_in(
+            repo / "Controllers" / "UsersController.cs",
+            'private const string FilePath = @"C:\\Users\\Developer\\',
+            'private static readonly string FilePath = $@"C:\\Users\\{"Developer"}\\',
+        )
+
+    result = docker_runner.execute(
+        make_request(
+            sample_copy(edit=interpolate, source=ABSOLUTE_PATH_FIXTURE),
+            tmp_path / "logs",
+            probes=READ_BACK_PROBES,
+        )
     )
+
+    (rewrite,) = result.path_rewrites
+    assert rewrite.not_rewritten_reason is PathNotRewrittenReason.DYNAMIC
+    assert result.has_unresolved_paths
+    assert result.run_status is StepStatus.SUCCEEDED, result.logs_excerpt
+    assert result.probe_results and not all_passed(result), describe(result)
+    checked = check_users_api(result, tmp_path)
+    assert checked.findings == ()
+    assert [(entry.requirement_id, entry.reason) for entry in checked.not_evaluated] == [
+        ("hw01-r1", NotEvaluatedReason.ENVIRONMENT_ISSUE)
+    ]
+    assert checked.not_evaluated[0].detail.endswith("(it is built at run time)")
     assert_nothing_left(engine)
 
 
@@ -682,6 +846,6 @@ def test_run_container_is_isolated(
     assert InspectingEngine.network_attributes["Internal"] is True
     mounts = {(mount["Destination"], mount["RW"]) for mount in app["Mounts"]}
     assert mounts == {("/work", False), ("/data", True)}
-    assert app["Config"]["WorkingDir"] == "/data/project"
+    assert app["Config"]["WorkingDir"] == "/data/repo/WebApi/WebApi"
     assert all("docker.sock" not in str(mount.get("Source")) for mount in app["Mounts"])
     assert_nothing_left(engine)

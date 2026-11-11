@@ -121,6 +121,7 @@ def test_builtin_checks_are_registered() -> None:
         "gitignore_covers",
         "not_committed",
         "no_absolute_paths",
+        "data_files_in_repo",
         "client_file_refs",
         "client_element_ids",
         "client_fetch_routes",

@@ -80,6 +80,15 @@ CONDITION_REASONS = frozenset(
 """The reasons that say the whole assignment was not checked in a repo."""
 
 
+class NotEvaluatedOutcome(DomainModel):
+    """Why a requirement could not be checked, with a short detail of what happened (for
+    example, which step failed); an evaluator returns it instead of a bare reason when the
+    reason alone would not tell the reviewer enough."""
+
+    reason: NotEvaluatedReason
+    detail: str = Field(min_length=1, max_length=MAX_NOT_EVALUATED_DETAIL_CHARS)
+
+
 class NotEvaluated(DomainModel):
     """A requirement that was not checked, and why. `detail` adds what the reason is
     about, such as the paths of `windows_path`."""

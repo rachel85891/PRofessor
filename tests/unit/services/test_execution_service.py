@@ -14,6 +14,7 @@ from hw_checker.domain import (
 from hw_checker.domain.errors import ExecutionEnvironmentError
 from hw_checker.services.execution import ExecutionService
 from tests.fakes.execution import SUCCEEDED, FakeCodeRunner
+from tests.fakes.git import FakeGitClient
 from tests.unit.domain import builders
 
 WORKING_COPY = Path("clones") / "dana-api"
@@ -113,3 +114,28 @@ def test_prepare_raises_when_the_environment_is_not_ready(tmp_path: Path) -> Non
 
     with pytest.raises(ExecutionEnvironmentError, match="image missing"):
         service(runner, tmp_path).prepare()
+
+
+def test_execute_passes_the_latest_commits_changes_to_the_runner(tmp_path: Path) -> None:
+    runner, git = FakeCodeRunner(), FakeGitClient()
+    git.recent = (("NewApi/Program.cs",), ("OldApi/Program.cs",), ("README.md",))
+    copy = tmp_path / "clone"
+    copy.mkdir()
+
+    ExecutionService(runner, tmp_path / "runs", Path("logs"), git, 2).execute(
+        "run-1", "dana-api", copy, (GENERAL,)
+    )
+
+    assert runner.requests[0].recent_changes == (("NewApi/Program.cs",), ("OldApi/Program.cs",))
+
+
+def test_execute_without_git_or_when_it_fails_passes_no_changes(tmp_path: Path) -> None:
+    runner = FakeCodeRunner()
+    missing = tmp_path / "not-a-clone"  # the fake git raises for a missing folder
+
+    service(runner, tmp_path).execute("run-1", "dana-api", WORKING_COPY, (GENERAL,))
+    ExecutionService(runner, tmp_path / "runs", Path("logs"), FakeGitClient(), 5).execute(
+        "run-1", "dana-api", missing, (GENERAL,)
+    )
+
+    assert [request.recent_changes for request in runner.requests] == [(), ()]

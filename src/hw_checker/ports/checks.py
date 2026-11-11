@@ -8,6 +8,7 @@ from hw_checker.domain import (
     CheckInput,
     ConditionOutcome,
     Finding,
+    NotEvaluatedOutcome,
     NotEvaluatedReason,
     ParamValue,
     Requirement,
@@ -36,8 +37,11 @@ class CheckCatalog(Protocol):
 class RequirementChecker(Protocol):
     """Evaluates one deterministic requirement (structure, custom, build or http)."""
 
-    def check(self, check_input: CheckInput) -> tuple[Finding, ...] | NotEvaluatedReason:
-        """Return the findings for `check_input.requirement`, or why it was not evaluated.
+    def check(
+        self, check_input: CheckInput
+    ) -> tuple[Finding, ...] | NotEvaluatedReason | NotEvaluatedOutcome:
+        """Return the findings for `check_input.requirement`, or why it was not evaluated
+        (with a detail, when the evaluator gives one).
 
         An empty tuple means the requirement passed. A `code` requirement is not evaluated
         (`awaiting_reviewer`). Only reads the working copy.

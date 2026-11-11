@@ -264,6 +264,18 @@ ABSOLUTE_PATHS = MessageTemplate(
     ),
 )
 
+DATA_FILE_NOT_IN_REPO = MessageTemplate(
+    name="DATA_FILE_NOT_IN_REPO",
+    he=(
+        "`{path}` לא נמצא בריפוזיטורי, ולכן האפליקציה נכשלת עד שהוא נוצר. כדאי להוסיף את "
+        "קובץ הנתונים לריפוזיטורי, או ליצור אותו כשהוא חסר."
+    ),
+    en=(
+        "`{path}` isn't in the repo, so the app fails until it is created. Add the data file "
+        "to the repo, or create it when it's missing."
+    ),
+)
+
 CLIENT_FILE_REFS = MessageTemplate(
     name="CLIENT_FILE_REFS",
     he="דפים מפנים לקבצים שלא קיימים, ולכן הדף לא יעבוד: {examples}. סך הכול: {count}.",
@@ -482,6 +494,34 @@ AMBIGUOUS_NAMES = MessageTemplate(
     en=" Not checked, because the name is declared more than once: {names}.",
 )
 
+# ---------------------------------------------------------------- not-evaluated details
+# Why an `environment_issue` happened, for the reviewer's report (English only, like the
+# report); the report template words the sentence around the detail.
+
+ENVIRONMENT_PREPARE = "the prepare step failed: {message}"
+ENVIRONMENT_BUILD = "the build step failed on the checking machine ({kind}): {message}"
+ENVIRONMENT_RUN = "the run step failed on the checking machine ({kind}): {message}"
+ENVIRONMENT_RUN_PATHS = (
+    "the run step failed ({kind}), and the code has a path the run could not adapt to the "
+    "container: {paths}"
+)
+ENVIRONMENT_PROBE_PATHS = (
+    "a request failed, and the code has a path the run could not adapt to the container: {paths}"
+)
+ENVIRONMENT_PATH = "`{tail}` ({why})"
+ENVIRONMENT_PATH_WHY = {
+    "no_match": "it names no file or folder of the repo",
+    "several_matches": "several files of the repo match it",
+    "dynamic": "it is built at run time",
+}
+ENVIRONMENT_MORE_PATHS = " and {count} more"
+ENVIRONMENT_NOT_PROBED = (
+    "no request of this requirement was sent, although the app answered: the run's "
+    "requests ({count}) were all for other requirements (was it run with this assignment's "
+    "probes?)"
+)
+ENVIRONMENT_NO_MESSAGE = "no message in the log"
+
 ALL_TEMPLATES: tuple[MessageTemplate, ...] = (
     FILE_MISSING,
     FILE_TOO_FEW,
@@ -512,6 +552,7 @@ ALL_TEMPLATES: tuple[MessageTemplate, ...] = (
     GITIGNORE_NOT_COVERING,
     NOT_COMMITTED,
     ABSOLUTE_PATHS,
+    DATA_FILE_NOT_IN_REPO,
     CLIENT_FILE_REFS,
     CLIENT_REF_MISSING,
     CLIENT_REF_CASE,

@@ -120,6 +120,16 @@ class GitClient(Protocol):
         """
         ...
 
+    def recent_changes(self, repo_dir: Path, max_commits: int) -> tuple[tuple[str, ...], ...]:
+        """Return the repo-relative POSIX paths each of the latest `max_commits` commits of
+        the checked-out commit's history changed, newest commit first (a merge lists none).
+
+        Raises:
+            RepoUnavailableError: `repo_dir` is not a readable Git working copy.
+            ExecutionEnvironmentError: the git executable is not available.
+        """
+        ...
+
     def tracked_files(self, repo_dir: Path) -> TrackedFiles:
         """Return the files git tracks in `repo_dir`, and which of them the repo's own
         `.gitignore` files match (the machine's global excludes are not used).

@@ -50,6 +50,7 @@ def test_committed_assignments_folder_loads_general_and_hw01() -> None:
         ("hw01-login-wrong-204", "minor"),
         ("hw01-update", "major"),
         ("hw01-update-read-back", "major"),
+        ("hw01-data-file-in-repo", "minor"),
         ("hw01-client-pages", "major"),
         ("hw01-client-scripts", "major"),
         ("hw01-client-file-refs", "major"),
@@ -57,7 +58,11 @@ def test_committed_assignments_folder_loads_general_and_hw01() -> None:
         ("hw01-client-fetch-routes", "major"),
     ]
     client = [r for r in hw01.requirements if r.id.startswith("hw01-client")]
-    assert all(r.kind is RequirementKind.HTTP for r in hw01.requirements if r not in client)
+    (data_file,) = [r for r in hw01.requirements if r.id == "hw01-data-file-in-repo"]
+    assert (data_file.kind, data_file.check) == (RequirementKind.CUSTOM, "data_files_in_repo")
+    assert data_file.feedback is Feedback.NOTES_ONLY
+    others = [r for r in hw01.requirements if r not in client and r is not data_file]
+    assert all(r.kind is RequirementKind.HTTP for r in others)
     assert {r.check for r in client} == {
         "file_exists",
         "client_file_refs",

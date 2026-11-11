@@ -424,6 +424,28 @@ def test_the_repo_report_words_a_windows_path_with_the_path(tmp_path: Path) -> N
     ) in text
 
 
+def test_the_repo_report_shows_what_an_environment_issue_was(tmp_path: Path) -> None:
+    report = data.full_report()
+    [first, *rest] = report.repo_run.assignment_results
+    skipped = NotEvaluated(
+        requirement_id="hw01-r9",
+        reason=NotEvaluatedReason.ENVIRONMENT_ISSUE,
+        detail="the prepare step failed: several Web projects found: A/A.csproj, B/B.csproj",
+    )
+    result = first.model_copy(update={"not_evaluated": (*first.not_evaluated, skipped)})
+    repo_run = report.repo_run.model_copy(update={"assignment_results": (result, *rest)})
+
+    path = MarkdownReportWriter(tmp_path).write_repo_report(
+        report.model_copy(update={"repo_run": repo_run})
+    )
+
+    text = path.read_text(encoding="utf-8")
+    assert (
+        "Not checked because of a problem on the checking machine, not in the student's "
+        "code: the prepare step failed: several Web projects found: A/A.csproj, B/B.csproj."
+    ) in text
+
+
 def test_the_repo_report_says_a_code_requirement_waits_for_the_code_reviewer(
     tmp_path: Path,
 ) -> None:

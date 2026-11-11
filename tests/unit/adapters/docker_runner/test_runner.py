@@ -1,6 +1,7 @@
 import io
 import json
 import logging
+import posixpath
 import tarfile
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -21,9 +22,12 @@ from hw_checker.domain import (
     HttpMethod,
     HttpProbe,
     NotEvaluatedReason,
+    PathFixKind,
     ResponseShape,
     RouteResolution,
     StepStatus,
+    WebProjectChoice,
+    WebProjectChoiceReason,
 )
 from hw_checker.domain.errors import ExecutionEnvironmentError
 from tests.unit.adapters.docker_runner.fake_engine import FakeClock, FakeEngine
@@ -164,7 +168,7 @@ def test_container_settings(repo: Path, tmp_path: Path) -> None:
         Mount(project, "/data", read_only=False),
     )
     assert project != work and project in engine.removed
-    assert app.working_dir == "/data/project"
+    assert app.working_dir == "/data/repo"
     assert restore.working_dir == build.working_dir == "/work"
     assert app.read_only_root and app.tmpfs == {"/tmp": "size=64m"}
     assert app.command == ("dotnet", "/work/out/Shop.Api.dll")
@@ -186,7 +190,9 @@ def test_container_settings(repo: Path, tmp_path: Path) -> None:
         assert spec.labels["hw-checker-test.repo"] == "dana__api"
 
 
-def test_project_copy_holds_only_the_web_project_folder(tmp_path: Path) -> None:
+def test_writable_copy_holds_the_whole_repo_and_the_app_starts_in_its_web_folder(
+    tmp_path: Path,
+) -> None:
     repo = tmp_path / "repo"
     (repo / "WebApi" / "WebApi" / "Data").mkdir(parents=True)
     (repo / "WebApi" / "WebApi.slnx").write_text("<Solution />", encoding="utf-8")
@@ -208,15 +214,20 @@ def test_project_copy_holds_only_the_web_project_folder(tmp_path: Path) -> None:
 
     assert result.failure_kind is None
     assert copied["/data"] == {
-        "project",
-        "project/WebApi.csproj",
-        "project/users.txt",
-        "project/Data",
-        "project/Data/seed.txt",
+        "repo",
+        "repo/WebApi",
+        "repo/WebApi/WebApi.slnx",
+        "repo/WebApi/WebApi",
+        "repo/WebApi/WebApi/WebApi.csproj",
+        "repo/WebApi/WebApi/users.txt",
+        "repo/WebApi/WebApi/Data",
+        "repo/WebApi/WebApi/Data/seed.txt",
     }
     assert "src/WebApi/WebApi.slnx" in copied["/work"]
     (build,) = engine.specs("build")
     assert build.command[2] == "/work/src/WebApi/WebApi/WebApi.csproj"
+    (app,) = engine.specs("app")
+    assert app.working_dir == "/data/repo/WebApi/WebApi"
 
 
 def test_absolute_path_is_rewritten_in_the_copied_code_only(tmp_path: Path) -> None:
@@ -246,7 +257,7 @@ def test_absolute_path_is_rewritten_in_the_copied_code_only(tmp_path: Path) -> N
 
     expected = b'class Store { const string P = @"Data/users.txt"; }'
     assert contents["/work"]["src/Api/Store.cs"] == expected
-    assert contents["/data"]["project/Store.cs"] == expected
+    assert contents["/data"]["repo/Api/Store.cs"] == expected
     assert store.read_bytes() == before
     (rewrite,) = result.path_rewrites
     assert (rewrite.file_path, rewrite.line, rewrite.rewritten) == (
@@ -256,6 +267,139 @@ def test_absolute_path_is_rewritten_in_the_copied_code_only(tmp_path: Path) -> N
     )
     prepare_log = (tmp_path / "logs" / "prepare.log").read_text(encoding="utf-8")
     assert "rewritten to 'Data/users.txt'" in prepare_log
+
+
+def test_absolute_path_to_a_sibling_project_points_at_its_file_in_the_writable_copy(
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "repo"
+    (repo / "Api").mkdir(parents=True)
+    (repo / "Repository").mkdir()
+    (repo / "Api" / "Api.csproj").write_text(WEB_PROJECT, encoding="utf-8")
+    (repo / "Repository" / "Repository.csproj").write_text("<Project />", encoding="utf-8")
+    (repo / "Repository" / "users.txt").write_bytes(b"1\n")
+    (repo / "Repository" / "Store.cs").write_bytes(
+        b'class Store { const string P = @"D:\\Shop\\Repository\\users.txt"; }'
+    )
+    contents: dict[str, dict[str, bytes]] = {}
+    engine = FakeEngine()
+    original = engine.put_archive
+
+    def record(container: str, path: str, data: bytes) -> None:
+        with tarfile.open(fileobj=io.BytesIO(data)) as archive:
+            contents[path] = {
+                member.name: archive.extractfile(member).read()  # type: ignore[union-attr]
+                for member in archive.getmembers()
+                if member.isfile()
+            }
+        original(container, path, data)
+
+    engine.put_archive = record  # type: ignore[method-assign]
+
+    result = runner(engine).execute(request(repo, tmp_path))
+
+    (rewrite,) = result.path_rewrites
+    assert rewrite.rewritten == "../Repository/users.txt"
+    (app,) = engine.specs("app")
+    read = posixpath.normpath(posixpath.join(app.working_dir or "", rewrite.rewritten))
+    assert read == "/data/repo/Repository/users.txt"
+    assert contents["/data"]["repo/Repository/users.txt"] == b"1\n"
+    assert contents["/data"]["repo/Repository/Store.cs"].endswith(b'@"../Repository/users.txt"; }')
+
+
+def test_a_data_file_the_repo_lacks_is_created_empty_in_the_writable_copy_only(
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "repo"
+    (repo / "Api").mkdir(parents=True)
+    (repo / "Repository").mkdir()
+    (repo / "Api" / "Api.csproj").write_text(WEB_PROJECT, encoding="utf-8")
+    (repo / "Repository" / "Store.cs").write_bytes(
+        b'class Store { const string P = @"D:\\Shop\\Repository\\users.txt"; }'
+    )
+    files: dict[str, dict[str, bytes]] = {}
+    engine = FakeEngine(probe_statuses=STATUSES)
+    original = engine.put_archive
+
+    def record(container: str, path: str, data: bytes) -> None:
+        with tarfile.open(fileobj=io.BytesIO(data)) as archive:
+            files[path] = {
+                member.name: archive.extractfile(member).read()  # type: ignore[union-attr]
+                for member in archive.getmembers()
+                if member.isfile()
+            }
+        original(container, path, data)
+
+    engine.put_archive = record  # type: ignore[method-assign]
+
+    result = runner(engine).execute(request(repo, tmp_path))
+
+    (rewrite,) = result.path_rewrites
+    assert (rewrite.rewritten, rewrite.created_path) == (
+        "../Repository/users.txt",
+        "Repository/users.txt",
+    )
+    assert files["/data"]["repo/Repository/users.txt"] == b""
+    assert "src/Repository/users.txt" not in files["/work"]
+    assert not (repo / "Repository" / "users.txt").exists()
+    assert not result.has_unresolved_paths
+    assert result.probe_results, "the app is probed"
+    prepare_log = (tmp_path / "logs" / "prepare.log").read_text(encoding="utf-8")
+    assert "created empty at 'Repository/users.txt'" in prepare_log
+
+
+def two_web_projects(tmp_path: Path) -> Path:
+    repo = tmp_path / "repo"
+    for name in ("OldApi", "NewApi"):
+        (repo / name).mkdir(parents=True)
+        (repo / name / f"{name}.csproj").write_text(WEB_PROJECT, encoding="utf-8")
+        (repo / name / "Program.cs").write_text("var b = 1;", encoding="utf-8")
+    return repo
+
+
+def test_of_several_web_projects_the_chosen_one_is_built_and_recorded(tmp_path: Path) -> None:
+    repo = two_web_projects(tmp_path)
+    engine = FakeEngine()
+    recent = (("NewApi/Program.cs",),)
+
+    result = runner(engine).execute(request(repo, tmp_path, recent_changes=recent))
+
+    assert result.failure_kind is None
+    assert result.web_project == WebProjectChoice(
+        path="NewApi/NewApi.csproj",
+        reason=WebProjectChoiceReason.RECENTLY_CHANGED,
+        candidates=("NewApi/NewApi.csproj", "OldApi/OldApi.csproj"),
+    )
+    (build,) = engine.specs("build")
+    assert build.command[2] == "/work/src/NewApi/NewApi.csproj"
+    prepare_log = (tmp_path / "logs" / "prepare.log").read_text(encoding="utf-8")
+    assert (
+        "chosen of the Web projects NewApi/NewApi.csproj, OldApi/OldApi.csproj: the one the "
+        "latest commits changed (recently_changed)"
+    ) in prepare_log
+
+
+def test_a_single_web_project_is_recorded_as_the_only_one(repo: Path, tmp_path: Path) -> None:
+    result = runner(FakeEngine()).execute(request(repo, tmp_path))
+
+    assert result.web_project == WebProjectChoice(
+        path="Shop.Api.csproj",
+        reason=WebProjectChoiceReason.SINGLE,
+        candidates=("Shop.Api.csproj",),
+    )
+
+
+def test_web_projects_the_rule_cannot_tell_apart_are_not_run(tmp_path: Path) -> None:
+    engine = FakeEngine()
+
+    result = runner(engine).execute(request(two_web_projects(tmp_path), tmp_path))
+
+    assert result.failure_kind is FailureKind.PROJECT_NOT_FOUND
+    assert result.web_project is None
+    assert "NewApi/NewApi.csproj, OldApi/OldApi.csproj; none could be chosen" in (
+        result.logs_excerpt
+    )
+    assert engine.specs("build") == []
 
 
 def test_route_table_is_recorded_on_the_result_and_in_the_prepare_log(
@@ -637,7 +781,7 @@ def test_project_without_routes_records_an_empty_table(repo: Path, tmp_path: Pat
 
 
 def test_unresolved_path_is_recorded_on_a_failed_build_too(repo: Path, tmp_path: Path) -> None:
-    (repo / "Store.cs").write_text('var p = @"C:\\x\\orders.txt";', encoding="utf-8")
+    (repo / "Store.cs").write_text('var p = @"C:\\x\\archive";', encoding="utf-8")
     engine = FakeEngine(exit_codes={"build": 1}, logs_by_kind={"build": BUILD_ERROR})
 
     result = runner(engine).execute(request(repo, tmp_path))
@@ -1032,3 +1176,43 @@ def test_the_run_log_s_windows_paths_are_kept_with_the_result(repo: Path, tmp_pa
     result = runner(engine).execute(request(repo, tmp_path))
 
     assert result.windows_paths == ("/data/project/..\\data\\users.txt",)
+
+
+def test_a_reference_in_other_case_is_rewritten_in_both_copies_only(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    (repo / "Api").mkdir(parents=True)
+    (repo / "Services").mkdir()
+    web = WEB_PROJECT.replace(
+        "</Project>",
+        r'<ItemGroup><ProjectReference Include="..\services\Services.csproj" /></ItemGroup>'
+        "</Project>",
+    )
+    (repo / "Api" / "Api.csproj").write_text(web, encoding="utf-8")
+    (repo / "Services" / "Services.csproj").write_text("<Project />", encoding="utf-8")
+    before = (repo / "Api" / "Api.csproj").read_bytes()
+    files: dict[str, dict[str, bytes]] = {}
+    engine = FakeEngine()
+    original = engine.put_archive
+
+    def record(container: str, path: str, data: bytes) -> None:
+        with tarfile.open(fileobj=io.BytesIO(data)) as archive:
+            files[path] = {
+                member.name: archive.extractfile(member).read()  # type: ignore[union-attr]
+                for member in archive.getmembers()
+                if member.isfile()
+            }
+        original(container, path, data)
+
+    engine.put_archive = record  # type: ignore[method-assign]
+
+    result = runner(engine).execute(request(repo, tmp_path))
+
+    expected = before.replace(rb"\services", rb"\Services")
+    assert files["/work"]["src/Api/Api.csproj"] == expected
+    assert files["/data"]["repo/Api/Api.csproj"] == expected
+    assert (repo / "Api" / "Api.csproj").read_bytes() == before
+    assert [(r.file_path, r.kind) for r in result.path_rewrites] == [
+        ("Api/Api.csproj", PathFixKind.CASE)
+    ]
+    prepare_log = (tmp_path / "logs" / "prepare.log").read_text(encoding="utf-8")
+    assert r"rewritten to '..\\Services\\Services.csproj'" in prepare_log

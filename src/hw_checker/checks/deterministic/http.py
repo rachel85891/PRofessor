@@ -2,6 +2,13 @@
 
 from dataclasses import dataclass
 
+from hw_checker.checks.deterministic.environment import (
+    build_failed,
+    not_probed,
+    prepare_failed,
+    probe_failed_with_paths,
+    run_failed,
+)
 from hw_checker.checks.deterministic.findings import deterministic_finding
 from hw_checker.checks.deterministic.messages import (
     HTTP_PROBES_FAILED,
@@ -20,6 +27,7 @@ from hw_checker.domain import (
     ExecutionResult,
     ExpectedJson,
     Finding,
+    NotEvaluatedOutcome,
     NotEvaluatedReason,
     ProbeResult,
     ResponseEvidence,
@@ -44,7 +52,9 @@ class _Failure:
     content: bool
 
 
-def evaluate_http(check_input: CheckInput) -> tuple[Finding, ...] | NotEvaluatedReason:
+def evaluate_http(
+    check_input: CheckInput,
+) -> tuple[Finding, ...] | NotEvaluatedReason | NotEvaluatedOutcome:
     """Return one finding naming every failed probe of the requirement.
 
     Only a successful run is judged, so a build failure never cascades into HTTP findings.
@@ -65,20 +75,22 @@ def evaluate_http(check_input: CheckInput) -> tuple[Finding, ...] | NotEvaluated
     the student's code, may be what failed. A probe that was not sent because an earlier
     probe failed to capture a value it needs gives `dependency_failed`: the earlier probe
     is judged on its own, so the failure is never counted twice.
+    Every `environment_issue` comes with a detail: which step failed, the paths that could
+    not be adapted and why, or why the requirement was not probed.
     """
     execution = check_input.execution
     if execution is None:
         return NotEvaluatedReason.NO_EXECUTION
     if execution.prepare_status is StepStatus.FAILED:
-        return NotEvaluatedReason.ENVIRONMENT_ISSUE
+        return prepare_failed(execution)
     if execution.build_status is StepStatus.FAILED:
         kind = execution.failure_kind
         if kind is not None and kind.is_student_issue:
             return NotEvaluatedReason.BUILD_FAILED
-        return NotEvaluatedReason.ENVIRONMENT_ISSUE  # a build timeout or environment problem
+        return build_failed(execution)  # a build timeout or environment problem
     if execution.run_status is not StepStatus.SUCCEEDED:
         if execution.has_unresolved_paths:
-            return NotEvaluatedReason.ENVIRONMENT_ISSUE
+            return run_failed(execution)
         return NotEvaluatedReason.RUN_NOT_HEALTHY
     results = [
         result
@@ -87,7 +99,7 @@ def evaluate_http(check_input: CheckInput) -> tuple[Finding, ...] | NotEvaluated
         and result.assignment_id == check_input.assignment.id
     ]
     if not results:
-        return NotEvaluatedReason.ENVIRONMENT_ISSUE  # the runner did not probe this requirement
+        return not_probed(execution)  # the runner did not probe this requirement
     if any(result.route_resolution is RouteResolution.ROUTE_NOT_FOUND for result in results):
         return NotEvaluatedReason.ROUTE_NOT_FOUND
     if any(result.route_resolution is RouteResolution.DEPENDENCY_MISSING for result in results):
@@ -100,7 +112,7 @@ def evaluate_http(check_input: CheckInput) -> tuple[Finding, ...] | NotEvaluated
     if any(result.body_mismatched for result, _ in failures):
         return NotEvaluatedReason.BODY_MISMATCH
     if execution.has_unresolved_paths:
-        return NotEvaluatedReason.ENVIRONMENT_ISSUE  # a hard-coded path the run could not adapt
+        return probe_failed_with_paths(execution)  # a path the run could not adapt
     if execution.windows_paths and any(_server_error(result) for result, _ in failures):
         return NotEvaluatedReason.WINDOWS_PATH
     lines = [failure.line for _, failure in failures]

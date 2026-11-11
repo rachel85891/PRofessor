@@ -86,6 +86,8 @@ from hw_checker.domain.execution import (
     TypeFact,
     TypeKind,
     UnsupportedRouting,
+    WebProjectChoice,
+    WebProjectChoiceReason,
 )
 from hw_checker.domain.findings import (
     Evidence,
@@ -142,6 +144,7 @@ from hw_checker.domain.run import (
     AssignmentVersion,
     FindingBrief,
     NotEvaluated,
+    NotEvaluatedOutcome,
     NotEvaluatedReason,
     RepoRunResult,
     RepoRunStatus,
@@ -225,6 +228,7 @@ __all__ = [
     "LlmUsage",
     "MemberFact",
     "NotEvaluated",
+    "NotEvaluatedOutcome",
     "NotEvaluatedReason",
     "NoteSection",
     "Origin",
@@ -293,6 +297,8 @@ __all__ = [
     "UnsupportedRouting",
     "Verdict",
     "VerifyResult",
+    "WebProjectChoice",
+    "WebProjectChoiceReason",
     "new_run_id",
     "parse_github_url",
 ]

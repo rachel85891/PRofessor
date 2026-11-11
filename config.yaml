@@ -121,6 +121,9 @@ runner:
   max_response_kb: 64
   # Seconds the Docker client waits for one engine API call.
   engine_timeout_seconds: 120
+  # With several Web projects in a repo (an old one next to the new layered API), the last
+  # step of the choice is the one the latest commits changed; this many commits are read.
+  web_project_commits: 20
   # Folder for full build and run logs inside each run's folder:
   # <workspace_dir>/runs/<run_id>/<logs_root>/<repo_id>.
   logs_root: logs

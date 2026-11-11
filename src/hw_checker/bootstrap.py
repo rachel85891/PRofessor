@@ -199,6 +199,8 @@ def build_execution(settings: Settings) -> ExecutionService:
         DockerCodeRunner(runner_config(settings.runner), _connect_docker(settings.runner)),
         settings.workspace_dir.resolve() / RUNS_FOLDER,
         settings.runner.logs_root,
+        build_git_client(settings),
+        settings.runner.web_project_commits,
     )
 
 

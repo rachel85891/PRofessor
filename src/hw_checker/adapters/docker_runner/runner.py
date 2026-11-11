@@ -3,9 +3,10 @@
 Student code never runs on the host, never has network access during build or run, and
 everything created for a repo is removed in `finally`.
 
-The app runs like `dotnet run` on the student's machine: its working directory is a
-writable copy of the Web project's folder (with its data files), on a per-repo volume of its
-own, while the source and the published output stay read-only.
+The app runs like `dotnet run` on the student's machine: its working directory is the Web
+project's folder in a writable copy of the whole repo, on a per-repo volume of its own, so
+every project's data files keep their places (`../Repository/users.txt` resolves). The
+source and the published output stay read-only.
 """
 
 import dataclasses
@@ -19,9 +20,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from hw_checker.adapters.docker_runner.archive import (
-    PROJECT_DIR,
+    REPO_DIR,
     ArchiveTooLargeError,
-    build_project_archive,
+    build_repo_archive,
     build_work_archive,
     directory_archive,
 )
@@ -66,6 +67,7 @@ from hw_checker.adapters.docker_runner.runner_config import (
     DockerRunnerConfig,
     FrameworkImages,
 )
+from hw_checker.adapters.docker_runner.web_choice import choose_web_project
 from hw_checker.adapters.docker_runner.windows_paths import windows_paths_in_log
 from hw_checker.config.logging_setup import log_context
 from hw_checker.domain import (
@@ -80,6 +82,8 @@ from hw_checker.domain import (
     RouteResolution,
     RouteTable,
     StepStatus,
+    WebProjectChoice,
+    WebProjectChoiceReason,
 )
 from hw_checker.domain.errors import ExecutionEnvironmentError
 from hw_checker.domain.execution import MAX_PROBE_ERROR_CHARS
@@ -90,8 +94,8 @@ WORK_MOUNT = "/work"
 CACHE_MOUNT = "/nuget"
 OUTPUT_DIR = "/work/out"
 DATA_MOUNT = "/data"
-APP_WORKING_DIR = f"{DATA_MOUNT}/{PROJECT_DIR}"
-"""The app's working directory: the writable copy of the Web project's folder."""
+DATA_REPO_DIR = f"{DATA_MOUNT}/{REPO_DIR}"
+"""The writable copy of the whole repo; the app's working directory is its Web folder."""
 DOTNET_ENVIRONMENT = {
     "NUGET_PACKAGES": f"{CACHE_MOUNT}/packages",
     "DOTNET_CLI_TELEMETRY_OPTOUT": "1",
@@ -297,10 +301,12 @@ class _Execution:
     # ------------------------------------------------------------------ pipeline
 
     def _pipeline(self) -> ExecutionResult:
-        discovery = discover_web_project(self.request.working_copy)
-        if isinstance(discovery, DiscoveryFailure):
-            return self._prepare_failed(discovery.message, project_found=False)
+        found = self._web_project()
+        if isinstance(found, str):
+            return self._prepare_failed(found, project_found=False)
+        discovery, choice = found
         framework = {
+            "web_project": choice,
             "target_framework": discovery.target_framework,
             "framework_outdated": is_older_framework(
                 discovery.framework, self.config.course_framework
@@ -320,7 +326,7 @@ class _Execution:
             ProjectFolder(discovery.folder, discovery.nullable),
             discovery.other_projects,
         )
-        result = self._prepare_build_run(discovery, plan)
+        result = self._prepare_build_run(discovery, plan, choice)
         # Every result after this point records the detected paths, the route table and the
         # controller choice.
         return result.model_copy(
@@ -334,25 +340,49 @@ class _Execution:
             }
         )
 
-    def _prepare_build_run(self, discovery: WebProject, plan: PathPlan) -> ExecutionResult:
+    def _web_project(self) -> tuple[WebProject, WebProjectChoice] | str:
+        """The Web project to run and why, or why there is none (stage 22 rule)."""
+        discovery = discover_web_project(self.request.working_copy)
+        if isinstance(discovery, WebProject):
+            single = WebProjectChoiceReason.SINGLE
+            return discovery, WebProjectChoice(
+                path=discovery.path, reason=single, candidates=(discovery.path,)
+            )
+        if not discovery.candidates:
+            return discovery.message
+        candidates = tuple(candidate.path for candidate in discovery.candidates)
+        chosen = choose_web_project(
+            self.request.working_copy, discovery.candidates, self.request.recent_changes
+        )
+        if isinstance(chosen, str):
+            return _with_unreadable(chosen, discovery)
+        logger.info(
+            "Chose the Web project %s of %d (%s)",
+            chosen.project.path,
+            len(candidates),
+            chosen.reason.value,
+            extra={"web_project": chosen.project.path, "web_project_reason": chosen.reason.value},
+        )
+        return chosen.project, WebProjectChoice(
+            path=chosen.project.path, reason=chosen.reason, candidates=candidates
+        )
+
+    def _prepare_build_run(
+        self, discovery: WebProject, plan: PathPlan, choice: WebProjectChoice
+    ) -> ExecutionResult:
         limits = (self.config.max_archive_bytes, self.config.max_file_bytes)
         uid, gid = self.config.app_uid, self.config.app_gid
-        prefix = f"{discovery.folder}/" if discovery.folder else ""
-        project_overrides = {
-            path.removeprefix(prefix): data
-            for path, data in plan.overrides.items()
-            if path.startswith(prefix)
-        }
         try:
             archive = build_work_archive(
                 self.request.working_copy, uid, gid, *limits, overrides=plan.overrides
             )
-            project_archive = build_project_archive(
-                self.request.working_copy / discovery.folder,
+            data_archive = build_repo_archive(
+                self.request.working_copy,
                 uid,
                 gid,
                 *limits,
-                overrides=project_overrides,
+                overrides=plan.overrides,
+                created=plan.created,
             )
         except ArchiveTooLargeError as error:
             return self._prepare_failed(f"not run, flagged for review: {error}")
@@ -362,15 +392,16 @@ class _Execution:
             )
         self._preflight()
         work_volume = self._name("work")
-        project_volume = self._name("project")
+        data_volume = self._name("data")
         try:
             self._create_volume(work_volume, "work", WORK_MOUNT, archive.data)
-            self._create_volume(project_volume, "project", DATA_MOUNT, project_archive.data)
+            self._create_volume(data_volume, "data", DATA_MOUNT, data_archive.data)
         except EngineError as error:
             return self._prepare_failed(f"cannot copy the code into Docker: {error}", engine=True)
         self._write_log(
             RunnerStep.PREPARE,
             f"Web project: {discovery.path} ({discovery.framework})\n"
+            + _describe_choice(choice)
             + _describe_paths(plan.rewrites)
             + _describe_routes(self.routes)
             + _describe_controllers(self.routes, self.controllers),
@@ -382,6 +413,12 @@ class _Execution:
                 rewritten,
                 len(plan.rewrites),
                 extra={"paths_detected": len(plan.rewrites), "paths_rewritten": rewritten},
+            )
+        if plan.created:
+            logger.info(
+                "Created %d empty data files the repo lacks, in the run's copy only",
+                len(plan.created),
+                extra={"data_files_created": len(plan.created)},
             )
 
         project = f"{WORK_MOUNT}/src/{discovery.path}"
@@ -420,7 +457,7 @@ class _Execution:
         )
         if (kind := classify(build.outcome)) is not None:
             return self._build_failed(kind, build.log)
-        return self._run_and_probe(work_volume, project_volume, discovery.assembly_name)
+        return self._run_and_probe(work_volume, data_volume, discovery)
 
     def _preflight(self) -> None:
         try:
@@ -462,7 +499,7 @@ class _Execution:
         self._remove_container(helper)
 
     def _run_and_probe(
-        self, work_volume: str, project_volume: str, assembly_name: str
+        self, work_volume: str, data_volume: str, discovery: WebProject
     ) -> ExecutionResult:
         network = self._name("net")
         app_name = self._name("app")
@@ -472,7 +509,7 @@ class _Execution:
             self.engine.create_network(network, self._labels("network"), internal=True)
             self.networks.append(network)
             app = self._create(
-                self._app_spec(app_name, network, work_volume, project_volume, assembly_name)
+                self._app_spec(app_name, network, work_volume, data_volume, discovery)
             )
             sidecar = self._create(self._probe_spec(network))
             self.engine.start(sidecar)
@@ -690,7 +727,7 @@ class _Execution:
         )
 
     def _app_spec(
-        self, name: str, network: str, work_volume: str, project_volume: str, assembly_name: str
+        self, name: str, network: str, work_volume: str, data_volume: str, discovery: WebProject
     ) -> ContainerSpec:
         limits = self.config.run_limits
         environment = {
@@ -701,7 +738,7 @@ class _Execution:
         return ContainerSpec(
             name=name,
             image=self._images().runtime,
-            command=("dotnet", f"{OUTPUT_DIR}/{assembly_name}.dll"),
+            command=("dotnet", f"{OUTPUT_DIR}/{discovery.assembly_name}.dll"),
             labels=self._labels("app"),
             user=self.config.user,
             memory_mb=limits.memory_mb,
@@ -709,15 +746,15 @@ class _Execution:
             pids=limits.pids,
             mounts=(
                 Mount(work_volume, WORK_MOUNT, read_only=True),
-                # The only writable place: the project copy, discarded in cleanup.
-                Mount(project_volume, DATA_MOUNT, read_only=False),
+                # The only writable place: the repo's copy, discarded in cleanup.
+                Mount(data_volume, DATA_MOUNT, read_only=False),
             ),
             network=network,
             network_aliases=(APP_ALIAS,),
             environment=environment,
             read_only_root=True,
             tmpfs=TMPFS,
-            working_dir=APP_WORKING_DIR,
+            working_dir=app_working_dir(discovery.folder),
         )
 
     def _probe_spec(self, network: str) -> ContainerSpec:
@@ -834,15 +871,47 @@ class _Execution:
             logger.warning("Cleanup could not remove %s %s: %s", kind, name, error)
 
 
+def app_working_dir(web_folder: str) -> str:
+    """The app's working directory: the Web project's folder in the repo's writable copy."""
+    return f"{DATA_REPO_DIR}/{web_folder}" if web_folder else DATA_REPO_DIR
+
+
+CHOICE_REASONS = {
+    WebProjectChoiceReason.ENTRY_POINT: "the only one with an entry point",
+    WebProjectChoiceReason.REFERENCES_PROJECTS: "the only one that references other projects",
+    WebProjectChoiceReason.RECENTLY_CHANGED: "the one the latest commits changed",
+}
+
+
+def _describe_choice(choice: WebProjectChoice) -> str:
+    """Which Web project was chosen of several, and why; nothing when there was one."""
+    if choice.reason is WebProjectChoiceReason.SINGLE:
+        return ""
+    return (
+        f"chosen of the Web projects {', '.join(choice.candidates)}: "
+        f"{CHOICE_REASONS[choice.reason]} ({choice.reason.value})\n"
+    )
+
+
+def _with_unreadable(message: str, discovery: DiscoveryFailure) -> str:
+    if not discovery.unreadable:
+        return message
+    return f"{message}; unreadable project files: {', '.join(discovery.unreadable)}"
+
+
 def _describe_paths(rewrites: tuple[PathRewrite, ...]) -> str:
     """One prepare-log line per detected path (kept in the per-repo log, not the app log)."""
     lines = []
     for rewrite in rewrites:
-        outcome = (
-            f"rewritten to {rewrite.rewritten!r}"
-            if rewrite.rewritten is not None
-            else f"not rewritten ({rewrite.not_rewritten_reason})"
-        )
+        if rewrite.created_path is not None:
+            outcome = (
+                f"not in the repo: rewritten to {rewrite.rewritten!r}, created empty at "
+                f"{rewrite.created_path!r} in the run's copy"
+            )
+        elif rewrite.rewritten is not None:
+            outcome = f"rewritten to {rewrite.rewritten!r}"
+        else:
+            outcome = f"not rewritten ({rewrite.not_rewritten_reason})"
         lines.append(
             f"{rewrite.kind} path {rewrite.original!r} at {rewrite.file_path}:{rewrite.line}: "
             f"{outcome}\n"

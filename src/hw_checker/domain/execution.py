@@ -274,6 +274,10 @@ class PathFixKind(StrEnum):
     """A hard-coded absolute host path (`C:\\...`, `\\\\server\\...`)."""
     CASE = "case"
     """A relative path whose letter case differs from the real file (Windows ignores case)."""
+    SEPARATOR = "separator"
+    """A relative path written with `\\`, a folder separator on Windows but not on Linux."""
+    RELATIVE = "relative"
+    """A relative path that leads out of the repo, or to a folder that is not in it."""
 
 
 class PathNotRewrittenReason(StrEnum):
@@ -293,18 +297,31 @@ class PathRewrite(DomainModel):
     """
 
     file_path: NonBlankStr
-    """The source file, relative to the working copy, with forward slashes."""
+    """The source file (or `.csproj`, for a project reference), relative to the working
+    copy, with forward slashes."""
     line: int = Field(ge=1)
     kind: PathFixKind
     original: str = Field(min_length=1, max_length=MAX_PATH_TEXT_CHARS)
     rewritten: str | None = Field(default=None, max_length=MAX_PATH_TEXT_CHARS)
-    """The project-relative path used instead, or None when the path was not rewritten."""
+    """The path used instead, relative to the Web project's folder (the app's working
+    directory; for a project reference, to the `.csproj` file's folder), or None when the
+    path was not rewritten."""
     not_rewritten_reason: PathNotRewrittenReason | None = None
+    created_path: str | None = Field(default=None, max_length=MAX_PATH_TEXT_CHARS)
+    """The repo-relative path of the empty file created in the run's copy because the data
+    file is not in the repo (outcome `created_empty`); None when nothing was created."""
+
+    @property
+    def created_empty(self) -> bool:
+        """True when the file is not in the repo and an empty one was created for the run."""
+        return self.created_path is not None
 
     @model_validator(mode="after")
     def _rewritten_or_reason(self) -> Self:
         if (self.rewritten is None) == (self.not_rewritten_reason is None):
             raise ValueError("a path is either rewritten or has a not_rewritten_reason")
+        if self.created_path is not None and self.rewritten is None:
+            raise ValueError("a created file is only recorded for a rewritten path")
         return self
 
 
@@ -410,6 +427,29 @@ class CodeFacts(DomainModel):
     truncated: tuple[str, ...] = ()
 
 
+class WebProjectChoiceReason(StrEnum):
+    """Why the runner built this Web project (stage 22: mechanism, not assignment data)."""
+
+    SINGLE = "single"
+    """It is the repo's only `Microsoft.NET.Sdk.Web` project."""
+    ENTRY_POINT = "entry_point"
+    """Of several, only it has an entry point (`Program.cs`, or code that builds the host)."""
+    REFERENCES_PROJECTS = "references_projects"
+    """Of those left, only it references other projects of the repo."""
+    RECENTLY_CHANGED = "recently_changed"
+    """Of those left, the latest commit that changed any of them changed only it."""
+
+
+class WebProjectChoice(DomainModel):
+    """The Web project the runner built and ran, why, and every Web project it chose from."""
+
+    path: NonBlankStr
+    """The chosen project file, relative to the working copy."""
+    reason: WebProjectChoiceReason
+    candidates: tuple[NonBlankStr, ...] = ()
+    """Every `Microsoft.NET.Sdk.Web` project of the repo, the chosen one included."""
+
+
 class ExecutionResult(DomainModel):
     """Prepare, build and run outcome for one repo, with probe results and a log excerpt.
 
@@ -426,6 +466,8 @@ class ExecutionResult(DomainModel):
     probe_results: tuple[ProbeResult, ...] = ()
     path_rewrites: tuple[PathRewrite, ...] = ()
     """Paths in the student's code that were adapted (or could not be) to run in Docker."""
+    web_project: WebProjectChoice | None = None
+    """The Web project that was built, and why; None when none was chosen."""
     routes: RouteTable | None = None
     """The routes declared in the student's code; None when they were not read."""
     primary_controller: str | None = None
@@ -500,6 +542,9 @@ class ExecutionRequest(DomainModel):
     environment: tuple[tuple[NonBlankStr, str], ...] = ()
     """Extra environment variables for the running app (for example connection strings)."""
     logs_dir: Path
+    recent_changes: tuple[tuple[str, ...], ...] = ()
+    """The paths each of the latest commits changed, newest first: it decides between
+    several Web projects when nothing else does."""
 
     @model_validator(mode="after")
     def _environment_keys_are_unique(self) -> Self:

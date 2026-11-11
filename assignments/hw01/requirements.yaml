@@ -196,6 +196,16 @@ requirements:
         expect_json: object
         expect_values: ["probe.updated@example.com", "{user_id}"]
 
+  # Stage 22, approved by the developer on 2026-11-11: a data file the code opens by a
+  # hard-coded path but the repo lacks is created empty for the run, so the HTTP checks are
+  # evaluated; the student gets a note. Notes only: the fixer never adds the file.
+  - id: hw01-data-file-in-repo
+    kind: custom
+    title: The data file the code reads is in the repo
+    severity: minor
+    feedback: notes_only
+    check: data_files_in_repo
+
   # Stage 17, approved by the developer on 2026-11-05: the client files in wwwroot.
   # A finding means the page really breaks; what cannot be told from the files is skipped.
   - id: hw01-client-pages

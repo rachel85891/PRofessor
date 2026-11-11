@@ -14,6 +14,7 @@ from hw_checker.domain import (
     ExecutionResult,
     Finding,
     NotEvaluated,
+    NotEvaluatedOutcome,
     NotEvaluatedReason,
     Requirement,
     RequirementKind,
@@ -24,6 +25,9 @@ from hw_checker.domain.run import MAX_NOT_EVALUATED_DETAIL_CHARS
 from hw_checker.ports import ArchitectureEvidenceReader, GitClient, RequirementChecker
 
 logger = logging.getLogger(__name__)
+
+CHECK_FAILED_DETAIL = "the check stopped with an unexpected {error}"
+"""The detail of a requirement whose check raised: not the student's fault."""
 
 DETERMINISTIC_KINDS = frozenset(
     {RequirementKind.STRUCTURE, RequirementKind.CUSTOM, RequirementKind.BUILD, RequirementKind.HTTP}
@@ -116,7 +120,13 @@ class DeterministicCheckService:
                 )
                 continue
             outcome = self._check(requirement, inputs.for_requirement(requirement))
-            if isinstance(outcome, NotEvaluatedReason):
+            if isinstance(outcome, NotEvaluatedOutcome):
+                not_evaluated.append(
+                    NotEvaluated(
+                        requirement_id=requirement.id, reason=outcome.reason, detail=outcome.detail
+                    )
+                )
+            elif isinstance(outcome, NotEvaluatedReason):
                 detail = paths if outcome is NotEvaluatedReason.WINDOWS_PATH else ""
                 not_evaluated.append(
                     NotEvaluated(requirement_id=requirement.id, reason=outcome, detail=detail)
@@ -201,7 +211,7 @@ class DeterministicCheckService:
 
     def _check(
         self, requirement: Requirement, check_input: CheckInput
-    ) -> tuple[Finding, ...] | NotEvaluatedReason:
+    ) -> tuple[Finding, ...] | NotEvaluatedReason | NotEvaluatedOutcome:
         try:
             return self._checker.check(check_input)
         except InvalidAssignmentError:
@@ -215,7 +225,10 @@ class DeterministicCheckService:
                 type(error).__name__,
                 extra={"requirement_id": requirement.id},
             )
-            return NotEvaluatedReason.ENVIRONMENT_ISSUE
+            return NotEvaluatedOutcome(
+                reason=NotEvaluatedReason.ENVIRONMENT_ISSUE,
+                detail=CHECK_FAILED_DETAIL.format(error=type(error).__name__),
+            )
 
 
 @dataclass
