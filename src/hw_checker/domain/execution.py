@@ -297,13 +297,15 @@ class PathRewrite(DomainModel):
     """
 
     file_path: NonBlankStr
-    """The source file, relative to the working copy, with forward slashes."""
+    """The source file (or `.csproj`, for a project reference), relative to the working
+    copy, with forward slashes."""
     line: int = Field(ge=1)
     kind: PathFixKind
     original: str = Field(min_length=1, max_length=MAX_PATH_TEXT_CHARS)
     rewritten: str | None = Field(default=None, max_length=MAX_PATH_TEXT_CHARS)
     """The path used instead, relative to the Web project's folder (the app's working
-    directory), or None when the path was not rewritten."""
+    directory; for a project reference, to the `.csproj` file's folder), or None when the
+    path was not rewritten."""
     not_rewritten_reason: PathNotRewrittenReason | None = None
     created_path: str | None = Field(default=None, max_length=MAX_PATH_TEXT_CHARS)
     """The repo-relative path of the empty file created in the run's copy because the data

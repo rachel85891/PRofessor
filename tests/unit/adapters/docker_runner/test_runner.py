@@ -22,6 +22,7 @@ from hw_checker.domain import (
     HttpMethod,
     HttpProbe,
     NotEvaluatedReason,
+    PathFixKind,
     ResponseShape,
     RouteResolution,
     StepStatus,
@@ -1175,3 +1176,43 @@ def test_the_run_log_s_windows_paths_are_kept_with_the_result(repo: Path, tmp_pa
     result = runner(engine).execute(request(repo, tmp_path))
 
     assert result.windows_paths == ("/data/project/..\\data\\users.txt",)
+
+
+def test_a_reference_in_other_case_is_rewritten_in_both_copies_only(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    (repo / "Api").mkdir(parents=True)
+    (repo / "Services").mkdir()
+    web = WEB_PROJECT.replace(
+        "</Project>",
+        r'<ItemGroup><ProjectReference Include="..\services\Services.csproj" /></ItemGroup>'
+        "</Project>",
+    )
+    (repo / "Api" / "Api.csproj").write_text(web, encoding="utf-8")
+    (repo / "Services" / "Services.csproj").write_text("<Project />", encoding="utf-8")
+    before = (repo / "Api" / "Api.csproj").read_bytes()
+    files: dict[str, dict[str, bytes]] = {}
+    engine = FakeEngine()
+    original = engine.put_archive
+
+    def record(container: str, path: str, data: bytes) -> None:
+        with tarfile.open(fileobj=io.BytesIO(data)) as archive:
+            files[path] = {
+                member.name: archive.extractfile(member).read()  # type: ignore[union-attr]
+                for member in archive.getmembers()
+                if member.isfile()
+            }
+        original(container, path, data)
+
+    engine.put_archive = record  # type: ignore[method-assign]
+
+    result = runner(engine).execute(request(repo, tmp_path))
+
+    expected = before.replace(rb"\services", rb"\Services")
+    assert files["/work"]["src/Api/Api.csproj"] == expected
+    assert files["/data"]["repo/Api/Api.csproj"] == expected
+    assert (repo / "Api" / "Api.csproj").read_bytes() == before
+    assert [(r.file_path, r.kind) for r in result.path_rewrites] == [
+        ("Api/Api.csproj", PathFixKind.CASE)
+    ]
+    prepare_log = (tmp_path / "logs" / "prepare.log").read_text(encoding="utf-8")
+    assert r"rewritten to '..\\Services\\Services.csproj'" in prepare_log

@@ -19,7 +19,12 @@ Three kinds of path are handled, all only in the runner's temporary copy (design
   the app can start and be probed (developer decision 2026-11-11). A relative path whose
   folder exists is left alone: the app may create the file itself, as on Windows.
 
-Every relative path is read from the Web project's folder, the app's working directory, as
+A `<ProjectReference>` of a `.csproj` whose path names a project of the repo only when
+letter case is ignored (`..\\services\\Services.csproj` for a `Services` folder) builds on
+Windows but not on Linux, so it is rewritten to the real path in the same copy, recorded
+with the kind `case`; one that matches nothing stays as written, and its build fails.
+
+Every relative path in C# is read from the Web project's folder, the app's working directory, as
 `dotnet run` does. Rewritten paths are relative to that folder too. Only the exact string
 literal changes; the student's working copy is never written to. The C# source is read as
 text and scanned for string literals; nothing is compiled or executed.
@@ -51,6 +56,11 @@ _FILE_NAME = re.compile(rf"^{_NAME}\.[A-Za-z0-9]{{1,8}}$")
 """One file name with an extension: what an empty file may be created as."""
 _SAFE_SEGMENT = re.compile(rf"^{_NAME}$")
 _SEPARATORS = re.compile(r"[\\/]+")
+_PROJECT_REFERENCE = re.compile(
+    r"<ProjectReference\b[^>]*?\bInclude\s*=\s*(?P<quote>[\"'])(?P<include>[^\"'<>&]+)(?P=quote)",
+    re.IGNORECASE,
+)
+PROJECT_SUFFIX = ".csproj"
 WINDOWS_SEPARATOR = "\\"
 PARENT = ".."
 
@@ -84,7 +94,13 @@ class RepoLayout:
     def resolve(self, relative: str) -> str | None:
         """The repo-relative path a relative path from the Web project's folder names, or
         None when it leads out of the repo."""
-        joined = posixpath.normpath(posixpath.join(self.web_folder or ".", relative))
+        return self.resolve_from(self.web_folder, relative)
+
+    @staticmethod
+    def resolve_from(folder: str, relative: str) -> str | None:
+        """The repo-relative path `relative` names from the repo folder `folder`, or None
+        when it leads out of the repo."""
+        joined = posixpath.normpath(posixpath.join(folder or ".", relative))
         if joined == PARENT or joined.startswith(PARENT + "/"):
             return None
         return "" if joined == "." else joined
@@ -128,8 +144,54 @@ def plan_path_fixes(working_copy: Path, project_folder: str) -> PathPlan:
         rewrites.extend(found)
         if new_text != text:
             overrides[relative] = new_text.encode("utf-8")
+    for project in (path for path in layout.files if path.lower().endswith(PROJECT_SUFFIX)):
+        try:
+            text = (working_copy / project).read_bytes().decode("utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        found, new_text = fix_project_references(text, project, layout)
+        rewrites.extend(found)
+        if new_text != text:
+            overrides[project] = new_text.encode("utf-8")
     created = dict.fromkeys(rewrite.created_path for rewrite in rewrites if rewrite.created_path)
     return PathPlan(tuple(rewrites), overrides, tuple(created))
+
+
+def fix_project_references(
+    text: str, project: str, layout: RepoLayout
+) -> tuple[list[PathRewrite], str]:
+    """The `<ProjectReference>` items of the project file `project` (repo-relative) that
+    name a project of the repo only when case is ignored, and the text with each rewritten
+    to the real path (keeping the item's separator). An exact or unknown one is left alone.
+    """
+    folder = posixpath.dirname(project)
+    projects = {
+        path.lower(): path for path in layout.files if path.lower().endswith(PROJECT_SUFFIX)
+    }
+    found: list[PathRewrite] = []
+    replacements: list[tuple[int, int, str]] = []
+    for match in _PROJECT_REFERENCE.finditer(text):
+        include = match["include"].strip()
+        resolved = layout.resolve_from(folder, include.replace(WINDOWS_SEPARATOR, "/"))
+        real = None if resolved is None else projects.get(resolved.lower())
+        if real is None or real == resolved:
+            continue
+        new_include = posixpath.relpath(real, folder or ".")
+        if WINDOWS_SEPARATOR in include:
+            new_include = new_include.replace("/", WINDOWS_SEPARATOR)
+        found.append(
+            PathRewrite(
+                file_path=project,
+                line=text.count("\n", 0, match.start("include")) + 1,
+                kind=PathFixKind.CASE,
+                original=include,
+                rewritten=new_include,
+            )
+        )
+        replacements.append((match.start("include"), match.end("include"), new_include))
+    for start, end, new_include in reversed(replacements):
+        text = text[:start] + new_include + text[end:]
+    return found, text
 
 
 def is_absolute_host_path(value: str) -> bool:

@@ -506,3 +506,53 @@ def test_backslash_text_that_leads_to_no_repo_folder_is_left_alone(
     repo = layered(tmp_path, f"var p = {literal};")
 
     assert plan_path_fixes(repo, "Api").rewrites == ()
+
+
+# ---------------------------------------------------------------- project references (stage 22 fix)
+
+
+def references(tmp_path: Path, *includes: str) -> Path:
+    """An Api project referencing `includes`, next to a `Services` class library."""
+    repo = tmp_path / "repo"
+    items = "\n".join(f'    <ProjectReference Include="{include}" />' for include in includes)
+    project = f"<Project>\n  <ItemGroup>\n{items}\n  </ItemGroup>\n</Project>\n"
+    write(repo, "Api/Api.csproj", project)
+    write(repo, "Services/Services.csproj", "<Project />")
+    return repo
+
+
+def test_a_reference_to_a_folder_in_other_case_is_rewritten_in_the_copy(tmp_path: Path) -> None:
+    repo = references(tmp_path, r"..\services\Services.csproj")
+    before = (repo / "Api" / "Api.csproj").read_bytes()
+
+    plan = plan_path_fixes(repo, "Api")
+
+    assert plan.rewrites == (
+        PathRewrite(
+            file_path="Api/Api.csproj",
+            line=3,
+            kind=PathFixKind.CASE,
+            original=r"..\services\Services.csproj",
+            rewritten=r"..\Services\Services.csproj",
+        ),
+    )
+    assert plan.overrides["Api/Api.csproj"] == before.replace(rb"\services", rb"\Services")
+    assert (repo / "Api" / "Api.csproj").read_bytes() == before
+
+
+def test_a_reference_to_a_file_name_in_other_case_is_rewritten(tmp_path: Path) -> None:
+    repo = references(tmp_path, "../Services/services.CSPROJ")
+
+    plan = plan_path_fixes(repo, "Api")
+
+    assert [(r.kind, r.original, r.rewritten) for r in plan.rewrites] == [
+        (PathFixKind.CASE, "../Services/services.CSPROJ", "../Services/Services.csproj")
+    ]
+
+
+def test_an_exact_or_missing_reference_is_left_as_written(tmp_path: Path) -> None:
+    repo = references(tmp_path, r"..\Services\Services.csproj", r"..\Entities\Entities.csproj")
+
+    plan = plan_path_fixes(repo, "Api")
+
+    assert plan.rewrites == () and plan.overrides == {}
