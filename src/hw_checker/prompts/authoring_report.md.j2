@@ -2,6 +2,11 @@
     AuthoringService.write_report. It holds course data and counts only: no student's
     name, repo or code. -#}
 # Authoring report: {{ assignment.id }} ({{ assignment.title }})
+{% if edited is not none %}
+
+> **Edited by hand.** You edited the drafted files; this report validates them as you left them, with no new draft. {% if edited %}Changed or added (their origin is now `developer`): {% for id in edited %}`{{ id }}`{{ ", " if not loop.last }}{% endfor %}.{% else %}No item changed.{% endif %}
+
+{% endif %}
 
 - Draft: attempt {{ attempt }}{% if max_attempts %} of {{ max_attempts }}{% endif %}
 

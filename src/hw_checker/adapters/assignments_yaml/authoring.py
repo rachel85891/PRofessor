@@ -1,5 +1,6 @@
 """YamlAuthoringFiles: the files of a new assignment in `assignments/<id>/` (design §8.3)."""
 
+import json
 import logging
 import shutil
 import tempfile
@@ -24,6 +25,7 @@ from hw_checker.domain.authoring import (
     AuthorReply,
     DataFile,
     DraftFiles,
+    EditedDraft,
     RequirementSpec,
 )
 from hw_checker.domain.errors import AuthoringError, InvalidAssignmentError
@@ -42,6 +44,8 @@ DRAFT_LINE = (
     "# approved with python -m hw_checker assignment approve {id}"
 )
 APPROVED_LINE = "# Approved on {day} through the authoring graph (design §8.3); origins kept."
+HAND_WRITTEN = {"origin": {"source": "developer", "quote": "added by hand"}, "status": "draft"}
+"""What an item added by hand, without its own origin and status, is read with."""
 LEADING_KEYS = ("id", "applies_to", "kind", "text")
 """Written first in every item, as in the hand-written files."""
 
@@ -189,6 +193,30 @@ class YamlAuthoringFiles:
             source = YamlAssignmentSource(copy, self._course_dir)
             return source.load_course(), source.load_all()
 
+    def parse_files(self, assignment_id: str, files: DraftFiles) -> EditedDraft:
+        """See `AuthoringFiles.parse_files`."""
+        problems: list[str] = []
+        prefix = f"{self._dir.name}/{assignment_id}"
+        requirements = _mapping(files.requirements, f"{prefix}/{REQUIREMENTS_FILE}", problems)
+        rules = _mapping(files.review_rules, f"{prefix}/{RULES_FILE}", problems)
+        if requirements is None or rules is None:
+            raise InvalidAssignmentError("The edited files cannot be read.", tuple(problems))
+        data = {
+            **{key: value for key, value in requirements.items() if key != "requirements"},
+            "requirements": [
+                _hand_item(_body_as_text(r)) for r in _items(requirements, "requirements")
+            ],
+            "rules": [_hand_item(rule) for rule in _items(rules, "rules")],
+            "examples": [_hand_item(example) for example in _items(rules, "examples")],
+        }
+        try:
+            return EditedDraft.model_validate(data)
+        except ValidationError as error:
+            raise InvalidAssignmentError(
+                "The edited files are invalid.",
+                tuple(f"{prefix}{describe(item)}" for item in error.errors()),
+            ) from error
+
     def read_files(self, assignment_id: str) -> DraftFiles | None:
         """See `AuthoringFiles.read_files`."""
         folder = self._dir / assignment_id
@@ -266,6 +294,45 @@ def _fields(item: BaseModel, model: type[BaseModel]) -> dict[str, Any]:
     ordered = [key for key in LEADING_KEYS if key in keys]
     ordered += [key for key in keys if key not in ordered]
     return {key: data[key] for key in ordered if key in data}
+
+
+def _mapping(text: str, label: str, problems: list[str]) -> dict[str, Any] | None:
+    try:
+        data = yaml.safe_load(text)
+    except yaml.YAMLError as error:
+        problems.append(f"{label}: not valid YAML ({error}).")
+        return None
+    if data is None:
+        return {}
+    if not isinstance(data, dict):
+        problems.append(f"{label}: the file must contain keys, not a list or a single value.")
+        return None
+    return data
+
+
+def _items(data: dict[str, Any], key: str) -> list[Any]:
+    items = data.get(key) or []
+    return items if isinstance(items, list) else [items]
+
+
+def _hand_item(item: object) -> object:
+    """An item as written, with an origin and status for one added without them."""
+    if not isinstance(item, dict):
+        return item
+    return {**{key: value for key, value in HAND_WRITTEN.items() if key not in item}, **item}
+
+
+def _body_as_text(requirement: object) -> object:
+    """A requirement whose probes write a body as YAML, with each body as JSON text."""
+    if not isinstance(requirement, dict) or not isinstance(requirement.get("probes"), list):
+        return requirement
+    probes = [
+        {**probe, "body": json.dumps(probe["body"], ensure_ascii=False, separators=(",", ":"))}
+        if isinstance(probe, dict) and isinstance(probe.get("body"), dict | list)
+        else probe
+        for probe in requirement["probes"]
+    ]
+    return {**requirement, "probes": probes}
 
 
 def _yaml_file(schema: str | None, header: str, data: dict[str, Any]) -> str:

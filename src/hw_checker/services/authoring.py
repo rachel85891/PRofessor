@@ -3,9 +3,13 @@
 import json
 import logging
 import re
+from collections.abc import Sequence
 from pathlib import Path
+from typing import cast
 
-from hw_checker.domain import Assignment, OriginSource
+from pydantic import BaseModel
+
+from hw_checker.domain import Assignment, FixExample, Origin, OriginSource, ReviewRule
 from hw_checker.domain.authoring import (
     AssignmentIntake,
     AuthorReply,
@@ -14,10 +18,16 @@ from hw_checker.domain.authoring import (
     DraftedRequirement,
     DraftedRule,
     DraftFiles,
+    DryRun,
+    DryRunStatus,
+    EditedDraft,
+    Preview,
+    PreviewStatus,
+    RequirementSpec,
     ValidationReport,
 )
 from hw_checker.domain.course import ItemStatus
-from hw_checker.domain.errors import AuthoringError
+from hw_checker.domain.errors import AuthoringError, InvalidAssignmentError
 from hw_checker.ports import (
     AssignmentSource,
     AuthoringFiles,
@@ -33,6 +43,8 @@ logger = logging.getLogger(__name__)
 INTAKE_TEMPLATE = "intake.yaml.j2"
 AUTHOR_TEMPLATE = "author.md.j2"
 REPORT_TEMPLATE = "authoring_report.md.j2"
+HAND_EDIT = Origin(source=OriginSource.DEVELOPER, quote="edited by hand before approval")
+"""The origin of an item the developer changed or added in the drafted files."""
 AUTHOR_ROLE = "author"
 _COMMENT_LINE = re.compile(r"^[ \t]*#(?: .*)?(?:\n|\Z)", re.MULTILINE)
 """A YAML comment line (`# ...` or a bare `#`), left out of the files shown to the author."""
@@ -124,9 +136,11 @@ class AuthoringService:
         attempt: int,
         max_attempts: int,
         failed: bool = False,
+        edited: tuple[str, ...] | None = None,
     ) -> Path:
         """Write `authoring_report.md` (and the draft as JSON) to the private authoring
-        folder; return the report's path. `failed` says the last attempt still failed.
+        folder; return the report's path. `failed` says the last attempt still failed;
+        `edited`, when given, says the files were edited by hand, with the items changed.
 
         Raises:
             AuthoringError: the report cannot be written.
@@ -144,11 +158,57 @@ class AuthoringService:
                 "report": report,
                 "items": _report_items(reply, report),
                 "suggestions": list(reply.frame_suggestions),
+                "edited": edited,
             },
         )
         path = self._files.write_report(intake.id, text, reply)
         logger.info("The authoring report of %s is at %s", intake.id, path)
         return path
+
+    def current_files(self, assignment_id: str) -> DraftFiles | None:
+        """The drafted files as they are now in the assignment's folder; None when one is
+        missing.
+
+        Raises:
+            AuthoringError: a file cannot be read.
+        """
+        return self._files.read_files(assignment_id)
+
+    def review_edits(
+        self,
+        intake: AssignmentIntake,
+        reply: AuthorReply,
+        files: DraftFiles,
+        with_execution: bool = False,
+    ) -> tuple[AuthorReply, tuple[str, ...], ValidationReport]:
+        """Read the drafted files the developer edited, and validate them again with no
+        LLM, as `validate` does. Return the draft as edited, the ids of the items changed or
+        added (their origin becomes `developer`; the others keep theirs), and the report.
+
+        When the files cannot be read, `reply` is returned unchanged with the problems.
+        The basics (`id`, `order`, `title`, `taught_techniques`, `ends_when`) come from the
+        intake, so a change to them is a problem that says to edit `intake.yaml`.
+
+        Raises:
+            AuthoringError: the task text cannot be read.
+            ExecutionEnvironmentError: Docker cannot be reached for the dry run.
+        """
+        try:
+            edited = self._files.parse_files(intake.id, files)
+        except InvalidAssignmentError as error:
+            not_run = ValidationReport(
+                problems=error.problems or (str(error),),
+                dry_run=DryRun(status=DryRunStatus.NOT_RUN),
+                preview=Preview(status=PreviewStatus.NOT_RUN),
+            )
+            return reply, (), not_run
+        edited_reply, changed = _with_edits(reply, edited)
+        report = self._validator.validate(intake, edited_reply, with_execution, frozenset(changed))
+        basics = _basics_problems(intake, edited)
+        if basics:
+            report = report.model_copy(update={"problems": basics + report.problems})
+        logger.info("Hand edits of %s: %d items changed or added", intake.id, len(changed))
+        return edited_reply, changed, report
 
     def stage(self, intake: AssignmentIntake, reply: AuthorReply) -> DraftFiles:
         """Write the validated draft to the assignment's folder with `status: draft`, so a
@@ -289,6 +349,89 @@ def with_status(reply: AuthorReply, status: ItemStatus) -> AuthorReply:
             "rules": tuple(r.model_copy(update=update) for r in reply.rules),
             "examples": tuple(e.model_copy(update=update) for e in reply.examples),
         }
+    )
+
+
+def _with_edits(reply: AuthorReply, edited: EditedDraft) -> tuple[AuthorReply, tuple[str, ...]]:
+    """The draft as the developer edited it, and the ids of the items changed or added:
+    those get `HAND_EDIT` as their origin; an unchanged item keeps its own."""
+    changed: list[str] = []
+
+    edited_reply = reply.model_copy(
+        update={
+            "requirements": _merged(
+                DraftedRequirement,
+                RequirementSpec,
+                edited.requirements,
+                reply.requirements,
+                changed,
+            ),
+            "rules": _merged(DraftedRule, ReviewRule, edited.rules, reply.rules, changed),
+            "examples": _merged(
+                DraftedExample, FixExample, edited.examples, reply.examples, changed
+            ),
+            "lenient_notes": edited.lenient_notes,
+        }
+    )
+    return edited_reply, tuple(changed)
+
+
+def _merged[ItemT: DraftedRequirement | DraftedRule | DraftedExample](
+    kind: type[ItemT],
+    base: type[BaseModel],
+    items: Sequence[RequirementSpec | ReviewRule | FixExample],
+    before: tuple[ItemT, ...],
+    changed: list[str],
+) -> tuple[ItemT, ...]:
+    """`items` as edited: an unchanged one is its drafted item; a changed or added one
+    (its id appended to `changed`) has `HAND_EDIT` as its origin."""
+    by_id = {item.id: item for item in before}
+    result: list[ItemT] = []
+    for item in items:
+        previous = by_id.get(item.id)
+        if previous is not None and _core(previous, base) == _core(item, base):
+            result.append(previous)
+            continue
+        changed.append(item.id)
+        data = item.model_dump(mode="json", by_alias=True) | {
+            "origin": HAND_EDIT.model_dump(mode="json"),
+            "summary": previous.summary if previous else _title(item),
+            "intake_items": list(previous.intake_items) if previous else [],
+        }
+        result.append(cast(ItemT, kind.model_validate(data)))
+    return tuple(result)
+
+
+def _core(item: BaseModel, base: type[BaseModel]) -> object:
+    """What the developer may change in an item: its fields of `base`, without its origin
+    and status."""
+    fields = set(base.model_fields) - {"origin", "status"}
+    return item.model_dump(mode="json", include=fields)
+
+
+def _title(item: RequirementSpec | ReviewRule | FixExample) -> str:
+    if isinstance(item, RequirementSpec):
+        return item.title
+    if isinstance(item, ReviewRule):
+        return item.text
+    return item.situation
+
+
+def _basics_problems(intake: AssignmentIntake, edited: EditedDraft) -> tuple[str, ...]:
+    """A change to what the drafted files take from the intake, which approving would
+    lose."""
+    expected = {
+        "id": intake.id,
+        "order": intake.order,
+        "title": intake.title,
+        "taught_techniques": intake.taught,
+        "ends_when": intake.ends_when,
+    }
+    return tuple(
+        f"requirements.yaml, field '{name}': it comes from intake.yaml; change it there and "
+        "draft again (revise), or put it back"
+        for name, value in expected.items()
+        if getattr(edited, name) != value
     )
 
 

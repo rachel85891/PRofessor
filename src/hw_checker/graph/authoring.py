@@ -29,6 +29,13 @@ from hw_checker.services.authoring import AuthoringService
 
 logger = logging.getLogger(__name__)
 
+EDITS_VALID = "Your edits were validated; review the report and approve again."
+EDITS_INVALID = (
+    "Your edits have problems, listed in the report: edit the files again, or use "
+    "revise --note, or stop."
+)
+FILES_MISSING = "The drafted files are missing: use revise --note, or stop."
+
 AUTHORING_RUN = "authoring-{id}"
 """How an authoring run is named in the logs (and the command line's checkpoint thread)."""
 
@@ -66,6 +73,9 @@ class AuthoringState(AuthoringInput):
     report_path: NotRequired[str]
     staged: NotRequired[DraftFiles | None]
     """The drafted files written to the assignment's folder for the approval."""
+    accepted_edits: NotRequired[DraftFiles | None]
+    """The drafted files as the developer edited them, once validated: what approve then
+    writes as approved."""
     approval_message: NotRequired[str]
     """Why the developer's last answer was not applied; empty when it was."""
     decision: NotRequired[AuthoringDecision | None]
@@ -110,6 +120,7 @@ def build_authoring_graph(
             "reasons": [],
             "attempt": 0,
             "staged": None,
+            "accepted_edits": None,
             "approval_message": "",
             "decision": None,
             "outcome": None,
@@ -146,7 +157,8 @@ def build_authoring_graph(
 
     def stage_draft(state: AuthoringState) -> Update:
         with log_context(run_id=AUTHORING_RUN.format(id=state["assignment_id"])):
-            return {"staged": authoring.stage(state["intake"], _drafted(state))}
+            staged = authoring.stage(state["intake"], _drafted(state))
+        return {"staged": staged, "accepted_edits": None}
 
     def approval(state: AuthoringState) -> Update:
         # The node runs again from the start when it is resumed, so nothing before
@@ -179,15 +191,41 @@ def build_authoring_graph(
 
     def write_approved(state: AuthoringState) -> Update:
         with log_context(run_id=AUTHORING_RUN.format(id=state["assignment_id"])):
-            staged = state.get("staged")
+            expected = state.get("accepted_edits") or state.get("staged")
+            if expected is None:
+                return {"approval_message": "Nothing was drafted to approve.", "decision": None}
+            current = authoring.current_files(state["assignment_id"])
+            if current is None:
+                return {"approval_message": FILES_MISSING, "decision": None}
+            if current != expected:
+                return review_edits(state, current)
             try:
-                if staged is None:
-                    raise AuthoringError("nothing was drafted to approve")
-                written = authoring.approve(state["intake"], _drafted(state), staged)
+                written = authoring.approve(state["intake"], _drafted(state), expected)
             except AuthoringError as error:
                 logger.warning("The approval was not applied: %s", error)
                 return {"approval_message": str(error), "decision": None}
         return {"written": [str(path) for path in written], "outcome": AuthoringOutcome.APPROVED}
+
+    def review_edits(state: AuthoringState, current: DraftFiles) -> Update:
+        """The developer edited the drafted files: validate them as they are, report, and
+        go back to the approval; never approve in the same step."""
+        reply, changed, report = authoring.review_edits(
+            state["intake"], _drafted(state), current, state.get("with_execution", False)
+        )
+        path = authoring.write_report(
+            state["intake"], reply, report, state["attempt"], max_attempts, edited=changed
+        )
+        update: Update = {"report_path": str(path), "decision": None}
+        if not report.passed:
+            logger.info("The hand edits of %s have problems", state["assignment_id"])
+            return {**update, "approval_message": EDITS_INVALID}
+        return {
+            **update,
+            "reply": reply,
+            "report": report,
+            "accepted_edits": current,
+            "approval_message": EDITS_VALID,
+        }
 
     def after_write(state: AuthoringState) -> str:
         return END if state.get("outcome") is AuthoringOutcome.APPROVED else "approval"

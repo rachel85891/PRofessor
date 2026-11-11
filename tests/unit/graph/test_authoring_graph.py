@@ -156,17 +156,83 @@ def test_stop_writes_nothing_and_removes_the_drafted_files(tmp_path: Path) -> No
     assert (tmp_path / "assignments" / "hw02" / "intake.yaml").is_file()
 
 
-def test_files_edited_while_waiting_are_not_approved_or_overwritten(tmp_path: Path) -> None:
-    graph = _graph(tmp_path, FakeLLMClient({"author": [valid_reply()]}))
+def _edit(path: Path, old: str, new: str) -> None:
+    text = path.read_text(encoding="utf-8")
+    assert old in text
+    path.write_text(text.replace(old, new, 1), encoding="utf-8")
+
+
+def test_an_edited_severity_is_validated_reported_and_approved_on_the_second_approve(
+    tmp_path: Path,
+) -> None:
+    llm = FakeLLMClient({"author": [valid_reply()]})
+    graph = _graph(tmp_path, llm)
     graph.invoke(START, CONFIG)
     requirements_file = _files(tmp_path)[0]
-    edited = requirements_file.read_text(encoding="utf-8") + "# my edit\n"
-    requirements_file.write_text(edited, encoding="utf-8")
+    _edit(requirements_file, "severity: major", "severity: minor")
 
     output = graph.invoke(Command(resume={"action": "approve"}), CONFIG)
 
-    assert "were changed since the report was written" in _prompt(output).message
-    assert requirements_file.read_text(encoding="utf-8") == edited
+    prompt = _prompt(output)
+    assert prompt.message == "Your edits were validated; review the report and approve again."
+    report = Path(prompt.report_path).read_text(encoding="utf-8")
+    top = report.split("## Drafted items")[0]
+    assert "**Edited by hand.**" in top and "`hw02-projects`" in top
+    assert "`hw02-post`" not in top
+    assert "severity: minor" in requirements_file.read_text(encoding="utf-8")
+    assert len(llm.calls) == 1  # no LLM round for an edit
+
+    output = graph.invoke(Command(resume={"action": "approve"}), CONFIG)
+
+    assert output["outcome"] is AuthoringOutcome.APPROVED
+    data = yaml.safe_load(requirements_file.read_text(encoding="utf-8"))
+    post, projects = data["requirements"]
+    assert projects["severity"] == "minor"
+    assert projects["origin"] == {"source": "developer", "quote": "edited by hand before approval"}
+    assert post["origin"]["source"] == "task_text"
+    assert {post["status"], projects["status"]} == {"approved"}
+
+
+def test_an_edit_naming_an_unknown_check_stays_at_approval_with_the_problem(
+    tmp_path: Path,
+) -> None:
+    graph = _graph(tmp_path, FakeLLMClient({"author": [valid_reply()]}))
+    graph.invoke(START, CONFIG)
+    requirements_file = _files(tmp_path)[0]
+    _edit(requirements_file, "check: project_count", "check: project_counts")
+
+    for _ in range(2):  # approving again without fixing it changes nothing
+        output = graph.invoke(Command(resume={"action": "approve"}), CONFIG)
+
+        prompt = _prompt(output)
+        assert prompt.message.startswith("Your edits have problems, listed in the report")
+        report = Path(prompt.report_path).read_text(encoding="utf-8")
+        assert "unknown check 'project_counts'" in report
+        assert "check: project_counts" in requirements_file.read_text(encoding="utf-8")
+
+
+def test_an_edit_of_a_basic_field_says_to_change_the_intake(tmp_path: Path) -> None:
+    graph = _graph(tmp_path, FakeLLMClient({"author": [valid_reply()]}))
+    graph.invoke(START, CONFIG)
+    _edit(_files(tmp_path)[0], "title: Layers", "title: Layered API")
+
+    output = graph.invoke(Command(resume={"action": "approve"}), CONFIG)
+
+    report = Path(_prompt(output).report_path).read_text(encoding="utf-8")
+    assert "field 'title': it comes from intake.yaml" in report
+
+
+def test_stop_keeps_files_edited_by_hand(tmp_path: Path) -> None:
+    graph = _graph(tmp_path, FakeLLMClient({"author": [valid_reply()]}))
+    graph.invoke(START, CONFIG)
+    requirements_file = _files(tmp_path)[0]
+    _edit(requirements_file, "severity: major", "severity: minor")
+    graph.invoke(Command(resume={"action": "approve"}), CONFIG)
+
+    output = graph.invoke(Command(resume={"action": "stop"}), CONFIG)
+
+    assert output["outcome"] is AuthoringOutcome.STOPPED
+    assert "severity: minor" in requirements_file.read_text(encoding="utf-8")
 
 
 def test_a_wrong_answer_is_refused_and_the_interrupt_stays_open(tmp_path: Path) -> None:

@@ -81,16 +81,22 @@ class DraftValidator:
         self._flag_share = flag_share
 
     def validate(
-        self, intake: AssignmentIntake, reply: AuthorReply, with_execution: bool = False
+        self,
+        intake: AssignmentIntake,
+        reply: AuthorReply,
+        with_execution: bool = False,
+        hand_written: frozenset[str] = frozenset(),
     ) -> ValidationReport:
-        """Validate `reply` for `intake`; every problem is listed together.
+        """Validate `reply` for `intake`; every problem is listed together. The items in
+        `hand_written` were changed or added by the developer, so their origin may be
+        `developer`.
 
         Raises:
             AuthoringError: the task text cannot be read.
             ExecutionEnvironmentError: Docker cannot be reached for the dry run.
         """
         task_text = self._files.task_text(intake.id)
-        problems = list(_origin_problems(intake, task_text, reply))
+        problems = list(_origin_problems(intake, task_text, reply, hand_written))
         loaded: tuple[Course, tuple[Assignment, ...]] | None = None
         try:
             loaded = self._files.catalog_with(
@@ -254,7 +260,9 @@ def _coverage(intake: AssignmentIntake, reply: AuthorReply) -> tuple[Coverage, .
     )
 
 
-def _origin_problems(intake: AssignmentIntake, task_text: str, reply: AuthorReply) -> list[str]:
+def _origin_problems(
+    intake: AssignmentIntake, task_text: str, reply: AuthorReply, hand_written: frozenset[str]
+) -> list[str]:
     """Every item's origin says where it comes from truthfully: a task-text quote is in
     `task.md`, an intake item exists; and every covered key is an intake item."""
     keys = {key for key, _ in intake.items()}
@@ -274,7 +282,7 @@ def _origin_problems(intake: AssignmentIntake, task_text: str, reply: AuthorRepl
             problems.append(
                 f"{where}: origin intake, but '{origin.item}' is not an intake item's key"
             )
-        if origin.source is OriginSource.DEVELOPER:
+        if origin.source is OriginSource.DEVELOPER and item.id not in hand_written:
             problems.append(f"{where}: origin developer is for hand-written items only")
         problems += [
             f"{where}: intake_items names '{key}', which is not an intake item's key"

@@ -225,6 +225,21 @@ class DataFile(DomainModel):
     text: str
 
 
+class EditedDraft(DomainModel):
+    """The drafted files as the developer left them, read back before approval: the
+    basics, which come from the intake, and every item as written."""
+
+    id: Identifier
+    order: int
+    title: NonBlankStr
+    taught_techniques: tuple[NonBlankStr, ...] = ()
+    ends_when: TaskEnd | None = None
+    lenient_notes: tuple[NonBlankStr, ...] = ()
+    requirements: tuple[RequirementSpec, ...] = ()
+    rules: tuple[ReviewRule, ...] = ()
+    examples: tuple[FixExample, ...] = ()
+
+
 class DraftFiles(DomainModel):
     """A drafted assignment's two files, as the text written to its folder."""
 

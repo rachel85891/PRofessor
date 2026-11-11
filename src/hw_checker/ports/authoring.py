@@ -6,7 +6,13 @@ from pathlib import Path
 from typing import Protocol
 
 from hw_checker.domain import Assignment, Course
-from hw_checker.domain.authoring import AssignmentIntake, AuthorReply, DataFile, DraftFiles
+from hw_checker.domain.authoring import (
+    AssignmentIntake,
+    AuthorReply,
+    DataFile,
+    DraftFiles,
+    EditedDraft,
+)
 
 
 class AuthoringFiles(Protocol):
@@ -90,6 +96,16 @@ class AuthoringFiles(Protocol):
 
         Raises:
             InvalidAssignmentError: the data is invalid with them (`problems` lists all).
+        """
+        ...
+
+    def parse_files(self, assignment_id: str, files: DraftFiles) -> EditedDraft:
+        """Read `files` (the assignment's drafted files, maybe edited by hand) back as items.
+        An item added without `origin` and `status` is read as the developer's draft.
+
+        Raises:
+            InvalidAssignmentError: a file is not valid YAML, or an item does not fit its
+                model (`problems` lists all).
         """
         ...
 
