@@ -304,6 +304,47 @@ def test_absolute_path_to_a_sibling_project_points_at_its_file_in_the_writable_c
     assert contents["/data"]["repo/Repository/Store.cs"].endswith(b'@"../Repository/users.txt"; }')
 
 
+def test_a_data_file_the_repo_lacks_is_created_empty_in_the_writable_copy_only(
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "repo"
+    (repo / "Api").mkdir(parents=True)
+    (repo / "Repository").mkdir()
+    (repo / "Api" / "Api.csproj").write_text(WEB_PROJECT, encoding="utf-8")
+    (repo / "Repository" / "Store.cs").write_bytes(
+        b'class Store { const string P = @"D:\\Shop\\Repository\\users.txt"; }'
+    )
+    files: dict[str, dict[str, bytes]] = {}
+    engine = FakeEngine(probe_statuses=STATUSES)
+    original = engine.put_archive
+
+    def record(container: str, path: str, data: bytes) -> None:
+        with tarfile.open(fileobj=io.BytesIO(data)) as archive:
+            files[path] = {
+                member.name: archive.extractfile(member).read()  # type: ignore[union-attr]
+                for member in archive.getmembers()
+                if member.isfile()
+            }
+        original(container, path, data)
+
+    engine.put_archive = record  # type: ignore[method-assign]
+
+    result = runner(engine).execute(request(repo, tmp_path))
+
+    (rewrite,) = result.path_rewrites
+    assert (rewrite.rewritten, rewrite.created_path) == (
+        "../Repository/users.txt",
+        "Repository/users.txt",
+    )
+    assert files["/data"]["repo/Repository/users.txt"] == b""
+    assert "src/Repository/users.txt" not in files["/work"]
+    assert not (repo / "Repository" / "users.txt").exists()
+    assert not result.has_unresolved_paths
+    assert result.probe_results, "the app is probed"
+    prepare_log = (tmp_path / "logs" / "prepare.log").read_text(encoding="utf-8")
+    assert "created empty at 'Repository/users.txt'" in prepare_log
+
+
 def test_route_table_is_recorded_on_the_result_and_in_the_prepare_log(
     repo: Path, tmp_path: Path
 ) -> None:
@@ -683,7 +724,7 @@ def test_project_without_routes_records_an_empty_table(repo: Path, tmp_path: Pat
 
 
 def test_unresolved_path_is_recorded_on_a_failed_build_too(repo: Path, tmp_path: Path) -> None:
-    (repo / "Store.cs").write_text('var p = @"C:\\x\\orders.txt";', encoding="utf-8")
+    (repo / "Store.cs").write_text('var p = @"C:\\x\\archive";', encoding="utf-8")
     engine = FakeEngine(exit_codes={"build": 1}, logs_by_kind={"build": BUILD_ERROR})
 
     result = runner(engine).execute(request(repo, tmp_path))

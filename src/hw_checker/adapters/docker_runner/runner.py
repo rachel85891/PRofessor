@@ -343,7 +343,12 @@ class _Execution:
                 self.request.working_copy, uid, gid, *limits, overrides=plan.overrides
             )
             data_archive = build_repo_archive(
-                self.request.working_copy, uid, gid, *limits, overrides=plan.overrides
+                self.request.working_copy,
+                uid,
+                gid,
+                *limits,
+                overrides=plan.overrides,
+                created=plan.created,
             )
         except ArchiveTooLargeError as error:
             return self._prepare_failed(f"not run, flagged for review: {error}")
@@ -373,6 +378,12 @@ class _Execution:
                 rewritten,
                 len(plan.rewrites),
                 extra={"paths_detected": len(plan.rewrites), "paths_rewritten": rewritten},
+            )
+        if plan.created:
+            logger.info(
+                "Created %d empty data files the repo lacks, in the run's copy only",
+                len(plan.created),
+                extra={"data_files_created": len(plan.created)},
             )
 
         project = f"{WORK_MOUNT}/src/{discovery.path}"
@@ -834,11 +845,15 @@ def _describe_paths(rewrites: tuple[PathRewrite, ...]) -> str:
     """One prepare-log line per detected path (kept in the per-repo log, not the app log)."""
     lines = []
     for rewrite in rewrites:
-        outcome = (
-            f"rewritten to {rewrite.rewritten!r}"
-            if rewrite.rewritten is not None
-            else f"not rewritten ({rewrite.not_rewritten_reason})"
-        )
+        if rewrite.created_path is not None:
+            outcome = (
+                f"not in the repo: rewritten to {rewrite.rewritten!r}, created empty at "
+                f"{rewrite.created_path!r} in the run's copy"
+            )
+        elif rewrite.rewritten is not None:
+            outcome = f"rewritten to {rewrite.rewritten!r}"
+        else:
+            outcome = f"not rewritten ({rewrite.not_rewritten_reason})"
         lines.append(
             f"{rewrite.kind} path {rewrite.original!r} at {rewrite.file_path}:{rewrite.line}: "
             f"{outcome}\n"

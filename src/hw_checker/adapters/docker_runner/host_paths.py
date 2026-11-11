@@ -1,6 +1,6 @@
 """Finds file paths in student C# code that cannot work in the container, and adapts them.
 
-Two kinds of path are handled, both only in the runner's temporary copy (design §9, step 4):
+Three kinds of path are handled, all only in the runner's temporary copy (design §9, step 4):
 
 - an absolute host path such as `"E:\\API\\web-api\\Repository\\Data.txt"`: rewritten to the
   one file (or folder) of the repo, in any of its projects, whose path ends with the longest
@@ -8,8 +8,13 @@ Two kinds of path are handled, both only in the runner's temporary copy (design 
 - a relative path whose letter case differs from the real file (`"users.txt"` for a committed
   `Users.txt`), or that is written with `\\` (`"..\\Repository\\users.txt"`): Windows ignores
   case and reads `\\` as a separator, and Linux does neither, so the literal is rewritten to
-  the real file's path with `/`, or flagged when two files differ only in case. A relative
-  path to a file that is not in the repo, in a folder that is, keeps its name.
+  the real file's path with `/`, or flagged when two files differ only in case;
+- a path to a data file that is not in the repo (the student has it on their own machine
+  only): an absolute path that matches nothing, or a relative one whose folder is missing too.
+  It is rewritten to the place in the copy where its trailing part points (the Web project's
+  folder when that is ambiguous), and an empty file is created there in the run's copy, so
+  the app can start and be probed (developer decision 2026-11-11). A relative path whose
+  folder exists is left alone: the app may create the file itself, as on Windows.
 
 Every relative path is read from the Web project's folder, the app's working directory, as
 `dotnet run` does. Rewritten paths are relative to that folder too. Only the exact string
@@ -36,6 +41,9 @@ _UNC_PATH = re.compile(r"^\\\\[^\\/\s]+[\\/][^\\/\s]+(?P<rest>.*)$", re.DOTALL)
 _NAME = r"[^<>:\"|?*{}\\/\s][^<>:\"|?*{}\\/]*"
 _RELATIVE_FILE = re.compile(rf"^(?:\./)?(?:{_NAME}[\\/])*{_NAME}\.[A-Za-z0-9]{{1,8}}$")
 """A relative file path with an extension, like `users.txt` or `..\\Data\\users.txt`."""
+_FILE_NAME = re.compile(rf"^{_NAME}\.[A-Za-z0-9]{{1,8}}$")
+"""One file name with an extension: what an empty file may be created as."""
+_SAFE_SEGMENT = re.compile(rf"^{_NAME}$")
 _SEPARATORS = re.compile(r"[\\/]+")
 WINDOWS_SEPARATOR = "\\"
 PARENT = ".."
@@ -81,10 +89,13 @@ class PathPlan:
     """What to change in the temporary copy, and the record of every detection.
 
     `overrides` maps a working-copy-relative path (forward slashes) to its new bytes.
+    `created` lists the repo-relative paths of the empty files to create in the run's
+    writable copy, each once.
     """
 
     rewrites: tuple[PathRewrite, ...]
     overrides: dict[str, bytes]
+    created: tuple[str, ...] = ()
 
 
 def plan_path_fixes(working_copy: Path, project_folder: str) -> PathPlan:
@@ -111,7 +122,8 @@ def plan_path_fixes(working_copy: Path, project_folder: str) -> PathPlan:
         rewrites.extend(found)
         if new_text != text:
             overrides[relative] = new_text.encode("utf-8")
-    return PathPlan(tuple(rewrites), overrides)
+    created = dict.fromkeys(rewrite.created_path for rewrite in rewrites if rewrite.created_path)
+    return PathPlan(tuple(rewrites), overrides, tuple(created))
 
 
 def is_absolute_host_path(value: str) -> bool:
@@ -158,9 +170,11 @@ def _strip_root(host_path: str) -> str:
 
 @dataclass(frozen=True)
 class _Target:
-    """Where a detected path leads in the copy (repo-relative)."""
+    """Where a detected path leads in the copy (repo-relative), and whether an empty file
+    is created there."""
 
     path: str
+    created: bool = False
 
 
 def fix_source(
@@ -228,7 +242,7 @@ def _relative(
             return None  # the file may be created by the app, as on Windows
         kind = PathFixKind.SEPARATOR if normalized != value else PathFixKind.CASE
         return kind, _Target(posixpath.join(real_folder, name))
-    return None
+    return PathFixKind.RELATIVE, _created(resolved, layout)
 
 
 def _real_folder(folder: str, layout: RepoLayout) -> str | None:
@@ -241,11 +255,43 @@ def _real_folder(folder: str, layout: RepoLayout) -> str | None:
 
 
 def _place_by_tail(segments: list[str], layout: RepoLayout) -> _Target | PathNotRewrittenReason:
-    """The repo's file, or else folder, that a path's trailing part names."""
+    """The repo's file or folder a path's trailing part names; or, for a file name that
+    matches nothing, the empty file to create where the rest of the trailing part points."""
     matched = _match_tail(segments, layout.files)
     if matched is PathNotRewrittenReason.NO_MATCH:
         matched = _match_tail(segments, layout.folders)
-    return matched if isinstance(matched, PathNotRewrittenReason) else _Target(matched)
+    if not isinstance(matched, PathNotRewrittenReason):
+        return _Target(matched)
+    if matched is PathNotRewrittenReason.SEVERAL_MATCHES or not segments:
+        return matched
+    return _created(_missing_place(segments, layout), layout)
+
+
+def _missing_place(segments: list[str], layout: RepoLayout) -> str:
+    """Where a missing file's path points in the repo: under the deepest of its folders that
+    names a single repo folder by its trailing part, with the folders after it; in the Web
+    project's folder when none does, or when that is ambiguous."""
+    folders = segments[:-1]
+    for end in range(len(folders), 0, -1):
+        matched = _match_tail(folders[:end], layout.folders)
+        if matched is PathNotRewrittenReason.SEVERAL_MATCHES:
+            break
+        # The reasons are a StrEnum, so test for them, not for str.
+        if not isinstance(matched, PathNotRewrittenReason):
+            return posixpath.join(matched, *folders[end:], segments[-1])
+    return posixpath.join(layout.web_folder, segments[-1])
+
+
+def _created(path: str, layout: RepoLayout) -> _Target | PathNotRewrittenReason:
+    """`path` as an empty file to create, when it is safe: a file name with an extension,
+    folders that are plain names, and nothing of the repo in its place."""
+    parts = path.split("/")
+    safe = (
+        _FILE_NAME.match(parts[-1]) is not None
+        and all(_SAFE_SEGMENT.match(part) and part not in (".", PARENT) for part in parts)
+        and not any(path.lower() == other.lower() for other in (*layout.files, *layout.folders))
+    )
+    return _Target(path, created=True) if safe else PathNotRewrittenReason.NO_MATCH
 
 
 def _record(
@@ -269,6 +315,7 @@ def _record(
         kind=kind,
         original=literal.value,
         rewritten=layout.from_web(outcome.path),
+        created_path=outcome.path if outcome.created else None,
     )
 
 

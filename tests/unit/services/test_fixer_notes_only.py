@@ -12,6 +12,7 @@ from hw_checker.domain import (
 )
 from hw_checker.services.fixing import FixService
 from tests.unit.domain import builders
+from tests.unit.repo_content.test_assignments_folder import catalog
 from tests.unit.services.fixer_data import (
     ASSIGNMENT,
     BREAK_FIX,
@@ -93,6 +94,32 @@ def test_without_a_notes_only_finding_the_guard_stays_out_of_the_way(tmp_path: P
     # The model fix is rejected by the course's own rule (a stored property keeps its
     # name), never by the notes-only guard.
     assert not any("notes only" in rejected.reason for rejected in application.rejected)
+
+
+def test_the_fixer_never_fixes_the_missing_data_file_note_of_hw01(tmp_path: Path) -> None:
+    # Stage 22: the committed hw01 requirement, as the round loads it.
+    (hw01,) = [a for a in catalog().list_assignments() if a.id == "hw01"]
+    (requirement,) = [r for r in hw01.requirements if r.id == "hw01-data-file-in-repo"]
+    assert requirement.feedback is Feedback.NOTES_ONLY
+    note = builders.finding(
+        id="hw01-data-file-in-repo-abc",
+        requirement_id=requirement.id,
+        assignment_id="hw01",
+        severity=requirement.severity,
+        message_en="`Repository/users.txt` isn't in the repo, so the app fails until it is "
+        "created.",
+    )
+    results = (*RESULTS, AssignmentResult(assignment_id="hw01", findings=(note,)))
+    selected = (ASSIGNMENT, hw01)
+    setup = FixerSetup(tmp_path)
+    workspace = setup.service.prepare(RUN_ID, selected, results, REPO, setup.fetched)
+    claimed = BREAK_FIX.model_copy(update={"finding_ids": (requirement.id,)})
+
+    application = setup.service.apply(workspace, [claimed], hw01, selected, results)
+
+    assert application.applied == ()
+    assert "hw01-data-file-in-repo allows notes only" in application.rejected[0].reason
+    assert not (workspace.working_copy / "Repository" / "users.txt").exists()
 
 
 def test_the_plan_prompt_names_the_failing_notes_only_requirements(tmp_path: Path) -> None:

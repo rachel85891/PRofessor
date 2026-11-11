@@ -3,7 +3,7 @@
 import io
 import os
 import tarfile
-from collections.abc import Mapping
+from collections.abc import Collection, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -87,6 +87,7 @@ def build_repo_archive(
     max_total_bytes: int | None = None,
     max_file_bytes: int | None = None,
     overrides: Mapping[str, bytes] | None = None,
+    created: Collection[str] = (),
 ) -> WorkArchive:
     """Tar the whole working copy under `repo/`, owned by `uid:gid`, for the app to write.
 
@@ -94,13 +95,23 @@ def build_repo_archive(
     sibling project (`../Repository/users.txt`) resolves as on the student's machine. The
     same rules as `build_work_archive`: `bin/`, `obj/` and `.git/` are left out, unsafe paths
     are skipped and listed, the size limits apply, and `overrides` (keyed relative to
-    `working_copy`) replaces file contents in the archive only.
+    `working_copy`) replaces file contents in the archive only. `created` lists repo-relative
+    paths of data files the repo lacks: each is added empty, with any missing folder, so the
+    app can start; the working copy itself is never written to.
 
     Raises:
         ArchiveTooLargeError: a file, or all files together, exceed the given limits.
     """
     return _tree_archive(
-        working_copy, REPO_DIR, (), uid, gid, max_total_bytes, max_file_bytes, overrides or {}
+        working_copy,
+        REPO_DIR,
+        (),
+        uid,
+        gid,
+        max_total_bytes,
+        max_file_bytes,
+        overrides or {},
+        created,
     )
 
 
@@ -113,11 +124,13 @@ def _tree_archive(
     max_total_bytes: int | None,
     max_file_bytes: int | None,
     overrides: Mapping[str, bytes],
+    created: Collection[str] = (),
 ) -> WorkArchive:
     root = tree.resolve()
     guard = _SizeGuard(max_total_bytes, max_file_bytes)
     buffer = io.BytesIO()
     skipped: list[str] = []
+    names: set[str] = set()
     with tarfile.open(fileobj=buffer, mode="w", format=tarfile.PAX_FORMAT) as archive:
         for name in (prefix, *empty_dirs):
             _add_directory(archive, name, uid, gid)
@@ -132,6 +145,7 @@ def _tree_archive(
                     skipped.append(path.relative_to(root).as_posix())
                     continue
                 kept.append(name)
+                names.add(_member_name(path, root, prefix))
                 _add_directory(archive, _member_name(path, root, prefix), uid, gid)
             subdirectories[:] = kept
             for name in sorted(files):
@@ -144,8 +158,27 @@ def _tree_archive(
                 data = overrides.get(relative)
                 if data is None:
                     data = path.read_bytes()
+                names.add(_member_name(path, root, prefix))
                 _add_file(archive, data, _member_name(path, root, prefix), uid, gid)
+        for relative in created:
+            _add_empty_file(archive, f"{prefix}/{relative}", names, uid, gid)
     return WorkArchive(buffer.getvalue(), tuple(sorted(skipped)))
+
+
+def _add_empty_file(
+    archive: tarfile.TarFile, name: str, names: set[str], uid: int, gid: int
+) -> None:
+    """Add an empty file `name`, and each of its folders the archive does not have yet."""
+    parts = name.split("/")
+    if any(part in ("", ".", "..") for part in parts) or name in names:
+        raise ValueError(f"not a new path inside the archive: {name!r}")
+    for depth in range(2, len(parts)):
+        folder = "/".join(parts[:depth])
+        if folder not in names:
+            names.add(folder)
+            _add_directory(archive, folder, uid, gid)
+    names.add(name)
+    _add_file(archive, b"", name, uid, gid)
 
 
 def _is_safe(path: Path, root: Path) -> bool:

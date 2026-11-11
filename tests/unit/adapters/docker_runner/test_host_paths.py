@@ -181,7 +181,7 @@ def test_rewritten_path_is_relative_to_the_project_folder(tmp_path: Path) -> Non
 @pytest.mark.parametrize(
     ("literal", "reason"),
     [
-        ('@"C:\\data\\orders.txt"', PathNotRewrittenReason.NO_MATCH),
+        ('@"C:\\data\\archive"', PathNotRewrittenReason.NO_MATCH),
         ('@"C:\\data\\log.txt"', PathNotRewrittenReason.SEVERAL_MATCHES),
         ('$"C:\\\\data\\\\{name}.txt"', PathNotRewrittenReason.DYNAMIC),
     ],
@@ -361,3 +361,94 @@ def test_relative_path_out_of_the_repo_is_read_by_its_tail(tmp_path: Path) -> No
 
     (rewrite,) = plan.rewrites
     assert (rewrite.kind, rewrite.rewritten) == (PathFixKind.RELATIVE, "../Repository/Users.txt")
+
+
+# ---------------------------------------------------------------- data files not in the repo
+
+
+@pytest.mark.parametrize(
+    ("literal", "created", "rewritten"),
+    [
+        # The folder the tail names is in the repo: the file is created there.
+        (
+            r'@"D:\Work\Shop\Repository\orders.txt"',
+            "Repository/orders.txt",
+            "../Repository/orders.txt",
+        ),
+        (
+            r'@"D:\Work\Shop\REPOSITORY\Data\orders.txt"',
+            "Repository/Data/orders.txt",
+            "../Repository/Data/orders.txt",
+        ),
+        # No folder of the repo matches: the Web project's folder.
+        (r'@"D:\Work\Elsewhere\orders.txt"', "Api/orders.txt", "orders.txt"),
+        (r'@"D:\orders.txt"', "Api/orders.txt", "orders.txt"),
+        # A relative path to a folder the repo lacks (git keeps no empty folders).
+        (r'"Data/orders.txt"', "Api/Data/orders.txt", "Data/orders.txt"),
+        (r'@"..\Shared\orders.txt"', "Shared/orders.txt", "../Shared/orders.txt"),
+        # Out of the repo, and its tail names nothing in it.
+        (r'@"..\..\x\orders.txt"', "Api/orders.txt", "orders.txt"),
+    ],
+)
+def test_a_missing_data_file_is_created_empty_where_its_path_points(
+    tmp_path: Path, literal: str, created: str, rewritten: str
+) -> None:
+    repo = layered(tmp_path, f"var p = {literal};")
+    before = sorted(path.relative_to(repo).as_posix() for path in repo.rglob("*"))
+
+    plan = plan_path_fixes(repo, "Api")
+
+    (rewrite,) = plan.rewrites
+    assert (rewrite.rewritten, rewrite.created_path) == (rewritten, created)
+    assert rewrite.created_empty and rewrite.not_rewritten_reason is None
+    assert plan.created == (created,)
+    after = sorted(path.relative_to(repo).as_posix() for path in repo.rglob("*"))
+    assert after == before, "nothing is created in the working copy"
+
+
+def test_an_ambiguous_folder_tail_creates_the_file_in_the_web_project(tmp_path: Path) -> None:
+    repo = layered(tmp_path, r'var p = @"D:\Work\Data\orders.txt";')
+    write(repo, "Api/Data/seed.txt", "")
+    write(repo, "Repository/Data/seed.txt", "")
+
+    plan = plan_path_fixes(repo, "Api")
+
+    assert plan.created == ("Api/orders.txt",)
+
+
+def test_a_file_named_by_several_literals_is_created_once(tmp_path: Path) -> None:
+    repo = layered(
+        tmp_path, r'var a = @"D:\x\Repository\orders.txt"; var b = @"E:\y\Repository\orders.txt";'
+    )
+    write(repo, "Api/Store.cs", r'var c = @"..\Repository\orders.txt";')
+
+    plan = plan_path_fixes(repo, "Api")
+
+    # Api/Store.cs is scanned first; its folder exists, so it only gets `/`.
+    assert [r.created_path for r in plan.rewrites] == [None] + ["Repository/orders.txt"] * 2
+    assert plan.created == ("Repository/orders.txt",)
+
+
+@pytest.mark.parametrize(
+    "literal",
+    [
+        r'@"D:\Work\archive"',  # a folder, not a file: nothing to create
+        r'$@"D:\Work\{name}.txt"',  # built at run time
+    ],
+)
+def test_nothing_is_created_for_a_path_that_names_no_file(tmp_path: Path, literal: str) -> None:
+    repo = layered(tmp_path, f"var p = {literal};")
+
+    plan = plan_path_fixes(repo, "Api")
+
+    (rewrite,) = plan.rewrites
+    assert rewrite.rewritten is None and not rewrite.created_empty
+    assert plan.created == ()
+
+
+def test_a_relative_path_whose_folder_exists_creates_nothing(tmp_path: Path) -> None:
+    repo = layered(tmp_path, 'var p = "../Repository/orders.txt"; var q = "orders.txt";')
+
+    plan = plan_path_fixes(repo, "Api")
+
+    assert plan.rewrites == () and plan.created == ()

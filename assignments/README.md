@@ -417,6 +417,25 @@ These read the checked commit as the fetch step leaves it: the files git tracks 
 
 Upper and lower case are ignored when matching `patterns` (`Bin/` matches `bin/`), as on the students' Windows machines. Without git's state (the clone could not be read) `gitignore_covers` and `not_committed` are "not evaluated".
 
+### A data file the repo lacks (stage 22, in `hw01`)
+
+When the code opens a data file by a hard-coded path and the file is not in the repo (the student has it on their own machine only), the run creates it **empty**, in its own copy only, so the app can start and the `http` requirements are evaluated (developer decision 2026-11-11). The student's working copy and repo are never changed, and the fixer never adds the file. This check reads the run's record and gives the student a note:
+
+```yaml
+  - id: hw01-data-file-in-repo
+    kind: custom
+    title: The data file the code reads is in the repo
+    severity: minor
+    feedback: notes_only
+    check: data_files_in_repo
+```
+
+| Check | Params | Finding when |
+| --- | --- | --- |
+| `data_files_in_repo` | none | The run created an empty data file because the repo lacks it: one finding per file (however many literals name it), naming its place in the repo: "`Repository/users.txt` isn't in the repo, so the app fails until it is created. Add the data file to the repo, or create it when it's missing." Without a run, or when the project was not prepared, it is "not evaluated". |
+
+Which paths count: an absolute path (`D:\…\Repository\users.txt`) that matches no file of the repo, and a relative one whose folder is missing too. The file is created where the path's trailing part points (under `Repository/` here), or in the Web project's folder when that is ambiguous. A relative path whose folder exists is left alone: the app may create the file itself, as it would on Windows. If an empty file still makes the app fail (for example, JSON read from an empty file), the `http` requirements report what they find.
+
 ### Client-file checks (stage 17, in `hw01`)
 
 These read the pages and scripts under a client folder and never run them. A finding means the page really breaks; whatever cannot be told from the files (a value built at run time, a URL that starts with a variable) is skipped, never reported.

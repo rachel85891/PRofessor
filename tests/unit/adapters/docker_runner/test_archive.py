@@ -149,3 +149,30 @@ def test_repo_archive_applies_the_size_limits(repo: Path) -> None:
 
     with pytest.raises(ArchiveTooLargeError, match=r"big\.txt"):
         build_repo_archive(repo, UID, GID, max_file_bytes=1000)
+
+
+def test_repo_archive_adds_the_missing_data_files_empty_with_their_folders(
+    repo: Path,
+) -> None:
+    before = sorted(path.as_posix() for path in repo.rglob("*"))
+
+    archive = build_repo_archive(
+        repo, UID, GID, created=("Controllers/users.txt", "Repository/Data/orders.txt")
+    )
+
+    found = members(archive.data)
+    for folder in ("repo/Repository", "repo/Repository/Data"):
+        assert found[folder].isdir()
+    for name in ("repo/Controllers/users.txt", "repo/Repository/Data/orders.txt"):
+        assert found[name].isfile() and found[name].size == 0
+        assert (found[name].uid, found[name].gid) == (UID, GID)
+    assert list(found).count("repo/Controllers") == 1
+    assert sorted(path.as_posix() for path in repo.rglob("*")) == before
+
+
+@pytest.mark.parametrize("created", ["../outside.txt", "Api.csproj", "a//b.txt", "/abs.txt"])
+def test_repo_archive_refuses_a_created_path_outside_or_over_the_repo(
+    repo: Path, created: str
+) -> None:
+    with pytest.raises(ValueError, match="not a new path"):
+        build_repo_archive(repo, UID, GID, created=(created,))

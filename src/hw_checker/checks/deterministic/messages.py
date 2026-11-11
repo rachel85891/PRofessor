@@ -264,6 +264,18 @@ ABSOLUTE_PATHS = MessageTemplate(
     ),
 )
 
+DATA_FILE_NOT_IN_REPO = MessageTemplate(
+    name="DATA_FILE_NOT_IN_REPO",
+    he=(
+        "`{path}` לא נמצא בריפוזיטורי, ולכן האפליקציה נכשלת עד שהוא נוצר. כדאי להוסיף את "
+        "קובץ הנתונים לריפוזיטורי, או ליצור אותו כשהוא חסר."
+    ),
+    en=(
+        "`{path}` isn't in the repo, so the app fails until it is created. Add the data file "
+        "to the repo, or create it when it's missing."
+    ),
+)
+
 CLIENT_FILE_REFS = MessageTemplate(
     name="CLIENT_FILE_REFS",
     he="דפים מפנים לקבצים שלא קיימים, ולכן הדף לא יעבוד: {examples}. סך הכול: {count}.",
@@ -512,6 +524,7 @@ ALL_TEMPLATES: tuple[MessageTemplate, ...] = (
     GITIGNORE_NOT_COVERING,
     NOT_COMMITTED,
     ABSOLUTE_PATHS,
+    DATA_FILE_NOT_IN_REPO,
     CLIENT_FILE_REFS,
     CLIENT_REF_MISSING,
     CLIENT_REF_CASE,

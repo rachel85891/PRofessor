@@ -305,11 +305,21 @@ class PathRewrite(DomainModel):
     """The path used instead, relative to the Web project's folder (the app's working
     directory), or None when the path was not rewritten."""
     not_rewritten_reason: PathNotRewrittenReason | None = None
+    created_path: str | None = Field(default=None, max_length=MAX_PATH_TEXT_CHARS)
+    """The repo-relative path of the empty file created in the run's copy because the data
+    file is not in the repo (outcome `created_empty`); None when nothing was created."""
+
+    @property
+    def created_empty(self) -> bool:
+        """True when the file is not in the repo and an empty one was created for the run."""
+        return self.created_path is not None
 
     @model_validator(mode="after")
     def _rewritten_or_reason(self) -> Self:
         if (self.rewritten is None) == (self.not_rewritten_reason is None):
             raise ValueError("a path is either rewritten or has a not_rewritten_reason")
+        if self.created_path is not None and self.rewritten is None:
+            raise ValueError("a created file is only recorded for a rewritten path")
         return self
 
 

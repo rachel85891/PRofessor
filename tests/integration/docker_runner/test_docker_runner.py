@@ -14,6 +14,7 @@ from hw_checker.checks.deterministic.checker import DeterministicRequirementChec
 from hw_checker.checks.registry import CheckRegistry
 from hw_checker.domain import (
     Assignment,
+    AssignmentResult,
     CaptureFailure,
     CaptureResult,
     ExecutionResult,
@@ -56,8 +57,10 @@ from tests.integration.docker_runner.conftest import (
     leftovers,
     login_variant_probes,
     make_request,
+    probe,
     replace_in,
     runner_config,
+    user_body,
 )
 
 pytestmark = pytest.mark.integration
@@ -311,42 +314,104 @@ def test_relative_backslash_path_into_a_sibling_project_works(
     assert_nothing_left(engine)
 
 
-def test_absolute_path_without_a_matching_file_is_flagged_and_gives_no_findings(
-    docker_runner: DockerCodeRunner,
-    engine: SdkDockerEngine,
-    sample_copy: SampleCopy,
-    tmp_path: Path,
-) -> None:
-    def remove_data(repo: Path) -> None:
-        (repo / "Data" / "users.txt").unlink()
+READ_BACK_PROBES = (
+    probe("hw01-r1", HttpMethod.GET, "/api/users", 200),
+    probe("hw01-r1", HttpMethod.POST, "/api/users", 201, user_body("u1", TEST_PASSWORD)),
+    probe("hw01-r1", HttpMethod.GET, "/api/users/1", 200),
+)
+"""Against a users API whose data file starts empty: the first user gets id 1."""
+DATA_FILE_REQUIREMENT = Requirement(
+    id="hw01-data-file-in-repo",
+    title="The data file the code reads is in the repo",
+    severity=Severity.MINOR,
+    kind=RequirementKind.CUSTOM,
+    check="data_files_in_repo",
+)
 
-    result = docker_runner.execute(
-        make_request(
-            sample_copy(edit=remove_data, source=ABSOLUTE_PATH_FIXTURE),
-            tmp_path / "logs",
-            probes=ABSOLUTE_PATH_PROBES,
-        )
-    )
 
-    (rewrite,) = result.path_rewrites
-    assert rewrite.not_rewritten_reason is PathNotRewrittenReason.NO_MATCH
-    assert result.has_unresolved_paths
-    assert result.run_status is StepStatus.SUCCEEDED, result.logs_excerpt
-    assert result.probe_results and not all_passed(result), describe(result)
+def check_users_api(result: ExecutionResult, repo: Path) -> AssignmentResult:
+    """The http requirement of `READ_BACK_PROBES` and the data-file note, checked."""
     requirement = Requirement(
         id="hw01-r1",
         title="Users API",
         severity=Severity.MAJOR,
         kind=RequirementKind.HTTP,
-        http_probes=ABSOLUTE_PATH_PROBES,
+        http_probes=READ_BACK_PROBES,
     )
-    assignment = Assignment(id="hw01", order=1, title="Users", requirements=(requirement,))
+    assignment = Assignment(
+        id="hw01", order=1, title="Users", requirements=(requirement, DATA_FILE_REQUIREMENT)
+    )
     checker = DeterministicRequirementChecker(CheckRegistry(builtin_checks()))
-    checked = DeterministicCheckService(checker).evaluate(assignment, tmp_path, result)
-    assert checked.findings == ()
-    assert checked.not_evaluated == (
-        NotEvaluated(requirement_id="hw01-r1", reason=NotEvaluatedReason.ENVIRONMENT_ISSUE),
+    return DeterministicCheckService(checker).evaluate(assignment, repo, result)
+
+
+@pytest.mark.parametrize(
+    ("fixture", "data_file", "created"),
+    [
+        (ABSOLUTE_PATH_FIXTURE, Path("Data") / "users.txt", "users.txt"),
+        (LAYERED_FIXTURE, Path("Repository") / "users.txt", "Repository/users.txt"),
+    ],
+)
+def test_a_data_file_the_repo_lacks_is_created_empty_so_the_probes_are_evaluated(
+    docker_runner: DockerCodeRunner,
+    engine: SdkDockerEngine,
+    sample_copy: SampleCopy,
+    tmp_path: Path,
+    fixture: Path,
+    data_file: Path,
+    created: str,
+) -> None:
+    def remove_data(repo: Path) -> None:
+        (repo / data_file).unlink()
+
+    repo = sample_copy(edit=remove_data, source=fixture)
+
+    result = docker_runner.execute(make_request(repo, tmp_path / "logs", probes=READ_BACK_PROBES))
+
+    (rewrite,) = result.path_rewrites
+    assert rewrite.created_path == created
+    assert not result.has_unresolved_paths
+    assert all_passed(result), describe(result)
+    assert not (repo / data_file).exists(), "the working copy is never changed"
+    checked = check_users_api(result, tmp_path)
+    assert checked.not_evaluated == ()
+    (note,) = checked.findings
+    assert note.requirement_id == "hw01-data-file-in-repo"
+    assert note.message_en.startswith(f"`{created}` isn't in the repo")
+    assert_nothing_left(engine)
+
+
+def test_a_path_built_at_run_time_is_flagged_and_gives_no_findings(
+    docker_runner: DockerCodeRunner,
+    engine: SdkDockerEngine,
+    sample_copy: SampleCopy,
+    tmp_path: Path,
+) -> None:
+    def interpolate(repo: Path) -> None:
+        replace_in(
+            repo / "Controllers" / "UsersController.cs",
+            'private const string FilePath = @"C:\\Users\\Developer\\',
+            'private static readonly string FilePath = $@"C:\\Users\\{"Developer"}\\',
+        )
+
+    result = docker_runner.execute(
+        make_request(
+            sample_copy(edit=interpolate, source=ABSOLUTE_PATH_FIXTURE),
+            tmp_path / "logs",
+            probes=READ_BACK_PROBES,
+        )
     )
+
+    (rewrite,) = result.path_rewrites
+    assert rewrite.not_rewritten_reason is PathNotRewrittenReason.DYNAMIC
+    assert result.has_unresolved_paths
+    assert result.run_status is StepStatus.SUCCEEDED, result.logs_excerpt
+    assert result.probe_results and not all_passed(result), describe(result)
+    checked = check_users_api(result, tmp_path)
+    assert checked.findings == ()
+    assert [(entry.requirement_id, entry.reason) for entry in checked.not_evaluated] == [
+        ("hw01-r1", NotEvaluatedReason.ENVIRONMENT_ISSUE)
+    ]
     assert_nothing_left(engine)
 
 
