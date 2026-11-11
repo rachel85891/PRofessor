@@ -96,6 +96,15 @@ class ArchitectureSignalKind(StrEnum):
     CONSTRUCTOR_CANDIDATE = "constructor_candidate"
     CONSTRUCTOR_INTERFACE_PARAMETER = "constructor_interface_parameter"
     REGISTRATION_CANDIDATE = "registration_candidate"
+    TYPE_DECLARATION = "type_declaration"
+    """A class or record: `subject` its name, `related_subjects` its base list as written,
+    `keywords` its modifiers and `class` or `record`."""
+    CONSTRUCTOR_PARAMETER = "constructor_parameter"
+    """Every constructor parameter: `subject` its type as written, `related_subject` the
+    constructor's type."""
+    OBJECT_CREATION = "object_creation"
+    """`new T(…)` or `new T { … }`: `subject` the type as written, `related_subject` the
+    enclosing type (None in top-level statements)."""
 
 
 class ServiceLifetime(StrEnum):
@@ -111,7 +120,8 @@ class ArchitectureSignal(DomainModel):
 
     For a registration, `subject` is the service type and `related_subject` the
     implementation type, both as written; `subject` is None when the call does not name
-    them literally (a factory lambda, an instance, an extension method's argument).
+    them literally (a factory lambda, an instance, an extension method's argument). Only a
+    type declaration has `related_subjects` (its base list) and `keywords`.
     """
 
     kind: ArchitectureSignalKind
@@ -122,6 +132,10 @@ class ArchitectureSignal(DomainModel):
     registration_method: EvidenceIdentifier | None = None
     """The registration method as written, such as `AddScoped` or `AddKeyedSingleton`."""
     lifetime: ServiceLifetime | None = None
+    related_subjects: tuple[EvidenceIdentifier, ...] = ()
+    """For a type declaration: the names in its base list, as written (`IRepository<User>`)."""
+    keywords: tuple[EvidenceIdentifier, ...] = ()
+    """For a type declaration: its modifiers and `class` or `record`, as written."""
 
     @model_validator(mode="after")
     def _fields_match_kind(self) -> Self:
@@ -136,6 +150,9 @@ class ArchitectureSignal(DomainModel):
             raise ValueError(f"a {self.kind} signal needs a subject and no registration fields")
         if self.subject is None and self.related_subject is not None:
             raise ValueError("a related subject needs a subject")
+        declaration = self.kind is ArchitectureSignalKind.TYPE_DECLARATION
+        if not declaration and (self.related_subjects or self.keywords):
+            raise ValueError("only a type declaration has related subjects and keywords")
         return self
 
 

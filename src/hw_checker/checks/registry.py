@@ -131,7 +131,7 @@ class CheckRegistry:
                 name=name,
                 description=registered.spec.description,
                 params=tuple(
-                    _describe_field(field_name, field)
+                    _describe_field(field.alias or field_name, field)
                     for field_name, field in registered.spec.params_model.model_fields.items()
                 ),
                 reads_file_list=registered.spec.reads_file_list,
@@ -189,6 +189,8 @@ def _type_name(annotation: object) -> str:
     arguments = [argument for argument in get_args(annotation) if argument is not type(None)]
     if origin in (tuple, list) and arguments:
         return f"list of {_type_name(arguments[0])}"
+    if origin in (dict, Mapping) and len(arguments) == 2:
+        return f"mapping of {_type_name(arguments[1])}"
     if origin in (Union, types.UnionType) and len(arguments) == 1:
         return _type_name(arguments[0])
     return getattr(annotation, "__name__", str(annotation))

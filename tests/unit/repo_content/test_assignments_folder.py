@@ -2,12 +2,13 @@
 
 import json
 import string
+from collections.abc import Mapping
 
 from hw_checker.adapters.assignments_yaml import YamlAssignmentSource
 from hw_checker.checks.deterministic.builtin import builtin_checks
 from hw_checker.checks.registry import CheckRegistry
 from hw_checker.config.settings import REPO_ROOT
-from hw_checker.domain import ExpectedJson, RequirementKind
+from hw_checker.domain import ExpectedJson, Feedback, RequirementKind, Severity
 from hw_checker.services.assignments import AssignmentCatalogService
 
 
@@ -19,8 +20,13 @@ def catalog() -> AssignmentCatalogService:
 def test_committed_assignments_folder_loads_general_and_hw01() -> None:
     assignments = catalog().list_assignments()
 
-    assert [(a.id, a.order) for a in assignments] == [("_general", 0), ("hw01", 1)]
-    general, hw01 = assignments
+    assert [(a.id, a.order) for a in assignments] == [
+        ("_general", 0),
+        ("hw01", 1),
+        ("hw02", 2),
+        ("hw03", 3),
+    ]
+    general, hw01, *_ = assignments
     assert [(r.id, r.severity.value) for r in general.requirements] == [
         ("gen-build", "critical"),
         ("gen-controllers", "minor"),
@@ -61,7 +67,7 @@ def test_committed_assignments_folder_loads_general_and_hw01() -> None:
 
 
 def test_hw01_content_checks_and_wrong_login_statuses() -> None:
-    _, hw01 = catalog().list_assignments()
+    _, hw01, *_ = catalog().list_assignments()
     probes = {r.id: r.http_probes[0] for r in hw01.requirements if r.http_probes}
 
     assert probes["hw01-create"].expect_json is ExpectedJson.OBJECT
@@ -81,7 +87,7 @@ def test_hw01_content_checks_and_wrong_login_statuses() -> None:
 
 
 def test_hw01_positive_passwords_and_dependencies() -> None:
-    _, hw01 = catalog().list_assignments()
+    _, hw01, *_ = catalog().list_assignments()
     requirements = {r.id: r for r in hw01.requirements}
     positive = ("hw01-create", "hw01-login", "hw01-login-returns-user", "hw01-update")
     wrong = ("hw01-login-wrong", "hw01-login-wrong-204")
@@ -123,7 +129,7 @@ def test_round_for_hw01_selects_general_and_hw01() -> None:
 
 
 def test_the_created_user_id_is_captured_before_it_is_used() -> None:
-    _, hw01 = catalog().list_assignments()
+    _, hw01, *_ = catalog().list_assignments()
     probes = [p for r in hw01.requirements for p in r.http_probes]
 
     (capturing,) = [p for p in probes if p.capture is not None]
@@ -137,3 +143,49 @@ def test_the_created_user_id_is_captured_before_it_is_used() -> None:
         "hw01-update",
         "hw01-update-read-back",
     ]
+
+
+def test_hw02_and_hw03_are_major_notes_only_and_need_the_layer_projects() -> None:
+    _, _, hw02, hw03 = catalog().list_assignments()
+
+    assert hw02.short_name == "HW2" and hw03.short_name == "HW3"
+    assert [r.id for r in hw02.requirements] == [
+        "hw02-layer-projects",
+        "hw02-references",
+        "hw02-file-access-in-repositories",
+    ]
+    assert [r.id for r in hw03.requirements] == [
+        "hw03-layer-projects",
+        "hw03-references",
+        "hw03-service-interfaces",
+        "hw03-service-interfaces-taken",
+        "hw03-repository-interfaces",
+        "hw03-repository-interfaces-taken",
+        "hw03-registered",
+        "hw03-no-new-dependencies",
+    ]
+    for assignment in (hw02, hw03):
+        first, *rest = assignment.requirements
+        assert all(r.severity is Severity.MAJOR for r in assignment.requirements)
+        assert all(r.feedback is Feedback.NOTES_ONLY for r in assignment.requirements)
+        assert first.depends_on == ()
+        assert all(r.depends_on == (first.id,) for r in rest)
+        references = next(r for r in assignment.requirements if r.check == "layer_references")
+        assert references.params["transitive_required"] is True
+
+
+def test_hw02_skips_and_hw03_applies_on_the_same_di_condition_and_roles() -> None:
+    _, _, hw02, hw03 = catalog().list_assignments()
+
+    assert hw02.skip_when is not None and hw03.applies_when is not None
+    assert hw02.applies_when is None and hw03.skip_when is None
+    assert hw02.skip_when == hw03.applies_when
+    assert dict(hw02.skip_when.params) == {"min_registrations": 0, "min_interface_constructors": 1}
+    roles = [r.params["roles"] for a in (hw02, hw03) for r in a.requirements]
+    assert len({json.dumps(_plain(role), sort_keys=True) for role in roles}) == 1
+
+
+def _plain(value: object) -> object:
+    if isinstance(value, Mapping):
+        return {key: _plain(item) for key, item in value.items()}
+    return value

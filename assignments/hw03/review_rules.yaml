@@ -1,0 +1,97 @@
+# yaml-language-server: $schema=../../course/schemas/review_rules.schema.json
+# hw03's own review rules (stage 21, approved by the developer on 2026-11-10,
+# planner/tasks/hw02-hw03-layers-di-draft.md). Architecture feedback is notes only; these
+# rules give each group of DI requirements its note, in the approved style (the draft's two
+# notes are the model). hw02's rules apply here too: its layer notes cover hw03's repeated
+# layer checks, and its `no-new-structure` rule (never add an interface, project,
+# constructor parameter or registration, enforced in code) holds for hw03.
+rules:
+  - id: service-interface-note
+    applies_to: [fixer, judge]
+    kind: note_only
+    when_found: [hw03-service-interfaces, hw03-service-interfaces-taken]
+    text: >-
+      When a controller takes a service class instead of its interface, or a service class
+      implements no interface, add a note above that constructor or class, in the wording
+      of this rule's example; never add the interface or change the parameter.
+    example:
+      file: Controllers/UsersController.cs
+      find: "        public UsersController(UserService service)"
+      replace: "        //The assignment asks controllers to receive the service through its interface (IUserService), not the class\n        public UsersController(UserService service)"
+    approved_notes:
+      - words: The assignment asks controllers to receive the service through its interface
+        what: the note about a controller taking the service class
+    never_a_violation: >-
+      The note of rule {rule:service-interface-note} about receiving a service through its
+      interface.
+    origin:
+      source: developer
+      quote: "developer decision 2026-11-10 (planner/tasks/hw02-hw03-layers-di-draft.md)"
+    status: approved
+
+  - id: repository-interface-note
+    applies_to: [fixer, judge]
+    kind: note_only
+    when_found: [hw03-repository-interfaces, hw03-repository-interfaces-taken]
+    text: >-
+      When a service takes a repository class instead of its interface, or a repository
+      class implements no interface, add a note above that constructor or class, in the
+      wording of this rule's example; never add the interface or change the parameter.
+    example:
+      file: Services/UserService.cs
+      find: "        public UserService(UserRepository repository)"
+      replace: "        //The assignment asks services to receive the repository through its interface (IUserRepository), not the class\n        public UserService(UserRepository repository)"
+    approved_notes:
+      - words: The assignment asks services to receive the repository through its interface
+        what: the note about a service taking the repository class
+    never_a_violation: >-
+      The note of rule {rule:repository-interface-note} about receiving a repository through
+      its interface.
+    origin:
+      source: developer
+      quote: "developer decision 2026-11-10 (planner/tasks/hw02-hw03-layers-di-draft.md)"
+    status: approved
+
+  - id: registration-note
+    applies_to: [fixer, judge]
+    kind: note_only
+    when_found: [hw03-registered]
+    text: >-
+      When a constructor takes an interface that is never registered, add a note above that
+      constructor, in the wording of this rule's example; never add the registration.
+    example:
+      file: Controllers/UsersController.cs
+      find: "        public UsersController(IUserService service)"
+      replace: "        //Who gives the controller an IUserService? The assignment asks to register it in Program.cs (AddScoped)\n        public UsersController(IUserService service)"
+    approved_notes:
+      - words: The assignment asks to register it in Program.cs
+        what: the note about an interface that is not registered
+    never_a_violation: >-
+      The note of rule {rule:registration-note} about registering an interface in
+      Program.cs.
+    origin:
+      source: developer
+      quote: "developer decision 2026-11-10 (planner/tasks/hw02-hw03-layers-di-draft.md)"
+    status: approved
+
+  - id: no-new-dependency-note
+    applies_to: [fixer, judge]
+    kind: note_only
+    when_found: [hw03-no-new-dependencies]
+    text: >-
+      When a controller or a service creates a service or repository class with `new`, add
+      a note above that line, in the wording of this rule's example; never remove the `new`
+      or add a constructor parameter. Creating models, DTOs and lists with `new` is fine.
+    example:
+      file: Services/UserService.cs
+      find: "        private readonly UserRepository _repository = new UserRepository();"
+      replace: "        //Who creates this UserRepository? With DI, the service receives IUserRepository in its constructor\n        private readonly UserRepository _repository = new UserRepository();"
+    approved_notes:
+      - words: With DI, the service receives
+        what: the note about creating a dependency with new
+    never_a_violation: >-
+      The note of rule {rule:no-new-dependency-note} about a dependency created with `new`.
+    origin:
+      source: developer
+      quote: "developer decision 2026-11-10 (planner/tasks/hw02-hw03-layers-di-draft.md)"
+    status: approved

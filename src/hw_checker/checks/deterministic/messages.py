@@ -338,6 +338,150 @@ DI_NOT_STARTED = MessageTemplate(
     ),
 )
 
+LAYER_PROJECTS_MISSING = MessageTemplate(
+    name="LAYER_PROJECTS_MISSING",
+    he=(
+        "הקוד עדיין לא מחולק לפרויקטים של שכבות: לא נמצא פרויקט עבור {missing}. "
+        "הפרויקטים שנמצאו: {projects}.{unassigned}"
+    ),
+    en=(
+        "The code is not split into the layer projects yet: no project was found for "
+        "{missing}. Projects found: {projects}.{unassigned}"
+    ),
+)
+
+LAYER_PROJECTS_FOUND = MessageTemplate(
+    name="LAYER_PROJECTS_FOUND",
+    he="פרויקטי השכבות: {layers}.{unassigned}",
+    en="Layer projects: {layers}.{unassigned}",
+)
+
+LAYER_UNASSIGNED = MessageTemplate(
+    name="LAYER_UNASSIGNED",
+    he=" בלי שכבה ברורה לפי השם: {projects}.",
+    en=" With no clear layer by name: {projects}.",
+)
+
+LAYER_REFERENCES = MessageTemplate(
+    name="LAYER_REFERENCES",
+    he="ההפניות בין הפרויקטים לא תואמות את השכבות: {examples}. סך הכול: {count}.",
+    en="The project references do not follow the layers: {examples}. Total: {count}.",
+)
+
+LAYER_REFERENCE_MISSING = MessageTemplate(
+    name="LAYER_REFERENCE_MISSING",
+    he="{source} לא מפנה ל-{target} (נדרש {source_role} → {target_role})",
+    en="{source} does not reference {target} ({source_role} → {target_role} is required)",
+)
+
+LAYER_REFERENCE_MISSING_ANY_PATH = MessageTemplate(
+    name="LAYER_REFERENCE_MISSING_ANY_PATH",
+    he=(
+        "{source} לא מפנה ל-{target}, לא ישירות ולא דרך שכבה אחרת "
+        "(נדרש {source_role} → {target_role})"
+    ),
+    en=(
+        "{source} doesn't reference {target}, directly or through another layer "
+        "({source_role} → {target_role} is required)"
+    ),
+)
+
+LAYER_REFERENCE_FORBIDDEN = MessageTemplate(
+    name="LAYER_REFERENCE_FORBIDDEN",
+    he="{source} מפנה ל-{target} (אסור {source_role} → {target_role})",
+    en="{source} references {target} ({source_role} → {target_role} is not allowed)",
+)
+
+CODE_OUTSIDE_LAYER = MessageTemplate(
+    name="CODE_OUTSIDE_LAYER",
+    he=(
+        "הקוד הזה שייך רק לשכבת {allowed}, אבל הוא נמצא גם בפרויקטים אחרים: {examples}. "
+        "סך הכול: {count}."
+    ),
+    en=(
+        "This code belongs only in the {allowed} layer, but it is also in other projects: "
+        "{examples}. Total: {count}."
+    ),
+)
+
+NO_INTERFACE = MessageTemplate(
+    name="NO_INTERFACE",
+    he=(
+        "מחלקות בשכבת {role} שלא מממשות אף ממשק שמוגדר בריפוזיטורי: {examples}. "
+        "סך הכול: {count}.{ambiguous}"
+    ),
+    en=(
+        "Classes in the {role} layer that implement no interface declared in the "
+        "repository: {examples}. Total: {count}.{ambiguous}"
+    ),
+)
+
+CONSTRUCTOR_TAKES_CLASS = MessageTemplate(
+    name="CONSTRUCTOR_TAKES_CLASS",
+    he=(
+        "בנאים בשכבת {consumer} מקבלים מחלקה משכבת {dependency} במקום הממשק שלה: "
+        "{examples}. סך הכול: {count}.{ambiguous}"
+    ),
+    en=(
+        "Constructors in the {consumer} layer take a {dependency} class instead of its "
+        "interface: {examples}. Total: {count}.{ambiguous}"
+    ),
+)
+
+TAKES_CLASS_EXAMPLE = MessageTemplate(
+    name="TAKES_CLASS_EXAMPLE",
+    he="{consumer} מקבל {taken}; צריך לקבל {interface}",
+    en="{consumer} takes {taken}; take {interface}",
+)
+
+INTERFACES_UNREGISTERED = MessageTemplate(
+    name="INTERFACES_UNREGISTERED",
+    he=(
+        "בנאים מקבלים ממשק שלא נרשם (AddScoped, AddTransient או AddSingleton עם הממשק "
+        "הזה): {examples}. סך הכול: {count}.{untyped}{ambiguous}"
+    ),
+    en=(
+        "Constructors take an interface that is not registered (AddScoped, AddTransient or "
+        "AddSingleton with that interface): {examples}. Total: {count}.{untyped}{ambiguous}"
+    ),
+)
+
+UNREGISTERED_EXAMPLE = MessageTemplate(
+    name="UNREGISTERED_EXAMPLE",
+    he="{consumer} מקבל {interface}",
+    en="{consumer} takes {interface}",
+)
+
+UNTYPED_REGISTRATIONS = MessageTemplate(
+    name="UNTYPED_REGISTRATIONS",
+    he=" ב-{count} רישומים לא כתוב סוג (factory או מפתח), ולכן כדאי לבדוק את אלה ידנית.",
+    en=" {count} registrations name no type (a factory or a key), so check these by hand.",
+)
+
+CONCRETE_CONSTRUCTION = MessageTemplate(
+    name="CONCRETE_CONSTRUCTION",
+    he=(
+        "מחלקות יוצרות עם new מחלקה משכבת {of} במקום לקבל את הממשק שלה בבנאי: "
+        "{examples}. סך הכול: {count}.{ambiguous}"
+    ),
+    en=(
+        "Classes create a {of} class with new instead of receiving its interface through "
+        "the constructor: {examples}. Total: {count}.{ambiguous}"
+    ),
+)
+
+CREATION_EXAMPLE = MessageTemplate(
+    name="CREATION_EXAMPLE",
+    he="{creator} יוצר {created}",
+    en="{creator} creates {created}",
+)
+
+AMBIGUOUS_NAMES = MessageTemplate(
+    name="AMBIGUOUS_NAMES",
+    he=" לא נבדק, כי השם מוגדר יותר מפעם אחת: {names}.",
+    en=" Not checked, because the name is declared more than once: {names}.",
+)
+
 ALL_TEMPLATES: tuple[MessageTemplate, ...] = (
     FILE_MISSING,
     FILE_TOO_FEW,
@@ -375,4 +519,21 @@ ALL_TEMPLATES: tuple[MessageTemplate, ...] = (
     CLIENT_FETCH_ROUTES,
     DI_STARTED,
     DI_NOT_STARTED,
+    LAYER_PROJECTS_MISSING,
+    LAYER_PROJECTS_FOUND,
+    LAYER_UNASSIGNED,
+    LAYER_REFERENCES,
+    LAYER_REFERENCE_MISSING,
+    LAYER_REFERENCE_MISSING_ANY_PATH,
+    LAYER_REFERENCE_FORBIDDEN,
+    CODE_OUTSIDE_LAYER,
+    NO_INTERFACE,
+    CONSTRUCTOR_TAKES_CLASS,
+    TAKES_CLASS_EXAMPLE,
+    INTERFACES_UNREGISTERED,
+    UNREGISTERED_EXAMPLE,
+    UNTYPED_REGISTRATIONS,
+    CONCRETE_CONSTRUCTION,
+    CREATION_EXAMPLE,
+    AMBIGUOUS_NAMES,
 )

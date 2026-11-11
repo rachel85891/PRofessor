@@ -37,11 +37,11 @@ class DiStartedParams(BaseModel):
     reads_architecture=True,
 )
 def di_started(check_input: CheckInput, params: DiStartedParams) -> CheckResult:
-    """Passes, saying what it counted, when both counts are reached; not evaluated when the
-    C# signals could not be read at all."""
+    """Passes, saying what it counted, when both counts are reached; not evaluated
+    (`evidence_unavailable`) when the C# signals could not be read at all."""
     evidence = check_input.architecture
     if evidence is None or evidence.signal_coverage.status is EvidenceCoverageStatus.UNAVAILABLE:
-        return NotEvaluatedReason.ENVIRONMENT_ISSUE
+        return NotEvaluatedReason.EVIDENCE_UNAVAILABLE
     registrations = _registrations(evidence)
     constructors = _interface_constructors(evidence)
     if (
