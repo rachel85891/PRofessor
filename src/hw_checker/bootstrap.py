@@ -16,13 +16,14 @@ import threading
 from collections.abc import Iterator, Mapping
 from contextlib import ExitStack, contextmanager
 from enum import Enum
+from typing import Any
 
 import httpx2
 from langgraph.cache.sqlite import SqliteCache
 from langgraph.checkpoint.serde.jsonplus import JsonPlusSerializer
 from langgraph.checkpoint.sqlite import SqliteSaver
 from langgraph.types import Checkpointer
-from pydantic import BaseModel
+from pydantic import BaseModel, SecretStr
 
 import hw_checker.domain
 from hw_checker.adapters.architecture_evidence.local import LocalArchitectureEvidenceReader
@@ -270,18 +271,32 @@ def open_author_llm(settings: Settings) -> Iterator[LLMClient]:
         client.close()
 
 
+LLM_SETTINGS_NOT_SHAPING_REPLIES: dict[str, Any] = {
+    "timeout_seconds": True,
+    "role_timeouts": True,
+    "max_retries": True,
+    "retry_backoff_seconds": True,
+    "student_code_approved": True,
+    "api_key": True,
+    "copilot_token": True,
+    "copilot": {"start_timeout_seconds": True},
+}
+"""The `llm` settings that cannot change a reply, left out of the fixer's cache salt. Every
+other setting is in it, so a setting added later is covered by default; a secret never is
+(`_without_secrets` also drops one added later)."""
+
+
 def fixer_config(settings: Settings) -> FixerConfig:
     """The fix service's configuration. Its cache salt changes with every setting that
-    shapes an LLM reply (the fixer's limits and files, the endpoint, the role models)."""
+    can shape an LLM reply: all the fixer's settings, and all the `llm` settings except
+    `LLM_SETTINGS_NOT_SHAPING_REPLIES` and the secrets."""
     fixer: FixerSettings = settings.fixer
     llm = settings.llm
     shaping = {
         "fixer": fixer.model_dump(mode="json"),
-        "llm": llm.model_dump(
-            mode="json", include={"base_url", "roles", "temperature", "max_output_tokens"}
-        ),
+        "llm": _without_secrets(llm.model_dump(exclude=LLM_SETTINGS_NOT_SHAPING_REPLIES)),
     }
-    salt = hashlib.sha256(json.dumps(shaping, sort_keys=True).encode()).hexdigest()
+    salt = hashlib.sha256(json.dumps(shaping, sort_keys=True, default=str).encode()).hexdigest()
     return FixerConfig(
         max_attempts=fixer.max_attempts,
         max_edits=fixer.max_edits,
@@ -297,6 +312,17 @@ def fixer_config(settings: Settings) -> FixerConfig:
         reply_attempts=fixer.reply_attempts,
         cache_salt=salt,
     )
+
+
+def _without_secrets(value: object) -> object:
+    """`value` (a settings dump) with every secret removed, at any depth."""
+    if isinstance(value, dict):
+        return {
+            key: _without_secrets(item)
+            for key, item in value.items()
+            if not isinstance(item, SecretStr)
+        }
+    return value
 
 
 def fixer_cache(settings: Settings) -> SqliteCache[object] | None:

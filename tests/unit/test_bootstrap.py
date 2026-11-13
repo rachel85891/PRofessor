@@ -158,6 +158,37 @@ def test_fixer_config_maps_the_limits_and_salts_the_cache_with_the_models() -> N
     assert bootstrap.fixer_config(settings).cache_salt == config.cache_salt
 
 
+def _salt_with(**llm: Any) -> str:
+    settings = Settings()
+    return bootstrap.fixer_config(
+        settings.model_copy(update={"llm": settings.llm.model_copy(update=llm)})
+    ).cache_salt
+
+
+@pytest.mark.parametrize(
+    "llm",
+    [
+        {"provider": "copilot"},
+        {
+            "copilot": CopilotSettings(
+                roles={**CopilotSettings().roles, "fixer": "claude-haiku-5.5"}
+            )
+        },
+        {"role_max_output_tokens": {"fixer": 16_000}},
+        {"extra_body": {**LlmSettings().extra_body, "reasoning": {"effort": "low"}}},
+    ],
+)
+def test_every_setting_that_shapes_a_reply_changes_the_fixer_cache_salt(
+    llm: dict[str, Any],
+) -> None:
+    assert _salt_with(**llm) != _salt_with()
+
+
+def test_settings_that_cannot_change_a_reply_leave_the_fixer_cache_salt_alone() -> None:
+    assert _salt_with(timeout_seconds=600) == _salt_with()
+    assert _salt_with(api_key=SecretStr("sk-test")) == _salt_with()
+
+
 def test_the_fixer_cache_lives_in_the_workspace_only_when_the_fixer_is_on(tmp_path: Path) -> None:
     off = Settings(workspace_dir=tmp_path)
     on = Settings(
