@@ -402,6 +402,24 @@ def test_the_cache_answers_a_second_round_on_the_same_commit(tmp_path: Path) -> 
     assert len(harness.storage.proposals.list_for_run("run-2")) == 1
 
 
+def test_a_failed_plan_is_not_cached_and_the_next_round_calls_the_llm_again(
+    tmp_path: Path,
+) -> None:
+    fixer = llm(LLMError("the reply was cut off"), NOTE_PLAN)
+    harness = one_repo(tmp_path, fixer)
+    graph = build_round_graph(
+        CATALOG, harness.services(), 2, cache=InMemoryCache(serde=checkpoint_serializer())
+    )
+
+    first = harness.run(graph)
+    second = harness.run(graph, run_id="run-2")
+
+    assert first["round_errors"] == [f"{AVIGAIL}: fix_repo/plan_edits: the reply was cut off"]
+    assert roles(fixer) == ["fixer", "fixer", "judge", "writer"]
+    assert second["round_errors"] == []
+    assert (second["summary"].llm_calls, second["summary"].proposals) == (3, 1)
+
+
 def test_each_fixer_step_is_streamed_as_a_custom_event(tmp_path: Path) -> None:
     harness = one_repo(tmp_path, llm(NOTE_PLAN))
     graph = harness.graph()

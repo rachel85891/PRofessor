@@ -9,16 +9,17 @@ attempt passed the recheck, `fall_back → verify` once more; and `write_pr_text
 repo, the repo report says why, and the round goes on.
 
 The LLM nodes have a `RetryPolicy` for unparseable replies and a `CachePolicy` keyed on what
-decides their prompt; they change no file, so replaying a cached reply is safe.
+decides their prompt; they change no file, so replaying a cached reply is safe. A failed step
+is never cached (`SuccessOnlyCache`), so the next run with the same key calls the LLM again.
 """
 
 import hashlib
 import json
 import operator
-from collections.abc import Callable
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from typing import Annotated, NotRequired, TypedDict
 
-from langgraph.cache.base import BaseCache
+from langgraph.cache.base import BaseCache, FullKey, Namespace
 from langgraph.config import get_stream_writer
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.state import CompiledStateGraph
@@ -106,8 +107,9 @@ def build_fix_graph(
 ) -> FixGraph:
     """Build the fixer subgraph over the assignment catalog.
 
-    `cache` keeps the LLM nodes' replies. It is compiled into this subgraph itself: in
-    LangGraph 1.2.18 a subgraph does not inherit its parent's cache.
+    `cache` keeps the LLM nodes' replies, never a failed step (`SuccessOnlyCache`). It is
+    compiled into this subgraph itself: in LangGraph 1.2.18 a subgraph does not inherit its
+    parent's cache.
     """
     by_id = {assignment.id: assignment for assignment in assignments}
     reply_attempts = fixing.reply_attempts
@@ -460,7 +462,9 @@ def build_fix_graph(
     builder.add_edge("next_attempt", "plan_edits")
     builder.add_edge("give_up", END)
     builder.add_edge("propose", END)
-    return builder.compile(cache=cache, name="fix_repo")
+    return builder.compile(
+        cache=SuccessOnlyCache(cache) if cache is not None else None, name="fix_repo"
+    )
 
 
 def _finish(application: EditApplication) -> str:
@@ -484,3 +488,54 @@ def _key(*parts: object) -> str:
     """A cache key: the SHA-256 of the parts as canonical JSON."""
     text = json.dumps(parts, sort_keys=True, default=str, separators=(",", ":"))
     return hashlib.sha256(text.encode()).hexdigest()
+
+
+class SuccessOnlyCache(BaseCache[object]):
+    """A cache that keeps only steps that did not fail.
+
+    A guarded step catches its failure and returns it as a normal update (`failed`), which
+    LangGraph would cache like a reply; replaying it would repeat the failure without a call.
+    """
+
+    def __init__(self, inner: BaseCache[object]) -> None:
+        super().__init__(serde=inner.serde)
+        self._inner = inner
+
+    def get(self, keys: Sequence[FullKey]) -> dict[FullKey, object]:
+        return self._inner.get(keys)
+
+    async def aget(self, keys: Sequence[FullKey]) -> dict[FullKey, object]:
+        return await self._inner.aget(keys)
+
+    def set(self, pairs: Mapping[FullKey, tuple[object, int | None]]) -> None:
+        kept = _succeeded(pairs)
+        if kept:
+            self._inner.set(kept)
+
+    async def aset(self, pairs: Mapping[FullKey, tuple[object, int | None]]) -> None:
+        kept = _succeeded(pairs)
+        if kept:
+            await self._inner.aset(kept)
+
+    def clear(self, namespaces: Sequence[Namespace] | None = None) -> None:
+        self._inner.clear(namespaces)
+
+    async def aclear(self, namespaces: Sequence[Namespace] | None = None) -> None:
+        await self._inner.aclear(namespaces)
+
+
+def _succeeded(
+    pairs: Mapping[FullKey, tuple[object, int | None]],
+) -> dict[FullKey, tuple[object, int | None]]:
+    """The entries whose node writes do not mark the step failed."""
+    return {key: entry for key, entry in pairs.items() if not _failed(entry[0])}
+
+
+def _failed(writes: object) -> bool:
+    """Whether a node's cached writes, `(channel, value)` pairs, set `failed`."""
+    if not isinstance(writes, Iterable):
+        return False
+    return any(
+        isinstance(write, tuple) and len(write) == 2 and write[0] == "failed" and write[1]
+        for write in writes
+    )
