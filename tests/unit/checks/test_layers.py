@@ -72,6 +72,37 @@ def test_a_project_matching_no_role_or_two_is_unassigned(project: str) -> None:
     assert found.missing(tuple(ROLES)) == tuple(ROLES)
 
 
+def test_a_dotted_name_matching_two_roles_is_read_by_its_last_part() -> None:
+    found = layers(
+        evidence(
+            ("ApiProject/ApiProject.csproj", WEB),
+            ("ApiProject.Entities/ApiProject.Entities.csproj", "Microsoft.NET.Sdk"),
+            ("ApiProject.Services/ApiProject.Services.csproj", "Microsoft.NET.Sdk"),
+            ("ApiProject.Repositories/ApiProject.Repositories.csproj", "Microsoft.NET.Sdk"),
+        ),
+        ROLES,
+    )
+
+    assert dict(found.by_role) == {
+        "api": ("ApiProject/ApiProject.csproj",),
+        "entities": ("ApiProject.Entities/ApiProject.Entities.csproj",),
+        "services": ("ApiProject.Services/ApiProject.Services.csproj",),
+        "repositories": ("ApiProject.Repositories/ApiProject.Repositories.csproj",),
+    }
+    assert found.unassigned == ()
+
+
+@pytest.mark.parametrize(
+    "project",
+    ["ApiProject.DataModels/ApiProject.DataModels.csproj", "ApiProject.Tools/x.Tools.csproj"],
+    ids=["last part matches two roles", "last part matches none"],
+)
+def test_a_dotted_name_still_not_one_role_is_unassigned(project: str) -> None:
+    found = layers(evidence((project, "Microsoft.NET.Sdk")), ROLES)
+
+    assert found.unassigned == (project,)
+
+
 def test_a_file_belongs_to_the_nearest_project_folder() -> None:
     found = layers(
         evidence(

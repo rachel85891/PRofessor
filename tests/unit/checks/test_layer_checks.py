@@ -394,6 +394,20 @@ def test_a_class_declared_twice_is_not_guessed(tmp_path: Path) -> None:
     )
 
 
+@pytest.mark.parametrize("base", ["DbContext", "IdentityDbContext<AppUser>"])
+def test_a_class_with_an_excluded_base_is_not_read(tmp_path: Path, base: str) -> None:
+    files = variant(
+        {"Repositories/StoreDBContext.cs": f"public class StoreDBContext : {base} {{ }}\n"}
+    )
+    root = solution(tmp_path, files)
+
+    left_out = run("implements_interface", root, role="repositories", exclude_bases=["DbContext$"])
+    read = run("implements_interface", root, role="repositories")
+
+    assert left_out == ()
+    assert "`StoreDBContext` (Repositories/StoreDBContext.cs, line 1)" in message(read)
+
+
 def test_implements_interface_cannot_tell_without_the_signals(tmp_path: Path) -> None:
     outcome = run("implements_interface", tmp_path, unavailable(), role="services")
 
@@ -520,6 +534,39 @@ def test_a_service_creating_a_repository_is_reported_but_not_an_entity(tmp_path:
         f"interface through the constructor: `UserService` creates `UserRepository` ({SERVICE}, "
         "line 8). Total: 1."
     )
+
+
+def test_an_excluded_created_class_is_not_counted(tmp_path: Path) -> None:
+    service = SERVICE_CREATES.replace(
+        '        var empty = new User { Name = "" };\n',
+        '        var empty = new User { Name = "" };\n'
+        "        var result = new PasswordResult();\n"
+        "        var context = new StoreContext();\n",
+    )
+    files = variant(
+        {
+            SERVICE: service,
+            "Services/PasswordResult.cs": "public class PasswordResult { public bool Ok; }\n",
+            "Repositories/StoreContext.cs": "public class StoreContext : DbContext { }\n",
+        }
+    )
+    root = solution(tmp_path, files)
+
+    left_out = run(
+        "no_concrete_construction",
+        root,
+        **CONSTRUCTION,
+        exclude=["Result$"],
+        exclude_bases=["DbContext$"],
+    )
+    counted = run("no_concrete_construction", root, **CONSTRUCTION)
+
+    assert message(left_out) == (
+        "Classes create a services or repositories class with new instead of receiving its "
+        f"interface through the constructor: `UserService` creates `UserRepository` ({SERVICE}, "
+        "line 8). Total: 1."
+    )
+    assert "Total: 3." in message(counted)
 
 
 def test_a_factory_in_the_top_level_statements_is_not_read(tmp_path: Path) -> None:
