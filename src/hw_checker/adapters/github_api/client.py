@@ -26,6 +26,8 @@ HTTP_OK = 200
 HTTP_CREATED = 201
 HTTP_ACCEPTED = 202
 HTTP_NOT_FOUND = 404
+# GitHub's message when the publishing account already has a repo with the fork's name.
+NAME_TAKEN = "name already exists"
 
 
 @dataclass(frozen=True)
@@ -97,17 +99,45 @@ class GitHubCodeHost:
         """Fork `repo` into the publishing account as `<fork_prefix><owner>` (or reuse the
         existing fork, whose name GitHub keeps) and wait until the fork answers.
 
+        The fork is made at the repo's current address: a renamed or transferred repo is
+        still read through the roster's old link, because GitHub redirects a GET but not
+        the fork POST. When the account already has another repo with the fork's name, the
+        fork is named `<fork_prefix><owner>-<repo name>` instead.
+
         Raises:
-            PublishError: the account is not configured, the fork cannot be created, it
-                belongs to another account, or it is not ready in time.
+            PublishError: the account is not configured, the repo cannot be read, both
+                fork names are taken, the fork cannot be created, it belongs to another
+                account, or it is not ready in time.
         """
         account = self._account()
-        created = self._request(
-            "POST",
-            f"{_repo_path(repo.owner, repo.name)}/forks",
-            {"name": f"{self._config.fork_prefix}{repo.owner}", "default_branch_only": True},
-            accepted=(HTTP_OK, HTTP_ACCEPTED),
+        source = self._request("GET", _repo_path(repo.owner, repo.name))
+        current_owner, current_name = _text(source, "owner", "login"), _text(source, "name")
+        if (current_owner.casefold(), current_name.casefold()) != (
+            repo.owner.casefold(),
+            repo.name.casefold(),
+        ):
+            logger.warning(
+                "The roster link of %s is out of date: the repo is now at %s/%s; "
+                "update the roster.",
+                repo.repo_id,
+                current_owner,
+                current_name,
+                extra={"repo_id": repo.repo_id},
+            )
+        names = (
+            f"{self._config.fork_prefix}{current_owner}",
+            f"{self._config.fork_prefix}{current_owner}-{current_name}",
         )
+        created = None
+        for fork_name in names:
+            created = self._create_fork(current_owner, current_name, fork_name)
+            if created is not None:
+                break
+        if created is None:
+            raise PublishError(
+                f"Cannot fork {current_owner}/{current_name}: the publishing account already "
+                f"has repos named {names[0]} and {names[1]}; rename or delete one of them."
+            )
         owner, name = _text(created, "owner", "login"), _text(created, "name")
         if owner.casefold() != account.casefold():
             raise PublishError(
@@ -169,6 +199,24 @@ class GitHubCodeHost:
             )
         return self._config.account
 
+    def _create_fork(self, owner: str, repo_name: str, fork_name: str) -> object | None:
+        """POST the fork named `fork_name` and return GitHub's reply, or None when the
+        publishing account already has a repo with that name (another fork, or not a fork).
+
+        GitHub answered a taken name with HTTP 403 in practice, so the message is matched,
+        not only the status.
+        """
+        path = f"{_repo_path(owner, repo_name)}/forks"
+        body = {"name": fork_name, "default_branch_only": True}
+        status, data = self._exchange("POST", path, body)
+        if status not in (HTTP_OK, HTTP_ACCEPTED):
+            message = self._message(data)
+            if NAME_TAKEN in message.casefold():
+                logger.info("The fork name %s is taken in the publishing account", fork_name)
+                return None
+            raise PublishError(f"GitHub POST {path} failed (HTTP {status}): {message}")
+        return self._json("POST", path, data)
+
     def _wait_for(self, account: str, name: str) -> None:
         deadline = self._clock() + self._config.fork_wait_seconds
         path = _repo_path(account, name)
@@ -197,6 +245,9 @@ class GitHubCodeHost:
             raise PublishError(
                 f"GitHub {method} {path} failed (HTTP {status}): {self._message(data)}"
             )
+        return self._json(method, path, data)
+
+    def _json(self, method: str, path: str, data: bytes) -> object:
         try:
             return json.loads(data)
         except ValueError as error:
