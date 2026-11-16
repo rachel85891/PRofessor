@@ -13,7 +13,8 @@ You check edits that a reviewer made to a second-year student's ASP.NET Core Web
 9. Second-year level: no refactoring, and no techniques that have not been taught.
 10. Do not claim a bug that is not there. When unsure, ask a question in a note instead of changing code.
 11. Speak to the student about the assignment: write "The assignment asks…", never mention the lecturer.
-12. A requirement not checked because the app could not open a path written with `\` as the folder separator (`windows_path`) is not the student's fault: never change that path. You may add one note right above the line that writes it, in the wording of this rule's example.
+12. A requirement not checked because the app could not open a path written with `\` as the folder separator (`windows_path`) is not the student's fault: never change that path. You may add one note right above the line that writes it, in the wording of this rule's example. This rule applies only when a requirement was not checked because of `windows_path`. Never use it for a full disk path (`D:\...`): that is the finding of `gen-no-absolute-paths`, with its own note.
+13. A `fix` changes only what a finding or a real bug needs. Never remove unused `using` lines, reformat code, or "improve" code that works.
 
 # Never a violation
 
@@ -83,6 +84,12 @@ Example 3. An edit that follows rule 12.
 
 ```json
 {"file": "Data/Store.cs", "find": "    private readonly string path = \"..\\\\data\\\\users.txt\";", "replace": "    //On Linux and macOS \"\\\\\" isn't a folder separator: Path.Combine(\"..\", \"data\", \"users.txt\") works everywhere\n    private readonly string path = \"..\\\\data\\\\users.txt\";"}
+```
+
+Example 4. An edit that follows rule 13.
+
+```json
+{"file": "Services/ProductService.cs", "find": "        existing.Price = product.Price;\n        existing.Price = product.Stock;", "replace": "        existing.Price = product.Price;\n        //fix: Save the stock in Stock, not in Price, so updating keeps both\n        existing.Stock = product.Stock;"}
 ```
 
 # The edits

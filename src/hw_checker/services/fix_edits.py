@@ -22,7 +22,7 @@ from hw_checker.domain import (
     PlannedEdit,
     RejectedEdit,
 )
-from hw_checker.services.fix_review import Allowances, detector_problem
+from hw_checker.services.fix_review import Allowances, detector_problem, note_problem
 from hw_checker.services.review_policy import Scoped
 
 MIN_REASON_CHARS = 8
@@ -56,7 +56,8 @@ class EditRules:
     """The repo's data files, the only ones a `final_newline` edit may change."""
     allowances: Allowances | None = None
     """The safe fixes in effect: a `fix` of a safe fix's shape that its detector still
-    refuses is rejected with the detector's reason."""
+    refuses is rejected with the detector's reason; so is an edit with a note in an
+    approved wording that the repo's results do not allow."""
     notes_only: frozenset[str] = field(default_factory=frozenset)
     """The ids of the notes-only requirements (`feedback: notes_only`) and of their
     findings: a `fix` that claims one is rejected."""
@@ -217,7 +218,7 @@ def _replace(
         return f"{path} is not edited"
     problem = _content_problem(path, find, replace, edit.kind, rules, style)
     if problem is None and rules.allowances is not None:
-        problem = detector_problem(edit, rules.allowances)
+        problem = detector_problem(edit, rules.allowances) or note_problem(edit, rules.allowances)
     if problem:
         return problem
     texts[path] = text.replace(find.replace("\n", newline), replace.replace("\n", newline), 1)

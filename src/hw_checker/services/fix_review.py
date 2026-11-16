@@ -51,13 +51,15 @@ _STRICT_EQUALS = "==="
 class Allowances:
     """What the rules in effect allow outright: the safe fixes their `fix_allowed` rules
     name, and their notes in the approved wording, each in the file types its rule is
-    limited to; `styles` tell comments from code, and `findings` (requirement id → the
-    findings' messages) say what the checks named."""
+    limited to; `styles` tell comments from code, `findings` (requirement id → the
+    findings' messages) say what the checks named, and `not_evaluated` holds the reasons
+    the repo's requirements were not evaluated for (a note may need one)."""
 
     detectors: tuple[Scoped[DetectorGrant], ...]
     approved_notes: tuple[Scoped[ApprovedNote], ...]
     styles: Mapping[str, CommentStyle]
     findings: Mapping[str, tuple[str, ...]] = field(default_factory=dict)
+    not_evaluated: frozenset[str] = frozenset()
 
     def style(self, path: str) -> CommentStyle | None:
         """The comment style of the file at `path`."""
@@ -70,6 +72,12 @@ class Allowances:
     def notes_for(self, path: str) -> list[ApprovedNote]:
         """The notes in the approved wording for the file at `path`."""
         return [scoped.item for scoped in self.approved_notes if scoped.covers(path)]
+
+    def accepts(self, note: ApprovedNote) -> bool:
+        """Whether the repo's results allow `note`: it needs no not-evaluated reason, or one
+        of the repo's requirements was not evaluated for it."""
+        needed = note.only_when_not_evaluated
+        return needed is None or needed in self.not_evaluated
 
     def named(self, grant: DetectorGrant) -> tuple[str, ...]:
         """The messages of the findings of the requirements `grant` is `named_by`."""
@@ -152,7 +160,11 @@ def never_a_violation(edit: PlannedEdit, allowances: Allowances) -> str | None:
     if edit.kind is EditKind.NOTE:
         text = " ".join(_change(edit, style).comments).lower()
         return next(
-            (note.what for note in allowances.notes_for(edit.file) if note.words.lower() in text),
+            (
+                note.what
+                for note in allowances.notes_for(edit.file)
+                if note.words.lower() in text and allowances.accepts(note)
+            ),
             None,
         )
     return next(
@@ -179,6 +191,24 @@ def detector_problem(edit: PlannedEdit, allowances: Allowances) -> str | None:
         ),
         None,
     )
+
+
+def note_problem(edit: PlannedEdit, allowances: Allowances) -> str | None:
+    """Why an edit's comment in a rule's approved wording is not allowed in this repo: the
+    note is only for a not-evaluated reason none of the repo's requirements has (the
+    Windows-separator note used on a full disk path, in the 2026-11-14 round)."""
+    style = allowances.style(edit.file)
+    if style is None:
+        return None
+    text = " ".join(_change(edit, style).comments).lower()
+    for note in allowances.notes_for(edit.file):
+        if note.words.lower() in text and not allowances.accepts(note):
+            return (
+                f"{note.what} is only for a requirement not checked because of "
+                f"`{note.only_when_not_evaluated}`, and no requirement of this repo was; "
+                "leave it out"
+            )
+    return None
 
 
 def _detections(

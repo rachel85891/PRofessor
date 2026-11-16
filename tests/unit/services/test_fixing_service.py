@@ -418,6 +418,54 @@ def test_a_pr_text_still_unusable_after_the_feedback_is_an_output_error(
     assert len(setup.llm.calls) == 2
 
 
+POINTER = (
+    'never write "A comment is there to guide you" or "A comment asks..."; the section\'s '
+    "heading already says the code is marked"
+)
+"""The message of the course's writer rule `no-comment-pointers` (2026-11-16)."""
+POINTING = PR_TEXT.model_copy(
+    update={"for_you": ("**`case 1`:** a comment is there to guide you through it.",)}
+)
+
+
+def test_writer_text_a_rule_forbids_is_asked_for_again_with_the_reason(tmp_path: Path) -> None:
+    setup = FixerSetup(tmp_path, replies={"writer": [POINTING, PR_TEXT]})
+    application = EditApplication(applied=(BREAK_FIX, NAMING_NOTE), changed_files=(CONTROLLER,))
+
+    setup.service.write_text(RUN_ID, ASSIGNMENT, (ASSIGNMENT,), RESULTS, application, [], [])
+
+    first, retry = setup.llm.calls
+    assert f"- {POINTER}\n" in retry.prompt.removeprefix(first.prompt)
+
+
+def test_writer_text_still_forbidden_after_the_feedback_is_reported(tmp_path: Path) -> None:
+    setup = FixerSetup(tmp_path, replies={"writer": [POINTING]})
+    application = EditApplication(applied=(BREAK_FIX, NAMING_NOTE), changed_files=(CONTROLLER,))
+
+    with pytest.raises(LLMOutputError, match=re.escape(POINTER)):
+        setup.service.write_text(RUN_ID, ASSIGNMENT, (ASSIGNMENT,), RESULTS, application, [], [])
+
+    assert len(setup.llm.calls) == 2
+
+
+def test_edits_with_the_same_comments_are_one_entry_listing_each_file_once(
+    tmp_path: Path,
+) -> None:
+    other_file = NAMING_NOTE.model_copy(update={"file": "Services/UserService.cs"})
+    same_file = NAMING_NOTE.model_copy(update={"find": "        int New_Count = 0;\n"})
+    setup = FixerSetup(tmp_path, replies={"writer": [PR_TEXT]})
+    application = EditApplication(applied=(BREAK_FIX, NAMING_NOTE, other_file, same_file))
+
+    setup.service.write_text(RUN_ID, ASSIGNMENT, (ASSIGNMENT,), RESULTS, application, [], [])
+
+    prompt = setup.llm.calls[0].prompt
+    names = prompt[prompt.index("## Names") :]
+    assert names.count(NAMING_NOTE.reason) == 1
+    assert "- In `UsersController.cs`, `UserService.cs`: " in names
+    # One item answers the one entry: the reply is not asked for again.
+    assert len(setup.llm.calls) == 1
+
+
 CRITICAL = "hw01-critical"
 TITLE_ASSIGNMENT = ASSIGNMENT.model_copy(
     update={
@@ -539,7 +587,11 @@ def test_the_writer_gets_each_edit_under_its_one_section(tmp_path: Path) -> None
         update={"note_section": NoteSection.FOR_YOU, "reason": "Ask why GET by id is missing."}
     )
     unsectioned = NAMING_NOTE.model_copy(
-        update={"note_section": None, "reason": "A note without a section."}
+        update={
+            "note_section": None,
+            "reason": "A note without a section.",
+            "replace": "        //Is this count needed?\n        int New_Count = count;\n",
+        }
     )
     two_questions = PR_TEXT.model_copy(
         update={"for_you": ("**GET by id:** please write it.", "**Notes:** a note to read.")}

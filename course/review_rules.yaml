@@ -198,7 +198,9 @@ rules:
       A requirement not checked because the app could not open a path written with `\` as
       the folder separator (`windows_path`) is not the student's fault: never change that
       path. You may add one note right above the line that writes it, in the wording of
-      this rule's example.
+      this rule's example. This rule applies only when a requirement was not checked
+      because of `windows_path`. Never use it for a full disk path (`D:\...`): that is the
+      finding of `gen-no-absolute-paths`, with its own note.
     example:
       file: Data/Store.cs
       find: '    private readonly string path = "..\\data\\users.txt";'
@@ -206,6 +208,8 @@ rules:
     approved_notes:
       - words: isn't a folder separator
         what: the note about a path written with Windows folder separators
+        # The 2026-11-14 round used it on full disk paths; developer decision 2026-11-16.
+        only_when_not_evaluated: windows_path
     never_a_violation: >-
       The note of rule {rule:windows-paths} about a path written with `\` as the folder
       separator.
@@ -228,6 +232,55 @@ rules:
     origin:
       source: developer
       quote: "approved implementation approach, docs/design.md §7 (developer, 2026-11-10)"
+    status: approved
+
+  - id: only-what-is-needed
+    # The 2026-11-14 round's PRs had edits no finding asked for (a removed unused `using`,
+    # a `break` where nothing was wrong, the id set on update with no finding about it).
+    applies_to: [fixer, judge]
+    kind: never_do
+    text: >-
+      A `fix` changes only what a finding or a real bug needs. Never remove unused `using`
+      lines, reformat code, or "improve" code that works.
+    example:
+      file: Services/ProductService.cs
+      find: "        existing.Price = product.Price;\n        existing.Price = product.Stock;"
+      replace: "        existing.Price = product.Price;\n        //fix: Save the stock in Stock, not in Price, so updating keeps both\n        existing.Stock = product.Stock;"
+    origin:
+      source: developer
+      quote: "developer decision 2026-11-16 (full-round review)"
+    status: approved
+
+  - id: no-comment-pointers
+    # The 2026-11-14 round's PRs said "A comment is there to guide you" in many items.
+    applies_to: [writer]
+    kind: style
+    text: >-
+      Never write "A comment is there to guide you", "A comment is there to explain this",
+      "A comment asks..." or anything like it: the section's heading already says the code
+      is marked. Say what to do or what was changed.
+    forbidden_text:
+      - pattern: '\b(?:a|the|this) comments? (?:is there|are there|asks?|explains?|guides?)\b'
+        ignore_case: true
+        message: >-
+          never write "A comment is there to guide you" or "A comment asks..."; the
+          section's heading already says the code is marked
+    origin:
+      source: developer
+      quote: "developer decision 2026-11-16 (full-round review)"
+    status: approved
+
+  - id: naming-items
+    # The 2026-11-14 round's PRs had naming items that said a name "is already correct".
+    applies_to: [writer]
+    kind: style
+    text: >-
+      A naming item never says a name "is correct" or "is already correct". It names the
+      wrong name and the name to use (for example "`passwordCheck` should be
+      `PasswordCheck`").
+    origin:
+      source: developer
+      quote: "developer decision 2026-11-16 (full-round review)"
     status: approved
 
 examples:
