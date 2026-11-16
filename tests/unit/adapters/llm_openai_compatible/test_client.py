@@ -82,6 +82,7 @@ def client(
     role_timeouts: dict[str, float] | None = None,
     role_max_prompt_chars: dict[str, int] | None = None,
     role_max_output_tokens: dict[str, int] | None = None,
+    role_output_modes: dict[str, str] | None = None,
 ) -> tuple[OpenAICompatibleLLMClient, list[float]]:
     sleeps: list[float] = []
     config = LlmClientConfig(
@@ -97,6 +98,7 @@ def client(
         role_timeouts=role_timeouts or {},
         role_max_prompt_chars=role_max_prompt_chars or {},
         role_max_output_tokens=role_max_output_tokens or {},
+        role_output_modes=role_output_modes or {},
     )
     llm = OpenAICompatibleLLMClient(
         config,
@@ -415,3 +417,143 @@ def test_a_failed_call_logs_its_outcome(caplog: pytest.LogCaptureFixture) -> Non
     [record] = [r for r in caplog.records if r.name.endswith("llm_openai_compatible.client")]
     assert (record.__dict__["outcome"], record.__dict__["attempts"]) == ("auth", 1)
     assert record.__dict__["input_tokens"] is None
+
+
+SCHEMA_SUFFIX = (
+    "\n\nReply with one JSON object that matches this JSON Schema, and nothing else.\n"
+    + json.dumps(Pong.model_json_schema(), separators=(",", ":"))
+)
+
+
+def json_prompt_client(
+    transport: Transport, **options: Any
+) -> tuple[OpenAICompatibleLLMClient, list[float]]:
+    return client(transport, role_output_modes={"reviewer": "json_prompt"}, **options)
+
+
+def test_json_prompt_mode_asks_for_json_mode_with_the_schema_at_the_end_of_the_prompt() -> None:
+    transport = Transport(pong)
+    llm, _ = json_prompt_client(transport)
+
+    reply, usage = llm.complete_with_usage("reviewer", PROMPT, Pong)
+
+    [body] = transport.bodies()
+    assert body["response_format"] == {"type": "json_object"}
+    assert "json_schema" not in json.dumps(body["response_format"])
+    assert body["messages"][-1]["content"] == PROMPT + SCHEMA_SUFFIX
+    assert reply == Pong(answer="pong")
+    assert usage == TokenUsage(input_tokens=12, output_tokens=5)
+
+
+def test_json_prompt_mode_is_only_for_its_role() -> None:
+    transport = Transport(pong)
+    llm, _ = json_prompt_client(transport)
+
+    llm.complete("judge", PROMPT, Pong)
+
+    [body] = transport.bodies()
+    assert body["response_format"]["type"] == "json_schema"
+    assert body["messages"][-1]["content"] == PROMPT
+
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        '{"answer": "pong"}',
+        '```json\n{"answer": "pong"}\n```',
+        '```\n{"answer": "pong"}\n```\n',
+        '  ```JSON\n{"answer": "pong"}```',
+    ],
+    ids=["plain", "json-fence", "bare-fence", "fence-without-newline"],
+)
+def test_json_prompt_mode_parses_a_reply_with_or_without_a_fence(content: str) -> None:
+    llm, _ = json_prompt_client(
+        Transport(lambda request: httpx2.Response(200, json=completion(content)))
+    )
+
+    assert llm.complete("reviewer", PROMPT, Pong) == Pong(answer="pong")
+
+
+@pytest.mark.parametrize(
+    "content",
+    ["not json at all", '{"answer": 5}', '{"other": "pong"}', '```json\n{"answer": \n```'],
+    ids=str,
+)
+def test_json_prompt_mode_an_unreadable_reply_is_an_output_error(
+    content: str, caplog: pytest.LogCaptureFixture
+) -> None:
+    transport = Transport(lambda request: httpx2.Response(200, json=completion(content)))
+    llm, sleeps = json_prompt_client(transport)
+
+    with caplog.at_level(logging.DEBUG), pytest.raises(LLMOutputError) as raised:
+        llm.complete("reviewer", PROMPT, Pong)
+
+    assert "could not be read as Pong" in str(raised.value)
+    assert content not in str(raised.value)
+    assert (len(transport.requests), sleeps) == (1, [])
+    [record] = [r for r in caplog.records if r.name.endswith("llm_openai_compatible.client")]
+    assert record.__dict__["outcome"] == "unparseable"
+    for logged in caplog.records:
+        assert content not in logged.getMessage() and content not in repr(logged.__dict__)
+
+
+def test_json_prompt_mode_counts_the_schema_toward_the_prompt_limit() -> None:
+    limit = len(PROMPT + SCHEMA_SUFFIX)
+    transport = Transport(pong)
+
+    fits, _ = json_prompt_client(transport, max_prompt_chars=limit)
+    fits.complete("reviewer", PROMPT, Pong)
+    too_long, _ = json_prompt_client(transport, max_prompt_chars=limit - 1)
+    with pytest.raises(LLMError, match=f"has {limit} characters, more than the limit"):
+        too_long.complete("reviewer", PROMPT, Pong)
+
+    assert len(transport.requests) == 1
+
+
+def test_the_provider_message_adds_openrouters_raw_upstream_message_without_the_key() -> None:
+    raw = json.dumps(
+        {
+            "type": "error",
+            "error": {
+                "type": "invalid_request_error",
+                "message": "Invalid schema: Circular reference detected in schema definitions: "
+                f"ParamValue -> ParamValue (key {FAKE_KEY})",
+            },
+        }
+    )
+    body = {
+        "error": {
+            "message": "Provider returned error",
+            "code": 400,
+            "metadata": {"raw": raw, "provider_name": "Anthropic"},
+        }
+    }
+    llm, _ = client(Transport(lambda request: httpx2.Response(400, json=body)), max_retries=0)
+
+    with pytest.raises(LLMError) as raised:
+        llm.complete("reviewer", PROMPT, Pong)
+
+    message = str(raised.value)
+    assert message.startswith(
+        "The LLM endpoint rejected the request (HTTP 400): Provider returned error: "
+        "Invalid schema: Circular reference detected in schema definitions: "
+        "ParamValue -> ParamValue (key [redacted])"
+    )
+    assert FAKE_KEY not in message
+    assert "invalid_request_error" not in message
+
+
+def test_a_raw_upstream_message_that_is_not_json_is_added_as_it_is() -> None:
+    body = {
+        "error": {
+            "message": "Provider returned error",
+            "code": 400,
+            "metadata": {"raw": "The compiled grammar is too large"},
+        }
+    }
+    llm, _ = client(Transport(lambda request: httpx2.Response(400, json=body)), max_retries=0)
+
+    with pytest.raises(
+        LLMError, match=r"\(HTTP 400\): Provider returned error: The compiled grammar is too large"
+    ):
+        llm.complete("reviewer", PROMPT, Pong)

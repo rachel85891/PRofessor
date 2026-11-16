@@ -470,6 +470,19 @@ def test_the_repo_config_gives_only_the_author_larger_limits(tmp_path: Path) -> 
         assert llm.role_output_tokens(role) == llm.max_output_tokens == 4096
 
 
+def test_the_repo_config_asks_only_the_author_for_json_in_the_prompt(tmp_path: Path) -> None:
+    llm = load_settings(config_path=DEFAULT_CONFIG_PATH, env_path=tmp_path / ".env").llm
+
+    assert llm.role_output_modes == {"author": "json_prompt"}
+    assert llm.role_output_mode("author") == "json_prompt"
+    assert llm.role_output_mode("judge") == "json_schema"
+
+
+def test_an_unknown_output_mode_is_rejected_at_startup(tmp_path: Path) -> None:
+    with pytest.raises(ConfigurationError, match=r"llm\.role_output_modes\.author"):
+        _load(tmp_path, "llm:\n  role_output_modes: {author: json_text}\n")
+
+
 @pytest.mark.parametrize(
     "yaml_text",
     [
