@@ -214,6 +214,12 @@ llm:
   # a reply's length, so on copilot it is not applied. A full draft is a long reply.
   role_max_output_tokens:
     author: 16000
+  # A role's own output mode, for openrouter only: json_schema (strict structured output,
+  # the default) or json_prompt. The author's reply schema is recursive and too large for
+  # Claude's strict structured output (HTTP 400), so it is sent in the prompt instead and
+  # the reply is validated afterwards.
+  role_output_modes:
+    author: json_prompt
   # Sending students' code to the LLM (the fixer) needs the lecturer's approval. Only the
   # developer sets this to true, once the lecturer has approved it.
   student_code_approved: false

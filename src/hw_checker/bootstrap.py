@@ -607,6 +607,7 @@ def llm_config(llm: LlmSettings) -> LlmClientConfig:
         role_max_output_tokens={
             str(role): tokens for role, tokens in llm.role_max_output_tokens.items()
         },
+        role_output_modes={str(role): mode for role, mode in llm.role_output_modes.items()},
     )
 
 

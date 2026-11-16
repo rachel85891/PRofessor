@@ -1,13 +1,16 @@
 """OpenAICompatibleLLMClient: `LLMClient` over any OpenAI-compatible endpoint (ADR 0020).
 
 Each role's model is called through `langchain-openai`'s `ChatOpenAI` with structured
-output (`json_schema`), so the reply is validated into the caller's Pydantic model.
+output (`json_schema`), so the reply is validated into the caller's Pydantic model. A role
+in `json_prompt` mode gets JSON mode instead, with the schema written in the prompt, and its
+reply is validated afterwards: the author's schema is too large for strict output on Claude.
 
 Retries happen here, not in the OpenAI SDK (whose own retries are off), so only rate
 limits, timeouts and server errors are retried and every attempt is counted. The prompt
 and the reply are never logged, and the API key never appears in a message or a log.
 """
 
+import json
 import logging
 import re
 import ssl
@@ -39,6 +42,14 @@ ROUTING_FAILURE = re.compile(r"no endpoints found|parameter", re.IGNORECASE)
 """A 404 whose provider message matches is a routing failure, not an unknown model."""
 SDK_STATUS_PREFIX = re.compile(r"^Error code: \d+ - ")
 """The SDK's own prefix on the provider's message; our messages give the status already."""
+JSON_PROMPT = "json_prompt"
+"""The output mode that sends the schema in the prompt and validates the reply afterwards."""
+JSON_PROMPT_INSTRUCTION = (
+    "Reply with one JSON object that matches this JSON Schema, and nothing else."
+)
+JSON_OBJECT = {"type": "json_object"}
+JSON_FENCE = re.compile(r"\A\s*```(?:json)?[ \t]*\n(.*?)\n?\s*```\s*\Z", re.DOTALL | re.IGNORECASE)
+"""A Markdown code fence around the whole reply, which a model may add in JSON mode."""
 
 
 @dataclass(frozen=True)
@@ -63,6 +74,9 @@ class LlmClientConfig:
     """A role's own prompt limit, instead of `max_prompt_chars`."""
     role_max_output_tokens: Mapping[str, int] = field(default_factory=dict)
     """A role's own reply limit, instead of `max_output_tokens`."""
+    role_output_modes: Mapping[str, str] = field(default_factory=dict)
+    """A role's own output mode, `json_schema` (strict structured output, the default) or
+    `json_prompt` (JSON mode, with the schema in the prompt)."""
 
     def timeout(self, role: str) -> float:
         """The longest wait for one reply of `role`."""
@@ -75,6 +89,10 @@ class LlmClientConfig:
     def output_tokens(self, role: str) -> int:
         """The most tokens one reply of `role` may have."""
         return self.role_max_output_tokens.get(role, self.max_output_tokens)
+
+    def output_mode(self, role: str) -> str:
+        """How the reply of `role` is asked for: `json_schema` or `json_prompt`."""
+        return self.role_output_modes.get(role, "json_schema")
 
 
 @dataclass(frozen=True)
@@ -148,6 +166,9 @@ class OpenAICompatibleLLMClient:
         model = self._config.models.get(role)
         if model is None:
             raise LLMError(f"No model is configured for the LLM role '{role}'.")
+        json_prompt = self._config.output_mode(role) == JSON_PROMPT
+        if json_prompt:
+            prompt = _with_schema(prompt, output_type)
         limit = self._config.prompt_limit(role)
         if len(prompt) > limit:
             raise LLMError(
@@ -162,7 +183,7 @@ class OpenAICompatibleLLMClient:
             while True:
                 attempts += 1
                 try:
-                    result, usage = self._attempt(role, model, prompt, output_type)
+                    result, usage = self._attempt(role, model, prompt, output_type, json_prompt)
                 except _AttemptError as failure:
                     outcome = failure.outcome
                     if not failure.retryable or attempts > self._config.max_retries:
@@ -196,12 +217,15 @@ class OpenAICompatibleLLMClient:
             )
 
     def _attempt(
-        self, role: str, model: str, prompt: str, output_type: type[OutputT]
+        self, role: str, model: str, prompt: str, output_type: type[OutputT], json_prompt: bool
     ) -> tuple[OutputT, _Usage]:
-        runnable = self._chats[role].with_structured_output(
-            output_type, method="json_schema", include_raw=True
-        )
         try:
+            if json_prompt:
+                message = self._chats[role].invoke(prompt, response_format=JSON_OBJECT)
+                return _parse_json_reply(message.content, output_type), _usage(message)
+            runnable = self._chats[role].with_structured_output(
+                output_type, method="json_schema", include_raw=True
+            )
             reply = cast(dict[str, Any], runnable.invoke(prompt))
         except openai.OpenAIError as error:
             raise self._failure(model, error, self._config.timeout(role)) from None
@@ -297,16 +321,54 @@ class OpenAICompatibleLLMClient:
         )
 
     def _provider_message(self, error: openai.APIStatusError) -> str:
-        """The provider's own message, short and with the key removed, just in case."""
-        message = SDK_STATUS_PREFIX.sub("", " ".join(str(error.message).split()))
-        message = message[:MAX_PROVIDER_MESSAGE_CHARS]
+        """The provider's own message, short and with the key removed, just in case.
+
+        OpenRouter's "Provider returned error" hides the cause in `error.metadata.raw`, so
+        the message there is added when there is one.
+        """
+        message = SDK_STATUS_PREFIX.sub("", str(error.message))
+        raw = _raw_provider_message(error.body)
+        if raw:
+            message = f"{message.removesuffix('.')}: {raw}"
+        message = " ".join(message.split())
         key = self._api_key.get_secret_value()
-        return message.replace(key, REDACTED) if key else message
+        if key:
+            message = message.replace(key, REDACTED)
+        return message[:MAX_PROVIDER_MESSAGE_CHARS]
 
     def _backoff(self, attempt: int) -> float:
         return float(
             min(self._config.retry_backoff_seconds * 2 ** (attempt - 1), MAX_BACKOFF_SECONDS)
         )
+
+
+def _with_schema(prompt: str, output_type: type[BaseModel]) -> str:
+    schema = json.dumps(output_type.model_json_schema(), separators=(",", ":"))
+    return f"{prompt}\n\n{JSON_PROMPT_INSTRUCTION}\n{schema}"
+
+
+def _parse_json_reply[ReplyT: BaseModel](content: object, output_type: type[ReplyT]) -> ReplyT:
+    """The reply validated into `output_type`, or a ValueError (never quoting the reply)
+    when it is not one JSON object of that shape."""
+    if not isinstance(content, str):
+        raise ValueError("the reply is not text")
+    fenced = JSON_FENCE.match(content)
+    return output_type.model_validate_json(fenced.group(1) if fenced else content)
+
+
+def _raw_provider_message(body: object) -> str | None:
+    """The upstream provider's message in OpenRouter's `metadata.raw`, if there is one."""
+    metadata = body.get("metadata") if isinstance(body, dict) else None
+    raw = metadata.get("raw") if isinstance(metadata, dict) else None
+    if not isinstance(raw, str) or not raw.strip():
+        return None
+    try:
+        parsed: object = json.loads(raw)
+    except ValueError:
+        return raw
+    while isinstance(parsed, dict):
+        parsed = parsed.get("error", parsed.get("message"))
+    return parsed if isinstance(parsed, str) and parsed.strip() else raw
 
 
 def _usage(raw: object) -> _Usage:

@@ -175,6 +175,7 @@ def _salt_with(**llm: Any) -> str:
             )
         },
         {"role_max_output_tokens": {"fixer": 16_000}},
+        {"role_output_modes": {"fixer": "json_prompt"}},
         {"extra_body": {**LlmSettings().extra_body, "reasoning": {"effort": "low"}}},
     ],
 )
@@ -377,6 +378,15 @@ def test_the_author_limit_reaches_the_clients_and_a_long_writer_prompt_is_refuse
     client = OpenAICompatibleLLMClient(openrouter, SecretStr("test-key"))
     with pytest.raises(LLMError, match="60001 characters, more than the limit of 60000"):
         client.complete("writer", "x" * 60001, LlmCheckReply)
+
+
+def test_the_authors_output_mode_reaches_the_openrouter_client() -> None:
+    config = bootstrap.llm_config(LlmSettings(role_output_modes={"author": "json_prompt"}))
+
+    assert (config.output_mode("author"), config.output_mode("judge")) == (
+        "json_prompt",
+        "json_schema",
+    )
 
 
 def test_copilot_config_maps_the_copilot_roles_and_the_shared_limits() -> None:

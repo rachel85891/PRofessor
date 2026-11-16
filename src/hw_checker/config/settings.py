@@ -207,6 +207,10 @@ LlmProvider = Literal["openrouter", "copilot"]
 """Where the roles' models run: an OpenAI-compatible endpoint such as OpenRouter
 (ADR 0020), or the developer's GitHub Copilot seat through the Copilot SDK (ADR 0022)."""
 OPENROUTER_HOST = "openrouter.ai"
+OutputMode = Literal["json_schema", "json_prompt"]
+"""How a role's reply is asked for on OpenRouter: strict structured output with the schema
+(`json_schema`), or JSON mode with the schema in the prompt, validated afterwards
+(`json_prompt`)."""
 
 
 def _missing_roles(roles: dict[LlmRole, str]) -> list[LlmRole]:
@@ -269,6 +273,9 @@ class LlmSettings(BaseModel):
     role_max_output_tokens: dict[LlmRole, Annotated[int, Field(ge=1)]] = {}
     """A role's own reply limit, instead of `max_output_tokens` (OpenRouter only: the
     Copilot runtime has no such setting)."""
+    role_output_modes: dict[LlmRole, OutputMode] = {}
+    """A role's own output mode, instead of `json_schema` (OpenRouter only: the author's
+    schema is too large for strict structured output on Claude)."""
     max_retries: int = Field(default=2, ge=0, le=10)
     """Retries after a rate limit, a timeout or a server error; never after other errors."""
     retry_backoff_seconds: float = Field(default=2, ge=0, le=60)
@@ -299,6 +306,10 @@ class LlmSettings(BaseModel):
     def role_output_tokens(self, role: LlmRole) -> int:
         """The most tokens one reply of `role` may have (OpenRouter only)."""
         return self.role_max_output_tokens.get(role, self.max_output_tokens)
+
+    def role_output_mode(self, role: LlmRole) -> OutputMode:
+        """How the reply of `role` is asked for (OpenRouter only)."""
+        return self.role_output_modes.get(role, "json_schema")
 
     def role_models(self) -> dict[LlmRole, str]:
         """The model of each role for the configured provider."""
