@@ -25,8 +25,8 @@ requirements:
       # The roles, defined once in this file (the anchor) and the same as in hw02.
       roles: &roles
         api: {sdk: Microsoft.NET.Sdk.Web, name: "api|web"}
-        entities: {name: "entit|model|dto|domain"}
-        services: {name: "servic|business|\\bbl\\b|logic"}
+        entities: {name: "entit|enit|model|dto|domain"}
+        services: {name: "servi|business|\\bbl\\b|logic"}
         repositories: {name: "repositor|\\bdal\\b|data|access"}
       required: [api, entities, services, repositories]
 
