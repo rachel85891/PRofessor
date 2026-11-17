@@ -1,5 +1,6 @@
 """Which self-review violations are acted on: quoted rules, and edits never a violation."""
 
+from dataclasses import replace
 from typing import Any
 
 import pytest
@@ -13,7 +14,14 @@ from hw_checker.domain import (
     SafeFix,
     SelfReview,
 )
-from hw_checker.services.fix_review import Allowances, judge, never_a_violation, numbered_rules
+from hw_checker.services.fix_review import (
+    Allowances,
+    detector_problem,
+    judge,
+    never_a_violation,
+    numbered_rules,
+    repo_code,
+)
 from hw_checker.services.review_policy import role_policy
 from tests.unit.services.fixer_data import ASSIGNMENT, COURSE
 
@@ -114,10 +122,10 @@ def test_the_rules_are_read_by_number() -> None:
         ),
         (
             fix(
-                "using System.Runtime.Intrinsics.Arm;\nusing System.Text.Json;",
-                "using System.Text.Json;",
+                "using UsersApi.Modles;\nusing System.Text.Json;",
+                "//fix: Removed a using of a namespace nothing declares\nusing System.Text.Json;",
             ),
-            "a removed stray using",
+            "a removed duplicate or unknown using",
         ),
         (
             fix(
@@ -152,6 +160,12 @@ def test_the_rules_are_read_by_number() -> None:
             ),
             "a naming note with the PropertyNameCaseInsensitive tip",
         ),
+        (
+            note(
+                "using System.Text.Json;", "This using isn't used in this file: you can remove it"
+            ),
+            "the note about an unused using",
+        ),
     ],
     ids=[
         "readonly",
@@ -163,6 +177,7 @@ def test_the_rules_are_read_by_number() -> None:
         "get-by-id",
         "put",
         "names",
+        "unused-using",
     ],
 )
 def test_the_edits_the_rules_allow_outright(edit: PlannedEdit, what: str) -> None:
@@ -254,3 +269,90 @@ def test_a_note_is_approved_only_in_a_rules_wording() -> None:
 
     assert never_a_violation(put, ALLOWANCES) == "the PUT note in the approved wording"
     assert never_a_violation(put, without) is None
+
+
+USINGS = replace(
+    ALLOWANCES,
+    code=repo_code(
+        {
+            "Controllers/UsersController.cs": (
+                b"using System.Text.Json;\n\nnamespace UsersApi.Controllers;\n"
+            ),
+            "Models/User.cs": b"namespace UsersApi.Models\n{\n    public class User { }\n}\n",
+            "UsersApi.csproj": (
+                b'<Project Sdk="Microsoft.NET.Sdk.Web">\n  <ItemGroup>\n'
+                b'    <PackageReference Include="zxcvbn-core" Version="7.0.92" />\n'
+                b"  </ItemGroup>\n</Project>\n"
+            ),
+        }
+    ),
+)
+"""A made-up repo after the edits: one `using System.Text.Json;` is left in the controller,
+a namespace is declared, and a package is referenced."""
+
+
+def removed_using(line: str) -> PlannedEdit:
+    return fix(
+        f"{line}\npublic class UsersController",
+        "//fix: Removed a using\npublic class UsersController",
+    )
+
+
+@pytest.mark.parametrize(
+    ("edit", "what"),
+    [
+        (
+            fix(
+                "using System.Text.Json;\nusing System.Text.Json;",
+                "using System.Text.Json;\n//fix: Removed the second, duplicate using",
+            ),
+            "a removed duplicate or unknown using",
+        ),
+        (removed_using("using UsersApi.Modles;"), "a removed duplicate or unknown using"),
+        (removed_using("using System.Linq;"), None),
+        (removed_using("using Microsoft.AspNetCore.Mvc;"), None),
+        (removed_using("using UsersApi.Models;"), None),
+        (removed_using("using UsersApi;"), None),
+        (removed_using("using Zxcvbn;"), None),
+    ],
+    ids=[
+        "duplicate",
+        "misspelled",
+        "framework",
+        "microsoft",
+        "declared",
+        "declared-part",
+        "package",
+    ],
+)
+def test_only_a_duplicate_or_unknown_using_is_removed_as_a_safe_fix(
+    edit: PlannedEdit, what: str | None
+) -> None:
+    assert never_a_violation(edit, USINGS) == what
+
+
+def test_a_correct_but_unused_using_removed_is_left_to_the_self_review() -> None:
+    edit = removed_using("using System.Text.Json;")
+    flagged = violation(rule=9, quote="no refactoring", explanation="It removes a using.")
+    without_it = replace(USINGS, code=repo_code({}))
+
+    outcome = judge(SelfReview(violations=(flagged,)), [edit], RULES, without_it)
+
+    assert never_a_violation(edit, without_it) is None
+    assert outcome.broken == {0: "self-review: rule 9: It removes a using."}
+
+
+def test_a_commented_out_using_is_still_refused() -> None:
+    edit = fix(
+        "using UsersApi.Modles;",
+        "//fix: Commented out a using of a namespace nothing declares\n//using UsersApi.Modles;",
+    )
+
+    assert never_a_violation(edit, USINGS) is None
+    assert detector_problem(edit, USINGS) == (
+        "a stray `using` is deleted, with its //fix: line where it was; never comment it out"
+    )
+
+
+def test_the_unused_using_note_is_in_the_judges_never_a_violation_list() -> None:
+    assert "The note of rule 13 about a `using` that isn't used in this file." in POLICY.allowed

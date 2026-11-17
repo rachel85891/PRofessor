@@ -17,6 +17,13 @@ FAKE_TOKEN = "ghp_not-a-real-token-0000"  # pragma: allowlist secret
 ACCOUNT = "review-bot"
 REPO = builders.repo_target()  # dana/api
 FORK = ForkRef(owner=ACCOUNT, name="check_dana", push_url="https://github.com/x/y.git")
+SOURCE = {"name": "api", "owner": {"login": "dana"}}
+OTHER_REPO = builders.repo_target(
+    repo_id="student-a-webapi-hw",
+    owner="student-a",
+    name="webapi-hw",
+    url="https://github.com/student-a/webapi-hw",
+)
 
 Reply = tuple[int, Any]
 Handler = Callable[[str, str, Any], Reply]
@@ -105,6 +112,8 @@ def test_ensure_fork_names_it_after_the_owner_and_waits_until_it_answers() -> No
     answers = iter([404, 404, 200])
 
     def handler(method: str, path: str, body: Any) -> Reply:
+        if path == "/repos/dana/api":
+            return 200, SOURCE
         if method == "POST":
             return 202, {"name": "check_dana", "owner": {"login": ACCOUNT}}
         return next(answers), {}
@@ -116,29 +125,38 @@ def test_ensure_fork_names_it_after_the_owner_and_waits_until_it_answers() -> No
     assert fork == ForkRef(
         owner=ACCOUNT, name="check_dana", push_url="https://github.test/review-bot/check_dana.git"
     )
-    method, path = sender.calls()[0]
-    assert (method, path) == ("POST", "/repos/dana/api/forks")
-    assert sent_json(sender.requests[0]) == {
+    assert sender.calls()[:2] == [("GET", "/repos/dana/api"), ("POST", "/repos/dana/api/forks")]
+    assert sent_json(sender.requests[1]) == {
         "name": "check_dana",
         "default_branch_only": True,
     }
-    assert sender.calls()[1:] == [("GET", "/repos/review-bot/check_dana")] * 3
+    assert sender.calls()[2:] == [("GET", "/repos/review-bot/check_dana")] * 3
     assert sleeps == [1, 1]
 
 
 def test_ensure_fork_uses_the_name_github_kept_for_an_existing_fork() -> None:
     def handler(method: str, path: str, body: Any) -> Reply:
+        if path == "/repos/dana/api":
+            return 200, SOURCE
         if method == "POST":
             return 202, {"name": "api", "owner": {"login": "Review-Bot"}}
         return 200, {}
 
-    code_host, _, _ = host(handler)
+    code_host, sender, _ = host(handler)
 
     assert code_host.ensure_fork(REPO).name == "api"
+    assert [call for call in sender.calls() if call[0] == "POST"] == [
+        ("POST", "/repos/dana/api/forks")
+    ]
 
 
 def test_ensure_fork_refuses_a_fork_under_another_account() -> None:
-    code_host, _, _ = host(lambda m, p, b: (202, {"name": "check_dana", "owner": {"login": "me"}}))
+    def handler(method: str, path: str, body: Any) -> Reply:
+        if method == "GET":
+            return 200, SOURCE
+        return 202, {"name": "check_dana", "owner": {"login": "me"}}
+
+    code_host, _, _ = host(handler)
 
     with pytest.raises(PublishError, match="made under me, not the publishing account review-bot"):
         code_host.ensure_fork(REPO)
@@ -146,6 +164,8 @@ def test_ensure_fork_refuses_a_fork_under_another_account() -> None:
 
 def test_ensure_fork_gives_up_when_the_fork_is_not_ready_in_time() -> None:
     def handler(method: str, path: str, body: Any) -> Reply:
+        if path == "/repos/dana/api":
+            return 200, SOURCE
         if method == "POST":
             return 202, {"name": "check_dana", "owner": {"login": ACCOUNT}}
         return 404, {"message": "Not Found"}
@@ -154,6 +174,76 @@ def test_ensure_fork_gives_up_when_the_fork_is_not_ready_in_time() -> None:
 
     with pytest.raises(PublishError, match="not ready after 3 s; publish again later"):
         code_host.ensure_fork(REPO)
+
+
+def moved_handler(taken: set[str], current: dict[str, Any] | None = None) -> Handler:
+    """GitHub for `student-a/webapi-hw`, now at `current`, where the publishing account
+    already has repos named `taken`."""
+    source = current or {"name": "webapi-hw", "owner": {"login": "student-a"}}
+
+    def handler(method: str, path: str, body: Any) -> Reply:
+        if path == "/repos/student-a/webapi-hw":
+            return 200, source
+        if method == "POST":
+            if body["name"] in taken:
+                return 403, {"message": "Name already exists on this account"}
+            return 202, {"name": body["name"], "owner": {"login": ACCOUNT}}
+        return 200, {}
+
+    return handler
+
+
+def test_ensure_fork_retries_with_the_repo_name_when_the_fork_name_is_taken() -> None:
+    code_host, sender, _ = host(moved_handler({"check_student-a"}))
+
+    fork = code_host.ensure_fork(OTHER_REPO)
+
+    assert fork.name == "check_student-a-webapi-hw"
+    posts = [sent_json(r)["name"] for r in sender.requests if r.get_method() == "POST"]
+    assert posts == ["check_student-a", "check_student-a-webapi-hw"]
+
+
+def test_ensure_fork_names_both_tried_names_when_both_are_taken() -> None:
+    code_host, sender, _ = host(moved_handler({"check_student-a", "check_student-a-webapi-hw"}))
+
+    with pytest.raises(PublishError) as raised:
+        code_host.ensure_fork(OTHER_REPO)
+
+    assert "check_student-a and check_student-a-webapi-hw" in str(raised.value)
+    assert len([r for r in sender.requests if r.get_method() == "POST"]) == 2
+
+
+def test_another_fork_error_is_not_retried() -> None:
+    def handler(method: str, path: str, body: Any) -> Reply:
+        if method == "GET":
+            return 200, SOURCE
+        return 403, {"message": "Resource not accessible by integration"}
+
+    code_host, sender, _ = host(handler)
+
+    with pytest.raises(PublishError, match="HTTP 403"):
+        code_host.ensure_fork(REPO)
+
+    assert len([r for r in sender.requests if r.get_method() == "POST"]) == 1
+
+
+def test_a_moved_repo_is_forked_at_its_current_address_with_a_warning(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    current = {"name": "webapi-hw2", "owner": {"login": "student-b"}}
+    code_host, sender, _ = host(moved_handler(set(), current))
+
+    with caplog.at_level(logging.WARNING):
+        fork = code_host.ensure_fork(OTHER_REPO)
+
+    assert fork.name == "check_student-b"
+    assert ("POST", "/repos/student-b/webapi-hw2/forks") in sender.calls()
+    assert ("POST", "/repos/student-a/webapi-hw/forks") not in sender.calls()
+    [record] = caplog.records
+    assert record.levelno == logging.WARNING
+    assert "roster link of student-a-webapi-hw is out of date" in record.getMessage()
+    assert "student-b/webapi-hw2" in record.getMessage()
+    assert record.__dict__["repo_id"] == "student-a-webapi-hw"
 
 
 def test_ensure_fork_needs_the_publishing_account() -> None:

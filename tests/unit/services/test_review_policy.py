@@ -81,8 +81,30 @@ def test_each_role_sees_only_its_rules() -> None:
     )
     hw = HW02.model_copy(update={"review_rules": ReviewRuleSet(rules=(writer_only,))})
 
-    assert role_policy(COURSE, hw, (hw,), ReviewRole.WRITER).rules == ("Keep it short.",)
+    # The course's writer rules come first; the assignment's follow them.
+    assert role_policy(COURSE, hw, (hw,), ReviewRole.WRITER).rules[-1] == "Keep it short."
     assert "Keep it short." not in role_policy(COURSE, hw, (hw,), ReviewRole.FIXER).rules
+
+
+def test_the_full_round_review_rules_reach_their_roles() -> None:
+    by_id = {rule.id: rule.text for rule in COURSE.rules.rules}
+    unrequested = by_id["only-what-is-needed"]
+    writer = (by_id["no-comment-pointers"], by_id["naming-items"])
+    hw = HW02.model_copy(update={"review_rules": ReviewRuleSet()})
+
+    def rules(role: ReviewRole) -> tuple[str, ...]:
+        return role_policy(COURSE, hw, (hw,), role, (CONTROLLER,)).rules
+
+    for role in (ReviewRole.FIXER, ReviewRole.JUDGE):
+        assert unrequested in rules(role)
+        assert not set(writer) & set(rules(role))
+    assert set(writer) <= set(rules(ReviewRole.WRITER))
+    assert unrequested not in rules(ReviewRole.WRITER)
+    forbidden = role_policy(COURSE, hw, (hw,), ReviewRole.WRITER, (CONTROLLER,)).forbidden
+    assert [scoped.item.message for scoped in forbidden] == [
+        'never write "A comment is there to guide you" or "A comment asks..."; the section\'s '
+        "heading already says the code is marked"
+    ]
 
 
 def test_placeholders_are_filled_for_the_role() -> None:
@@ -118,7 +140,7 @@ def test_a_rules_own_example_is_shown_after_the_examples(tmp_path: Path) -> None
     policy = role_policy(COURSE, hw, (HW01, hw), ReviewRole.FIXER, (CONTROLLER,))
     number = policy.rules.index(rule.text) + 1
     # The course's own rule examples come first; this one follows them.
-    assert f"Example 4. An edit that follows rule {number}.\n\n```json\n" in prompt
+    assert f"Example 5. An edit that follows rule {number}.\n\n```json\n" in prompt
     assert '"find": "x;"' in prompt
 
 

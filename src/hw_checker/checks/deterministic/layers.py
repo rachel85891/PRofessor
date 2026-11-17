@@ -2,7 +2,8 @@
 
 `roles` maps a role name (`api`, `services`) to how its project is recognized: an SDK the
 project file names, or a pattern on the project file's name. A project matching no role,
-or more than one, is unassigned and listed; it is never guessed. A file belongs to the
+or more than one (by its full name and by the part after its last `.`), is unassigned
+and listed; it is never guessed. A file belongs to the
 project whose folder is its nearest parent.
 """
 
@@ -32,7 +33,8 @@ Regex = Annotated[str, AfterValidator(_regex)]
 class RolePattern(BaseModel):
     """How a role's project is recognized: `sdk`, an SDK the project file names (it wins
     over the name), and `name`, a pattern searched in the project file's name without
-    `.csproj`, ignoring case."""
+    `.csproj`, ignoring case. When the full name matches more than one role's `name`, the
+    part after its last `.` is matched instead (`ApiProject.Entities` is `Entities`)."""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -117,12 +119,19 @@ def _role(project: str, sdks: tuple[str, ...], roles: Mapping[str, RolePattern])
     if by_sdk:
         return by_sdk[0] if len(by_sdk) == 1 else None
     stem = project_name(project)
-    by_name = [
+    by_name = _roles_by_name(stem, roles)
+    if len(by_name) > 1 and "." in stem:
+        # `ApiProject.Entities` matches `api` and `entities`; the last part names the layer.
+        by_name = _roles_by_name(stem.rsplit(".", 1)[1], roles)
+    return by_name[0] if len(by_name) == 1 else None
+
+
+def _roles_by_name(name: str, roles: Mapping[str, RolePattern]) -> list[str]:
+    return [
         role
         for role, pattern in roles.items()
-        if pattern.name and re.search(pattern.name, stem, re.IGNORECASE)
+        if pattern.name and re.search(pattern.name, name, re.IGNORECASE)
     ]
-    return by_name[0] if len(by_name) == 1 else None
 
 
 def _folder(project: str) -> str:

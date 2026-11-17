@@ -11,6 +11,18 @@
         "what": {
           "title": "What",
           "type": "string"
+        },
+        "only_when_not_evaluated": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Only When Not Evaluated"
         }
       },
       "required": [

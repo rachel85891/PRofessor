@@ -25,8 +25,8 @@ requirements:
       # The roles, defined once in this file (the anchor) and the same as in hw02.
       roles: &roles
         api: {sdk: Microsoft.NET.Sdk.Web, name: "api|web"}
-        entities: {name: "entit|model|dto|domain"}
-        services: {name: "servic|business|\\bbl\\b|logic"}
+        entities: {name: "entit|enit|model|dto|domain"}
+        services: {name: "servi|business|\\bbl\\b|logic"}
         repositories: {name: "repositor|\\bdal\\b|data|access"}
       required: [api, entities, services, repositories]
 
@@ -63,6 +63,11 @@ requirements:
     params:
       roles: *roles
       role: services
+      # Not service or repository classes: result and transfer objects, and EF database
+      # contexts. Developer decision 2026-11-16 (full-round review). Defined once here (the
+      # anchors) and used by hw03-repository-interfaces and hw03-no-new-dependencies.
+      exclude: &not_layer_classes ['(Result|Response|Request|Dto|DTO)$']
+      exclude_bases: &not_layer_bases ['DbContext$']
 
   # Stage 21, approved by the developer on 2026-11-10 (planner/tasks/hw02-hw03-layers-di-draft.md)
   - id: hw03-service-interfaces-taken
@@ -90,6 +95,8 @@ requirements:
     params:
       roles: *roles
       role: repositories
+      exclude: *not_layer_classes
+      exclude_bases: *not_layer_bases
 
   # Stage 21, approved by the developer on 2026-11-10 (planner/tasks/hw02-hw03-layers-di-draft.md)
   - id: hw03-repository-interfaces-taken
@@ -133,3 +140,5 @@ requirements:
       roles: *roles
       in: [api, services]
       of: [services, repositories]
+      exclude: *not_layer_classes
+      exclude_bases: *not_layer_bases

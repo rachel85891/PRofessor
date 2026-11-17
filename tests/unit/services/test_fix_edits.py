@@ -6,6 +6,7 @@ import pytest
 
 from hw_checker.domain import EditKind, NoteSection, PlannedEdit, ReviewRole
 from hw_checker.services.fix_edits import EditRules, apply_edits, fallback_edit
+from hw_checker.services.fix_review import Allowances
 from hw_checker.services.review_policy import role_policy
 from tests.unit.services.fixer_data import ASSIGNMENT, COURSE
 
@@ -377,3 +378,47 @@ def test_a_fix_for_another_requirement_in_that_file_and_a_final_newline_are_appl
     result = apply_edits(files(), [edit(), newline], notes_only)
 
     assert result.application.applied == (edit(), newline)
+
+
+PATH_LINE = '        var text = File.ReadAllText("D:\\shop\\users.json");\n'
+SEPARATOR_NOTE = edit(
+    kind=EditKind.NOTE,
+    find=PATH_LINE,
+    replace=(
+        '        //On Linux and macOS "\\\\" isn\'t a folder separator: Path.Combine works '
+        "everywhere\n" + PATH_LINE
+    ),
+    finding_ids=(),
+    fallback_note=None,
+    note_section=NoteSection.FOR_YOU,
+)
+
+
+@pytest.mark.parametrize(
+    ("not_evaluated", "applied"),
+    [(frozenset({"windows_path"}), True), (frozenset(), False)],
+    ids=["windows_path", "no windows_path"],
+)
+def test_the_windows_separator_note_needs_a_windows_path_requirement(
+    not_evaluated: frozenset[str], applied: bool
+) -> None:
+    rules = dataclasses.replace(
+        RULES,
+        allowances=Allowances(
+            detectors=POLICY.detectors,
+            approved_notes=POLICY.approved_notes,
+            styles=STYLES,
+            not_evaluated=not_evaluated,
+        ),
+    )
+
+    result = apply_edits(files(SWITCH + PATH_LINE), [SEPARATOR_NOTE], rules)
+
+    if applied:
+        assert result.application.applied == (SEPARATOR_NOTE,)
+    else:
+        assert reasons(result) == [
+            "the note about a path written with Windows folder separators is only for a "
+            "requirement not checked because of `windows_path`, and no requirement of this "
+            "repo was; leave it out"
+        ]

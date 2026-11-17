@@ -14,6 +14,7 @@ import logging
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
+from typing import Any
 
 from hw_checker.domain import (
     Assignment,
@@ -30,6 +31,7 @@ from hw_checker.domain import (
     FixPlan,
     FixProposal,
     FixWorkspace,
+    ForbiddenText,
     LlmUsage,
     NoteSection,
     NotEvaluatedReason,
@@ -59,7 +61,7 @@ from hw_checker.ports.llm import TokenUsage
 from hw_checker.services.deterministic_checks import DETERMINISTIC_KINDS, DeterministicCheckService
 from hw_checker.services.execution import ExecutionService
 from hw_checker.services.fix_edits import EditRules, apply_edits, fallback_edit
-from hw_checker.services.fix_review import Allowances, judge, numbered_rules
+from hw_checker.services.fix_review import Allowances, judge, numbered_rules, repo_code
 from hw_checker.services.review_policy import role_policy
 
 logger = logging.getLogger(__name__)
@@ -332,8 +334,8 @@ class FixService:
         """
         copy = workspace.working_copy
         self._git.discard_changes(copy)
-        paths = self._files.list_files(copy, frozenset(self._config.skip_dirs))
-        files = {path: self._files.read_bytes(copy, path) for path in paths}
+        files = self._repo_files(copy)
+        paths = list(files)
         selected = self._shown_paths(paths, assignments)
         policy = role_policy(
             self._course, assignment, assignments, ReviewRole.FIXER, selected, _failed(results)
@@ -353,6 +355,8 @@ class FixService:
                 approved_notes=policy.approved_notes,
                 styles=styles,
                 findings=_finding_messages(results),
+                not_evaluated=_not_evaluated(results),
+                code=repo_code(files),
             ),
             notes_only=notes_only,
             notes_only_files=notes_only_files,
@@ -443,6 +447,8 @@ class FixService:
             approved_notes=policy.approved_notes,
             styles=self._course.profile.comment_style,
             findings=_finding_messages(results),
+            not_evaluated=_not_evaluated(results),
+            code=repo_code(self._repo_files(workspace.working_copy)),
         )
         outcome = judge(review, applied, rules, allowances)
         broken = outcome.broken
@@ -661,6 +667,7 @@ class FixService:
             )
             for path in edited
         )
+        entries = {key: _entries(groups[key], self._course, with_language) for key in labels}
         prompt = self._templates.render(
             WRITER_TEMPLATE,
             {
@@ -668,13 +675,7 @@ class FixService:
                 "assignment": assignment,
                 "rules": list(policy.rules),
                 "passed": _passed_titles(assignments, results),
-                "sections": [
-                    (
-                        label,
-                        [_described(edit, self._course, with_language) for edit in groups[key]],
-                    )
-                    for key, label in labels.items()
-                ],
+                "sections": [(label, entries[key]) for key, label in labels.items()],
                 "writer_sections": [
                     section for section in pr_format.sections if section.id.value in labels
                 ],
@@ -683,12 +684,23 @@ class FixService:
         opening_prefix = pr_format.opening
         text, tokens = self._llm.complete_with_usage(WRITER_ROLE, prompt, PullRequestText)
         usages = [self._usage(run_id, WRITER_ROLE, prompt, tokens)]
-        problems = _text_problems(text, groups, labels, opening_prefix)
+        check = TextCheck(
+            groups=groups,
+            counts={key: len(listed) for key, listed in entries.items()},
+            labels=labels,
+            opening=opening_prefix,
+            forbidden=tuple(
+                scoped.item
+                for scoped in policy.forbidden
+                if not scoped.files or any(scoped.covers(path) for path in edited)
+            ),
+        )
+        problems = _text_problems(text, check)
         if problems:
             retry = prompt + WRITER_FEEDBACK + "".join(f"- {problem}\n" for problem in problems)
             text, tokens = self._llm.complete_with_usage(WRITER_ROLE, retry, PullRequestText)
             usages.append(self._usage(run_id, WRITER_ROLE, retry, tokens))
-            problems = _text_problems(text, groups, labels, opening_prefix)
+            problems = _text_problems(text, check)
         if problems:
             raise LLMOutputError("The writer's PR text is unusable: " + "; ".join(problems))
         opening = text.opening.strip()
@@ -832,6 +844,11 @@ class FixService:
         root = workspace.working_copy
         paths = self._files.list_files(root, frozenset(self._config.skip_dirs))
         return self._shown_paths(paths, assignments)
+
+    def _repo_files(self, root: Path) -> dict[str, bytes]:
+        """The files of the working copy at `root` (path → contents), as edited."""
+        paths = self._files.list_files(root, frozenset(self._config.skip_dirs))
+        return {path: self._files.read_bytes(root, path) for path in paths}
 
     def _styles(self, shown: Sequence[str]) -> dict[str, CommentStyle]:
         """The comment styles of the `shown` files' types, in the course's order: the files
@@ -1066,6 +1083,11 @@ def _finding_messages(results: Sequence[AssignmentResult]) -> dict[str, tuple[st
     return messages
 
 
+def _not_evaluated(results: Sequence[AssignmentResult]) -> frozenset[str]:
+    """The reasons the repo's requirements were not evaluated for (`windows_path`)."""
+    return frozenset(entry.reason.value for result in results for entry in result.not_evaluated)
+
+
 def _responses(results: Sequence[AssignmentResult]) -> list[dict[str, str]]:
     """The app's answers to failed requests, with the data delimiter neutralized."""
     return [
@@ -1096,38 +1118,68 @@ def _sections(applied: Sequence[PlannedEdit]) -> dict[str, list[PlannedEdit]]:
     return groups
 
 
-def _described(edit: PlannedEdit, course: Course, with_language: bool) -> dict[str, object]:
+def _entries(
+    edits: Sequence[PlannedEdit], course: Course, with_language: bool
+) -> list[dict[str, Any]]:
+    """A section's edits as the writer sees them, one entry each; edits that add the same
+    comments (one naming note on two locals) are one entry, listing each file once, so the
+    PR does not repeat an item."""
+    entries: list[dict[str, Any]] = []
+    by_comments: dict[tuple[str, ...], dict[str, Any]] = {}
+    for edit in edits:
+        described = _described(edit, course, with_language)
+        comments = tuple(described["comments"])
+        same = by_comments.get(comments) if comments else None
+        if same is None:
+            entries.append(described)
+            if comments:
+                by_comments[comments] = described
+        elif described["files"][0] not in same["files"]:
+            same["files"].append(described["files"][0])
+    return entries
+
+
+def _described(edit: PlannedEdit, course: Course, with_language: bool) -> dict[str, Any]:
     """An edit as the writer sees it: the file's name (and its language, `with_language`),
     never the edit kind or the full path."""
     style = course.profile.style_for(edit.file)
+    language = style.language if with_language and style is not None else ""
     return {
-        "file_name": PurePosixPath(edit.file).name,
-        "language": style.language if with_language and style is not None else "",
+        "files": [{"name": PurePosixPath(edit.file).name, "language": language}],
         "reason": edit.reason,
         "comments": _added_comments(edit, course),
     }
 
 
-def _text_problems(
-    text: PullRequestText,
-    groups: dict[str, list[PlannedEdit]],
-    labels: dict[str, str],
-    opening: str,
-) -> list[str]:
+@dataclass(frozen=True)
+class TextCheck:
+    """What the writer's reply is checked against: the applied edits and the number of
+    entries the prompt listed, by section; the sections' headings; the course's opening;
+    and the text the writer's rules forbid."""
+
+    groups: Mapping[str, list[PlannedEdit]]
+    counts: Mapping[str, int]
+    labels: Mapping[str, str]
+    opening: str
+    forbidden: tuple[ForbiddenText, ...] = ()
+
+
+def _text_problems(text: PullRequestText, check: TextCheck) -> list[str]:
     """What makes the writer's reply unusable: a missing or empty item, an opening that is
-    not a sentence, or an item that names an edit's kind or full path."""
+    not a sentence, an item that names an edit's kind or full path, or text a writer's
+    rule forbids."""
     problems: list[str] = []
-    prefix = opening.strip()
+    prefix = check.opening.strip()
     if len(text.opening.strip().removeprefix(prefix).strip()) < MIN_OPENING_CHARS:
         problems.append(f'opening: after "{prefix}" write one or two sentences on what works')
-    for key, heading in labels.items():
-        edits, items = groups[key], getattr(text, key)
+    for key, heading in check.labels.items():
+        edits, items = check.groups[key], getattr(text, key)
         if not edits:
             continue
-        if len(items) < len(edits):
+        if len(items) < check.counts[key]:
             problems.append(
-                f'{key}: {len(items)} items for the {len(edits)} edits under "{heading}"; '
-                "write one item per edit"
+                f"{key}: {len(items)} items for the {check.counts[key]} edits under "
+                f'"{heading}"; write one item per edit'
             )
         if any(len(item.strip()) < MIN_ITEM_CHARS for item in items):
             problems.append(f"{key}: an item is empty or too short to describe its edit")
@@ -1136,6 +1188,10 @@ def _text_problems(
             path in item for item in items for path in paths
         ):
             problems.append(f"{key}: items never name the edit kind or the full path")
+    written = [text.opening, *(item for key in check.labels for item in getattr(text, key))]
+    for forbidden in check.forbidden:
+        if any(forbidden.regex.search(part) for part in written):
+            problems.append(forbidden.message)
     return problems
 
 

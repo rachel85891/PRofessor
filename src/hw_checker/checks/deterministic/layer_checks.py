@@ -135,12 +135,21 @@ class CodeOnlyInLayerParams(_RolesParams):
         return self.allowed
 
 
-class ImplementsInterfaceParams(_RolesParams):
+class _ClassesLeftOutParams(_RolesParams):
+    """`exclude`: class name patterns left out; `exclude_bases`: patterns on the simple
+    names in a class's base list (`IdentityDbContext<User>` is `IdentityDbContext`), a
+    class with a matching base left out. Both are searched, case-sensitive; empty leaves
+    nothing out. Which classes are not layer classes is the assignment's data."""
+
+    exclude: tuple[Regex, ...] = ()
+    exclude_bases: tuple[Regex, ...] = ()
+
+
+class ImplementsInterfaceParams(_ClassesLeftOutParams):
     """`role`: the role whose public classes must implement an interface declared in the
-    repo; `exclude`: class name patterns left out (searched, case-sensitive)."""
+    repo; `exclude` and `exclude_bases`: the classes left out."""
 
     role: Role
-    exclude: tuple[Regex, ...] = ()
 
     def named_roles(self) -> tuple[str, ...]:
         return (self.role,)
@@ -166,9 +175,9 @@ class InterfacesRegisteredParams(_RolesParams):
         return self.consumers
 
 
-class NoConcreteConstructionParams(_RolesParams):
+class NoConcreteConstructionParams(_ClassesLeftOutParams):
     """`in`: the roles whose classes must not create, with `new`, a class of the `of`
-    roles."""
+    roles; `exclude` and `exclude_bases`: the created classes not counted."""
 
     in_: tuple[Role, ...] = Field(min_length=1, alias="in")
     of: tuple[Role, ...] = Field(min_length=1)
@@ -329,7 +338,8 @@ def code_only_in_layer(check_input: CheckInput, params: CodeOnlyInLayerParams) -
     "implements_interface",
     ImplementsInterfaceParams,
     "Every public class in the role's projects implements an interface declared in the "
-    "repo (directly or through its base class); exclude: class name patterns left out.",
+    "repo (directly or through its base class); exclude: class name patterns left out; "
+    "exclude_bases: a class whose base list has a matching name is left out.",
     reads_architecture=True,
 )
 def implements_interface(check_input: CheckInput, params: ImplementsInterfaceParams) -> CheckResult:
@@ -340,14 +350,14 @@ def implements_interface(check_input: CheckInput, params: ImplementsInterfacePar
         return found
     evidence, roles = found
     types = _Types(evidence)
-    excluded = [re.compile(pattern) for pattern in params.exclude]
+    left_out = _LeftOut(params, types)
     problems: list[_Problem] = []
     ambiguous: list[str] = []
     for declaration in types.classes_in(roles, (params.role,)):
         name = _subject(declaration)
         if "public" not in declaration.keywords or "static" in declaration.keywords:
             continue
-        if any(pattern.search(name) for pattern in excluded):
+        if left_out(name):
             continue
         if types.interfaces_of(name):
             continue
@@ -455,7 +465,8 @@ def interfaces_registered(
     "no_concrete_construction",
     NoConcreteConstructionParams,
     "No class in the `in` roles' projects creates a class of the `of` roles with new "
-    "(top-level statements, where registrations are written, are not read).",
+    "(top-level statements, where registrations are written, are not read); exclude and "
+    "exclude_bases: created classes not counted, by name or by a name in their base list.",
     reads_architecture=True,
 )
 def no_concrete_construction(
@@ -467,7 +478,10 @@ def no_concrete_construction(
         return found
     evidence, roles = found
     types = _Types(evidence)
-    created_classes = {_subject(d) for d in types.classes_in(roles, params.of)}
+    left_out = _LeftOut(params, types)
+    created_classes = {
+        name for d in types.classes_in(roles, params.of) if not left_out(name := _subject(d))
+    }
     problems: list[_Problem] = []
     ambiguous: list[str] = []
     for creation in _signals(evidence, ArchitectureSignalKind.OBJECT_CREATION):
@@ -544,6 +558,14 @@ class _Types:
         partial = any("partial" in declaration.keywords for declaration in found)
         return whole + partial + self.interface_declarations[name] > 1
 
+    def bases_of(self, name: str) -> tuple[str, ...]:
+        """The simple names in the base lists of the class `name`'s declarations."""
+        return tuple(
+            simple_name(base)
+            for declaration in self._by_name.get(name, [])
+            for base in declaration.related_subjects
+        )
+
     def interfaces_of(self, name: str, seen: frozenset[str] = frozenset()) -> tuple[str, ...]:
         """The interfaces declared in the repo that the class `name` implements, directly or
         through a base class declared in the repo."""
@@ -556,6 +578,21 @@ class _Types:
                 elif base_name in self._by_name and base_name not in seen | {name}:
                     found += self.interfaces_of(base_name, seen | {name})
         return tuple(dict.fromkeys(found))
+
+
+class _LeftOut:
+    """Whether a class is left out by the params' `exclude` and `exclude_bases`."""
+
+    def __init__(self, params: _ClassesLeftOutParams, types: _Types) -> None:
+        self._names = [re.compile(pattern) for pattern in params.exclude]
+        self._bases = [re.compile(pattern) for pattern in params.exclude_bases]
+        self._types = types
+
+    def __call__(self, name: str) -> bool:
+        if any(pattern.search(name) for pattern in self._names):
+            return True
+        bases = self._types.bases_of(name) if self._bases else ()
+        return any(pattern.search(base) for pattern in self._bases for base in bases)
 
 
 def _evidence(check_input: CheckInput, *, signals: bool) -> ArchitectureEvidence | None:

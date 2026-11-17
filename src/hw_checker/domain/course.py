@@ -170,6 +170,20 @@ class ApprovedNote(DomainModel):
     words: NonBlankStr
     what: NonBlankStr
     """What the note is, for the repo report."""
+    only_when_not_evaluated: str | None = None
+    """A not-evaluated reason (`windows_path`): the note is accepted only when one of the
+    repo's requirements was not evaluated for it; otherwise an edit that adds the note is
+    rejected, with that reason fed back to the fixer."""
+
+    @field_validator("only_when_not_evaluated")
+    @classmethod
+    def _a_known_reason(cls, value: str | None) -> str | None:
+        # Imported here: run.py imports assignment.py, which imports this module.
+        from hw_checker.domain.run import NotEvaluatedReason
+
+        if value is not None and value not in {reason.value for reason in NotEvaluatedReason}:
+            raise ValueError(f"'{value}' is not a not-evaluated reason")
+        return value
 
 
 class RuleExample(DomainModel):

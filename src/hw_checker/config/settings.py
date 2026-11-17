@@ -85,7 +85,9 @@ class GitHubSettings(BaseModel):
     account: NonBlankText | None = None
     """The publishing account; publishing refuses to run without it."""
     fork_prefix: NonBlankText = "check_"
-    """A student's fork is named `<fork_prefix><student's GitHub username>`."""
+    """A student's fork is named `<fork_prefix><student's GitHub username>`, or
+    `<fork_prefix><username>-<repo name>` when the account already has a repo by that name
+    (the student's other repo's fork, or not a fork)."""
     timeout_seconds: float = Field(default=30, gt=0)
     fork_wait_seconds: float = Field(default=60, gt=0)
     """How long to wait for a new fork to be ready."""
