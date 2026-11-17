@@ -10,8 +10,14 @@ import yaml
 from hw_checker import cli
 from hw_checker.config.settings import Settings
 from hw_checker.graph import AuthoringGraph, build_authoring_graph
+from hw_checker.services.authoring import AuthoringService
 from tests.fakes.llm import FakeLLMClient
-from tests.unit.services.authoring_data import build_service, make_folders, valid_reply
+from tests.unit.services.authoring_data import (
+    build_service,
+    capture_reply,
+    make_folders,
+    valid_reply,
+)
 
 
 @pytest.fixture
@@ -89,6 +95,64 @@ def test_revise_drafts_again_and_stop_removes_the_draft(
     code, out = _run(capsys, "stop", "hw02")
     assert (code, out.strip()) == (cli.EXIT_OK, "Stopped hw02; no drafted files are kept.")
     assert not (tmp_path / "assignments" / "hw02" / "requirements.yaml").exists()
+
+
+def _fail_write_approved(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Draft, edit a drafted file, and let `approve` fail in `write_approved`."""
+    _run(capsys, "draft", "hw02")
+    requirements_file = tmp_path / "assignments" / "hw02" / "requirements.yaml"
+    text = requirements_file.read_text("utf-8")
+    requirements_file.write_text(text.replace("severity: major", "severity: minor"), "utf-8")
+
+    def broken(*args: Any) -> Any:
+        raise AttributeError("'dict' object has no attribute 'id'")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(AuthoringService, "review_edits", broken)
+        with pytest.raises(AttributeError):
+            _run(capsys, "approve", "hw02")
+
+
+def test_approve_runs_a_failed_write_approved_again_with_the_edits(
+    author: FakeLLMClient,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    llm = FakeLLMClient({"author": [capture_reply()]})
+
+    def build(settings: Settings, author_llm: Any, checkpointer: Any = None) -> AuthoringGraph:
+        return build_authoring_graph(build_service(tmp_path, llm), 3, 2, checkpointer)
+
+    monkeypatch.setattr(cli, "build_authoring_graph_from_settings", build)
+    _fail_write_approved(tmp_path, monkeypatch, capsys)
+
+    code, out = _run(capsys, "approve", "hw02")
+
+    assert code == cli.EXIT_OK
+    assert out.startswith("Running the step that failed again: write_approved\n")
+    assert "Not applied: Your edits were validated" in out
+    code, out = _run(capsys, "approve", "hw02")
+    assert (code, out.splitlines()[0]) == (cli.EXIT_OK, "Approved hw02:")
+
+
+def test_revise_after_a_failed_step_says_to_draft_again(
+    author: FakeLLMClient,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    _fail_write_approved(tmp_path, monkeypatch, capsys)
+
+    code, out = _run(capsys, "revise", "hw02", "--note", "Use 201 only")
+
+    assert (code, out.strip()) == (
+        cli.EXIT_FAILED,
+        'The last step of hw02 (write_approved) failed; run "assignment draft hw02" to '
+        "start again.",
+    )
 
 
 def test_revise_needs_a_note(author: FakeLLMClient) -> None:

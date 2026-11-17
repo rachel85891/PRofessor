@@ -165,6 +165,21 @@ def valid_reply() -> AuthorReply:
     )
 
 
+def capture_reply() -> AuthorReply:
+    """`valid_reply` with a capture on its POST probe, written `from` as in YAML."""
+    probe = {
+        "method": "POST",
+        "path": "/api/users",
+        "body": '{"userName": "newuser"}',
+        "expected_status": 201,
+        "capture": {"name": "user_id", "from": "body:id"},
+    }
+    return AuthorReply(
+        requirements=(post_requirement(probes=[probe]), projects_requirement()),
+        rules=(not_yet_taught_rule(),),
+    )
+
+
 def build_service(
     root: Path,
     llm: FakeLLMClient | None = None,
