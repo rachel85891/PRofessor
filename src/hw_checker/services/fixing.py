@@ -61,7 +61,7 @@ from hw_checker.ports.llm import TokenUsage
 from hw_checker.services.deterministic_checks import DETERMINISTIC_KINDS, DeterministicCheckService
 from hw_checker.services.execution import ExecutionService
 from hw_checker.services.fix_edits import EditRules, apply_edits, fallback_edit
-from hw_checker.services.fix_review import Allowances, judge, numbered_rules
+from hw_checker.services.fix_review import Allowances, judge, numbered_rules, repo_code
 from hw_checker.services.review_policy import role_policy
 
 logger = logging.getLogger(__name__)
@@ -334,8 +334,8 @@ class FixService:
         """
         copy = workspace.working_copy
         self._git.discard_changes(copy)
-        paths = self._files.list_files(copy, frozenset(self._config.skip_dirs))
-        files = {path: self._files.read_bytes(copy, path) for path in paths}
+        files = self._repo_files(copy)
+        paths = list(files)
         selected = self._shown_paths(paths, assignments)
         policy = role_policy(
             self._course, assignment, assignments, ReviewRole.FIXER, selected, _failed(results)
@@ -356,6 +356,7 @@ class FixService:
                 styles=styles,
                 findings=_finding_messages(results),
                 not_evaluated=_not_evaluated(results),
+                code=repo_code(files),
             ),
             notes_only=notes_only,
             notes_only_files=notes_only_files,
@@ -447,6 +448,7 @@ class FixService:
             styles=self._course.profile.comment_style,
             findings=_finding_messages(results),
             not_evaluated=_not_evaluated(results),
+            code=repo_code(self._repo_files(workspace.working_copy)),
         )
         outcome = judge(review, applied, rules, allowances)
         broken = outcome.broken
@@ -842,6 +844,11 @@ class FixService:
         root = workspace.working_copy
         paths = self._files.list_files(root, frozenset(self._config.skip_dirs))
         return self._shown_paths(paths, assignments)
+
+    def _repo_files(self, root: Path) -> dict[str, bytes]:
+        """The files of the working copy at `root` (path → contents), as edited."""
+        paths = self._files.list_files(root, frozenset(self._config.skip_dirs))
+        return {path: self._files.read_bytes(root, path) for path in paths}
 
     def _styles(self, shown: Sequence[str]) -> dict[str, CommentStyle]:
         """The comment styles of the `shown` files' types, in the course's order: the files

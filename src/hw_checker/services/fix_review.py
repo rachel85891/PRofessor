@@ -10,7 +10,9 @@ checks are in code, not only in the prompt; which edits they allow is the rules'
 
 A detector recognizes one shape of fix. A fix of that shape that is still not allowed (a
 commented-out `using`, a reference no finding names) is a problem the guardrails reject
-before the fix is applied (`detector_problem`).
+before the fix is applied (`detector_problem`). A removed `using` is the safe fix only when
+it is a duplicate or names a namespace that does not exist (developer decision 2026-11-17);
+any other removed `using` is left to the self-review.
 """
 
 import difflib
@@ -32,7 +34,12 @@ MIN_QUOTE_CHARS = 10
 """A shorter quote cannot show which part of a rule the edit breaks."""
 _RULE_LINE = re.compile(r"^(\d+)\.\s+(.+)$", re.MULTILINE)
 _ID_ASSIGNMENT = re.compile(r"^\w+(?:\.\w+)*\.[Ii]d\s*=\s*\w*[Ii]d\s*;$")
-_STRAY_USING = re.compile(r"^using\s+[\w.]+\s*;$")
+_STRAY_USING = re.compile(r"^using\s+([\w.]+)\s*;$")
+_NAMESPACE = re.compile(r"\bnamespace\s+([A-Za-z_][\w.]*)")
+_PACKAGE_REFERENCE = re.compile(r'<PackageReference\s+(?:Include|Update)\s*=\s*"([^"]+)"')
+_PROJECT_SUFFIX = ".csproj"
+_CODE_SUFFIX = ".cs"
+_FRAMEWORK_ROOTS = frozenset({"System", "Microsoft"})
 _CONTROLLER_CLASS = re.compile(r"\bclass\s+(\w+)Controller\b")
 _READONLY = "readonly "
 _ATTRIBUTE_REFERENCE = re.compile(
@@ -48,18 +55,51 @@ _STRICT_EQUALS = "==="
 
 
 @dataclass(frozen=True)
+class RepoCode:
+    """The repo's code as the `stray_using` detector reads it: each file's text (after the
+    edits, for the self-review), the namespaces its C# files declare, and the package ids
+    its project files reference."""
+
+    texts: Mapping[str, str] = field(default_factory=dict)
+    namespaces: frozenset[str] = frozenset()
+    packages: frozenset[str] = frozenset()
+
+
+def repo_code(files: Mapping[str, bytes]) -> RepoCode:
+    """What `stray_using` needs from the repo's files (path → contents)."""
+    texts = {path: data.decode("utf-8", errors="replace") for path, data in files.items()}
+    return RepoCode(
+        texts=texts,
+        namespaces=frozenset(
+            name
+            for path, text in texts.items()
+            if path.endswith(_CODE_SUFFIX)
+            for name in _NAMESPACE.findall(text)
+        ),
+        packages=frozenset(
+            package
+            for path, text in texts.items()
+            if path.endswith(_PROJECT_SUFFIX)
+            for package in _PACKAGE_REFERENCE.findall(text)
+        ),
+    )
+
+
+@dataclass(frozen=True)
 class Allowances:
     """What the rules in effect allow outright: the safe fixes their `fix_allowed` rules
     name, and their notes in the approved wording, each in the file types its rule is
     limited to; `styles` tell comments from code, `findings` (requirement id → the
     findings' messages) say what the checks named, and `not_evaluated` holds the reasons
-    the repo's requirements were not evaluated for (a note may need one)."""
+    the repo's requirements were not evaluated for (a note may need one); `code` is the
+    repo's code, for the removed `using` lines."""
 
     detectors: tuple[Scoped[DetectorGrant], ...]
     approved_notes: tuple[Scoped[ApprovedNote], ...]
     styles: Mapping[str, CommentStyle]
     findings: Mapping[str, tuple[str, ...]] = field(default_factory=dict)
     not_evaluated: frozenset[str] = frozenset()
+    code: RepoCode = field(default_factory=RepoCode)
 
     def style(self, path: str) -> CommentStyle | None:
         """The comment style of the file at `path`."""
@@ -103,6 +143,9 @@ class Change:
     style: CommentStyle
     named: tuple[str, ...] = ()
     """The messages of the findings that may name what the fix changes."""
+    text: str = ""
+    """The file's text after the edits."""
+    code: RepoCode = field(default_factory=RepoCode)
 
 
 @dataclass(frozen=True)
@@ -219,13 +262,19 @@ def _detections(
     found: list[tuple[SafeFix, Detected]] = []
     for detector, detect in _DETECTORS.items():
         for grant in (grant for grant in grants if grant.detector is detector):
-            detected = detect(_change(edit, style, allowances.named(grant)))
+            detected = detect(_change(edit, style, allowances.named(grant), allowances.code))
             if detected is not None:
                 found.append((detector, detected))
     return found
 
 
-def _change(edit: PlannedEdit, style: CommentStyle, named: tuple[str, ...] = ()) -> Change:
+def _change(
+    edit: PlannedEdit,
+    style: CommentStyle,
+    named: tuple[str, ...] = (),
+    code: RepoCode | None = None,
+) -> Change:
+    code = code or RepoCode()
     old = edit.find.replace("\r\n", "\n").split("\n")
     new = edit.replace.replace("\r\n", "\n").split("\n")
     opcodes = difflib.SequenceMatcher(a=old, b=new, autojunk=False).get_opcodes()
@@ -239,6 +288,8 @@ def _change(edit: PlannedEdit, style: CommentStyle, named: tuple[str, ...] = ())
         comments=[line for line in added if line.startswith(style.line)],
         style=style,
         named=named,
+        text=code.texts.get(edit.file, ""),
+        code=code,
     )
 
 
@@ -256,7 +307,9 @@ def _id_assignment(change: Change) -> Detected | None:
 
 def _stray_using(change: Change) -> Detected | None:
     """`using` lines deleted, with the fix marker line where they were. A `using` commented
-    out instead of deleted is refused (the approved PRs removed it, or asked)."""
+    out instead of deleted is refused (the approved PRs removed it, or asked). Each one must
+    be a duplicate or name a namespace that does not exist; a correct `using` that is only
+    unused is not this fix (it gets a note instead)."""
     removed = change.removed
     if change.added or not removed or not all(_STRAY_USING.match(line) for line in removed):
         return None
@@ -270,7 +323,32 @@ def _stray_using(change: Change) -> Detected | None:
             f"a stray `using` is deleted, with its {style.fix_marker} line where it was; "
             "never comment it out"
         )
-    return Detected()
+    lines = {line.strip() for line in change.text.splitlines()}
+    if all(line in lines or _unknown_namespace(line, change.code) for line in removed):
+        return Detected()
+    return None
+
+
+def _unknown_namespace(line: str, code: RepoCode) -> bool:
+    """Whether the `using` line names a namespace nothing declares: not one the repo's code
+    declares (or a part of one), not the framework's, and not a referenced package's."""
+    match = _STRAY_USING.match(line)
+    if match is None:
+        return False
+    name = match[1]
+    root = name.split(".")[0]
+    declared = any(
+        namespace == name or namespace.startswith(f"{name}.") for namespace in code.namespaces
+    )
+    packaged = any(
+        _package_key(package).startswith(_package_key(root)) for package in code.packages
+    )
+    return not declared and root not in _FRAMEWORK_ROOTS and not packaged
+
+
+def _package_key(name: str) -> str:
+    """A package id or namespace compared ignoring case, `-` and `.` (`zxcvbn-core`)."""
+    return name.lower().replace("-", "").replace(".", "")
 
 
 def _readonly_field(change: Change) -> Detected | None:
@@ -379,7 +457,7 @@ _DETECTORS: dict[SafeFix, Callable[[Change], Detected | None]] = {
 _SAFE_FIXES = {
     SafeFix.MISSING_BREAK: "a missing break",
     SafeFix.ID_ASSIGNMENT: "an id lost on update, restored with one assignment",
-    SafeFix.STRAY_USING: "a removed stray using",
+    SafeFix.STRAY_USING: "a removed duplicate or unknown using",
     SafeFix.READONLY_FIELD: "readonly for a fixed path",
     SafeFix.CONTROLLER_SUFFIX: "the Controller suffix on a controller class",
     SafeFix.FINAL_NEWLINE: "a data file's final newline",

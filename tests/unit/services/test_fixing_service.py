@@ -263,6 +263,45 @@ def test_a_judge_removing_a_readonly_fix_is_ignored_and_the_report_keeps_why(
     assert "readonly for a fixed path is never a violation" in ignored
 
 
+def test_a_judge_keeps_a_removed_duplicate_using_but_not_a_removed_correct_one(
+    tmp_path: Path,
+) -> None:
+    duplicate = READONLY_FIX.model_copy(
+        update={
+            "find": "using System.Text.Json;\nusing System.Text.Json;",
+            "replace": "using System.Text.Json;\n//fix: Removed the duplicate using",
+        }
+    )
+    unused = READONLY_FIX.model_copy(
+        update={"find": "using System.Linq;", "replace": "//fix: Removed an unused using"}
+    )
+    violations = tuple(
+        ReviewViolation(
+            edit_index=index, rule=9, quote="no refactoring", explanation="Nobody asked for it."
+        )
+        for index in (0, 1)
+    )
+    setup = FixerSetup(tmp_path, replies={"judge": [SelfReview(violations=violations)]})
+    usings = "using System.Text.Json;\nusing System.Text.Json;\nusing System.Linq;\n\n"
+    (setup.checked / STORE).write_bytes((usings + STORE_TEXT).encode())
+    workspace = setup.service.prepare(RUN_ID, (ASSIGNMENT,), (), REPO, setup.fetched)
+    application = setup.service.apply(workspace, [duplicate, unused], ASSIGNMENT, (ASSIGNMENT,))
+    reviewed = setup.service.self_review(RUN_ID, workspace, ASSIGNMENT, (ASSIGNMENT,), application)
+    assert reviewed is not None
+
+    kept = setup.service.remove_violations(
+        workspace, ASSIGNMENT, (ASSIGNMENT,), application, reviewed[0]
+    )
+
+    assert kept.applied == (duplicate,)
+    assert [rejected.reason for rejected in kept.rejected] == [
+        "self-review: rule 9: Nobody asked for it."
+    ]
+    assert "using System.Linq;" in setup.text(STORE)
+    [ignored] = kept.ignored_review
+    assert "a removed duplicate or unknown using is never a violation" in ignored
+
+
 def test_a_judge_flagging_a_real_file_exists_check_removes_it(tmp_path: Path) -> None:
     exists = READONLY_FIX.model_copy(
         update={

@@ -33,15 +33,16 @@ rules:
     status: approved
 
   - id: safe-fixes
-    # Moved from code in stage 3f.
+    # Moved from code in stage 3f. Which `using` lines: developer decision 2026-11-17.
     applies_to: [fixer, judge]
     kind: fix_allowed
     text: >-
       Fix only small, safe things: a missing `break` (a `switch` case that falls through, or
       a loop that keeps reading after it found its item), an id lost on update, `readonly`
-      for a fixed path, a stray `using`, a controller class name without the `Controller`
-      suffix (the route does not change), a broken data file (for example a missing final
-      newline).
+      for a fixed path, a duplicate `using` line or a `using` of a namespace that does not
+      exist (declared nowhere in the repo, and not from the framework or a referenced
+      package), a controller class name without the `Controller` suffix (the route does not
+      change), a broken data file (for example a missing final newline).
     detectors:
       - missing_break
       - id_assignment
@@ -52,8 +53,9 @@ rules:
     never_a_violation: >-
       The small safe fixes of rule {rule:safe-fixes}: a missing `break`, an id lost on
       update restored with one assignment (for example `user.id = id;`), `readonly` for a
-      fixed path, a removed stray `using`, the `Controller` suffix added to a controller
-      class name, a data file's missing final newline.
+      fixed path, a removed duplicate `using` line or `using` of a namespace that does not
+      exist, the `Controller` suffix added to a controller class name, a data file's missing
+      final newline.
     origin:
       source: developer
       quote: "docs/fix-pr-workflow.md §3, rule 2"
@@ -240,15 +242,25 @@ rules:
     applies_to: [fixer, judge]
     kind: never_do
     text: >-
-      A `fix` changes only what a finding or a real bug needs. Never remove unused `using`
-      lines, reformat code, or "improve" code that works.
+      A `fix` changes only what a finding or a real bug needs. A correct `using` that is
+      only unused is never removed: add one note right above it instead, in this wording:
+      `//This using isn't used in this file: you can remove it`. Never reformat code or
+      "improve" code that works.
     example:
       file: Services/ProductService.cs
       find: "        existing.Price = product.Price;\n        existing.Price = product.Stock;"
       replace: "        existing.Price = product.Price;\n        //fix: Save the stock in Stock, not in Price, so updating keeps both\n        existing.Stock = product.Stock;"
+    approved_notes:
+      - words: isn't used in this file
+        what: the note about an unused using
+    never_a_violation: >-
+      The note of rule {rule:only-what-is-needed} about a `using` that isn't used in this
+      file.
     origin:
       source: developer
-      quote: "developer decision 2026-11-16 (full-round review)"
+      quote: >-
+        developer decision 2026-11-16 (full-round review); the `using` part: developer
+        decision 2026-11-17
     status: approved
 
   - id: no-comment-pointers
