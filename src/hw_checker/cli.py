@@ -277,7 +277,8 @@ def run_assignment_command(settings: Settings, args: argparse.Namespace, out: Te
     config = _thread(AUTHORING_RUN.format(id=args.assignment_id))
     with open_checkpointer(settings) as checkpointer, open_author_llm(settings) as author_llm:
         graph = build_authoring_graph_from_settings(settings, author_llm, checkpointer)
-        waiting = bool(graph.get_state(config).interrupts)
+        state = graph.get_state(config)
+        waiting = bool(state.interrupts)
         if args.action == "draft":
             if waiting:
                 print(
@@ -290,6 +291,19 @@ def run_assignment_command(settings: Settings, args: argparse.Namespace, out: Te
                 assignment_id=args.assignment_id, with_execution=args.with_execution
             )
             output: dict[str, Any] = graph.invoke(run_input, config)
+        elif not waiting and state.next:
+            # Not waiting but with a next step: that step failed. Only `write_approved`
+            # can run again, and it re-reads the files, so edits since then count.
+            failed = state.next[0]
+            if args.action != AuthoringAction.APPROVE or failed != "write_approved":
+                print(
+                    f"The last step of {args.assignment_id} ({failed}) failed; run "
+                    f'"assignment draft {args.assignment_id}" to start again.',
+                    file=out,
+                )
+                return EXIT_FAILED
+            print(f"Running the step that failed again: {failed}", file=out)
+            output = graph.invoke(None, config)
         else:
             if not waiting:
                 print(f"{args.assignment_id} is not waiting for approval.", file=out)

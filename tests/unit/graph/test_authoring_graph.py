@@ -19,10 +19,12 @@ from hw_checker.domain import ItemStatus
 from hw_checker.domain.authoring import AuthoringOutcome, AuthoringPrompt, AuthorReply
 from hw_checker.domain.errors import InvalidAssignmentError, LLMOutputError
 from hw_checker.graph import AuthoringGraph, AuthoringInput, build_authoring_graph
+from hw_checker.graph.authoring import EDITS_VALID
 from hw_checker.services.assignments import AssignmentCatalogService
 from tests.fakes.llm import FakeLLMClient
 from tests.unit.services.authoring_data import (
     build_service,
+    capture_reply,
     post_requirement,
     projects_requirement,
     valid_reply,
@@ -191,6 +193,24 @@ def test_an_edited_severity_is_validated_reported_and_approved_on_the_second_app
     assert projects["origin"] == {"source": "developer", "quote": "edited by hand before approval"}
     assert post["origin"]["source"] == "task_text"
     assert {post["status"], projects["status"]} == {"approved"}
+
+
+def test_a_draft_with_a_capture_resumes_from_the_checkpoint_and_its_edits_are_reviewed(
+    tmp_path: Path,
+) -> None:
+    graph = _graph(tmp_path, FakeLLMClient({"author": [capture_reply()]}))
+    graph.invoke(START, CONFIG)
+    requirements_file = _files(tmp_path)[0]
+    _edit(requirements_file, "severity: major", "severity: minor")
+
+    output = graph.invoke(Command(resume={"action": "approve"}), CONFIG)
+
+    assert _prompt(output).message == EDITS_VALID
+    output = graph.invoke(Command(resume={"action": "approve"}), CONFIG)
+    assert output["outcome"] is AuthoringOutcome.APPROVED
+    post, projects = yaml.safe_load(requirements_file.read_text(encoding="utf-8"))["requirements"]
+    assert post["probes"][0]["capture"] == {"name": "user_id", "from": "body:id"}
+    assert projects["severity"] == "minor"
 
 
 def test_an_edit_naming_an_unknown_check_stays_at_approval_with_the_problem(

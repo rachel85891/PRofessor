@@ -8,7 +8,7 @@ the `author` role drafts the requirements and review rules from them (`AuthorRep
 from enum import StrEnum
 from typing import Annotated, Literal, Self
 
-from pydantic import Field, StringConstraints, model_validator
+from pydantic import ConfigDict, Field, StringConstraints, model_validator
 
 from hw_checker.domain.assignment import (
     VARIABLE_NAME_PATTERN,
@@ -125,6 +125,12 @@ class AssignmentIntake(DomainModel):
 
 class CaptureSpec(DomainModel):
     """A probe's capture as `requirements.yaml` writes it: `{name, from}`."""
+
+    # `requirements.yaml` and the author's reply say `from`, but LangGraph's checkpointer
+    # stores the field name `source`: a draft resumed from a checkpoint must validate too.
+    model_config = ConfigDict(
+        **DomainModel.model_config, validate_by_name=True, validate_by_alias=True
+    )
 
     name: Annotated[str, StringConstraints(pattern=rf"^{VARIABLE_NAME_PATTERN}$")]
     source: Annotated[
