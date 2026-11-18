@@ -301,6 +301,16 @@ def test_every_not_evaluated_reason_has_a_sentence(reason: NotEvaluatedReason) -
     assert sentence[0].isupper() and sentence.endswith(".")
 
 
+def test_an_unreachable_database_is_worded_as_the_container_not_the_student() -> None:
+    sentence = NOT_EVALUATED_REASONS[NotEvaluatedReason.DATABASE_UNAVAILABLE]
+
+    assert sentence == (
+        "The app could not reach its database in the checker's container (it likely points "
+        "to a database server on the student's own computer), so this could not be checked "
+        "while it was running."
+    )
+
+
 def test_unreadable_evidence_is_worded_as_the_code_not_the_machine() -> None:
     sentence = NOT_EVALUATED_REASONS[NotEvaluatedReason.EVIDENCE_UNAVAILABLE]
 

@@ -218,3 +218,42 @@ def test_a_registered_check_whose_dependency_failed_is_not_run() -> None:
         "hw02-passing",
         "hw02-after-pass",
     ]
+
+
+def test_dependents_follow_an_unreachable_database_but_keep_a_windows_path() -> None:
+    def needing(requirement_id: str, *depends_on: str) -> Requirement:
+        base = requirement(requirement_id, RequirementKind.HTTP)
+        return base.model_copy(update={"depends_on": depends_on})
+
+    assignment = Assignment(
+        id="hw01",
+        order=1,
+        title="Users",
+        requirements=(
+            needing("hw01-create"),
+            needing("hw01-list", "hw01-create"),
+            needing("hw01-read", "hw01-list"),
+            needing("hw01-file", "hw01-create"),
+        ),
+    )
+    checker = FakeRequirementChecker(
+        {
+            "hw01-create": NotEvaluatedReason.DATABASE_UNAVAILABLE,
+            "hw01-list": (finding("hw01-list"),),
+            "hw01-read": NotEvaluatedReason.ROUTE_NOT_FOUND,
+            "hw01-file": NotEvaluatedReason.WINDOWS_PATH,
+        }
+    )
+    execution = EXECUTION.model_copy(
+        update={"unreachable_databases": ("SQL Server",), "windows_paths": ("..\a.txt",)}
+    )
+
+    result = DeterministicCheckService(checker).evaluate(assignment, REPO, execution)
+
+    assert result.findings == ()
+    assert {(e.requirement_id, e.reason, e.detail) for e in result.not_evaluated} == {
+        ("hw01-create", NotEvaluatedReason.DATABASE_UNAVAILABLE, "SQL Server"),
+        ("hw01-list", NotEvaluatedReason.DATABASE_UNAVAILABLE, "SQL Server"),
+        ("hw01-read", NotEvaluatedReason.DATABASE_UNAVAILABLE, "SQL Server"),
+        ("hw01-file", NotEvaluatedReason.WINDOWS_PATH, "..\a.txt"),
+    }

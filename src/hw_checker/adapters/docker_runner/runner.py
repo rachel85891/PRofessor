@@ -30,6 +30,7 @@ from hw_checker.adapters.docker_runner.body_adapter import adapt_body
 from hw_checker.adapters.docker_runner.body_models import ProjectSources
 from hw_checker.adapters.docker_runner.classification import RunnerStep, StepOutcome, classify
 from hw_checker.adapters.docker_runner.code_facts import extract_code_facts
+from hw_checker.adapters.docker_runner.database_errors import unreachable_databases_in_log
 from hw_checker.adapters.docker_runner.discovery import (
     DiscoveryFailure,
     ProjectFolder,
@@ -533,6 +534,7 @@ class _Execution:
         self._log_step_end(RunnerStep.RUN, started, outcome)
         self._write_log(RunnerStep.RUN, log)
         kind = classify(dataclasses.replace(outcome, log_text=log))
+        databases = unreachable_databases_in_log(log)
         if kind is not None:
             return ExecutionResult(
                 build_status=StepStatus.SUCCEEDED,
@@ -540,6 +542,7 @@ class _Execution:
                 failure_kind=kind,
                 logs_excerpt=excerpt_log(log),
                 logs_path=self.request.logs_dir,
+                unreachable_databases=databases,
             )
         return ExecutionResult(
             build_status=StepStatus.SUCCEEDED,
@@ -548,6 +551,7 @@ class _Execution:
             logs_path=self.request.logs_dir,
             probe_results=probe_results,
             windows_paths=windows_paths_in_log(log),
+            unreachable_databases=databases,
         )
 
     def _wait_until_ready(self, app: str, sidecar: str, base_url: str) -> StepOutcome:

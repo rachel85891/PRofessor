@@ -38,6 +38,11 @@ NOT_EVALUATED_REASONS: dict[NotEvaluatedReason, str] = {
         "The request needed a value (such as a new user's id) that an earlier request did "
         "not return, so it was not sent."
     ),
+    NotEvaluatedReason.DATABASE_UNAVAILABLE: (
+        "The app could not reach its database in the checker's container (it likely points "
+        "to a database server on the student's own computer), so this could not be checked "
+        "while it was running."
+    ),
 }
 """One sentence per reason a requirement was not checked; the reasons in
 `TEMPLATE_WORDED_REASONS` are worded in the report template instead."""

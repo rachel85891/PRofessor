@@ -61,6 +61,10 @@ class NotEvaluatedReason(StrEnum):
     """A request failed with a 5xx while the app could not open a path written with
     Windows folder separators, which likely works on Windows but not in the Linux
     container (or a requirement depends on one that failed so)."""
+    DATABASE_UNAVAILABLE = "database_unavailable"
+    """A request failed with a 5xx, or the app did not start, while it could not connect to
+    its database in the container: likely a database server on the student's own computer,
+    so not the student's fault (or a requirement depends on one that failed so)."""
     ASSIGNMENT_NOT_APPLICABLE = "assignment_not_applicable"
     """The assignment's `applies_when` does not hold for the repo, or its `skip_when`
     does, so none of its requirements was checked."""
