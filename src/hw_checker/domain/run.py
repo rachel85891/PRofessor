@@ -63,9 +63,12 @@ class NotEvaluatedReason(StrEnum):
     Windows folder separators, which likely works on Windows but not in the Linux
     container (or a requirement depends on one that failed so)."""
     DATABASE_UNAVAILABLE = "database_unavailable"
-    """A request failed with a 5xx, or the app did not start, while it could not connect to
-    its database in the container: likely a database server on the student's own computer,
-    so not the student's fault (or a requirement depends on one that failed so)."""
+    """A request failed in any way (a 5xx, no answer, or a wrong status), or the app did not
+    start, while it could not connect to its database in the container: likely a database
+    server on the student's own computer, so not the student's fault (or a requirement
+    depends on one that failed so). No failing answer from such a run tells what the code
+    does; the cost is that a real bug in a request that does not touch the database is not
+    reported in that round."""
     ASSIGNMENT_NOT_APPLICABLE = "assignment_not_applicable"
     """The assignment's `applies_when` does not hold for the repo, or its `skip_when`
     does, so none of its requirements was checked."""

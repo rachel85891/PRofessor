@@ -491,8 +491,8 @@ class ExecutionResult(DomainModel):
         Annotated[str, Field(max_length=MAX_DATABASE_TEXT_CHARS)], ...
     ] = ()
     """What the app's run log says it could not connect to (`SQL Server`, a database's
-    name), whether the app started or not; a 5xx answer may then be the container's fault
-    (the database server is likely on the student's own computer). Never a connection
+    name), whether the app started or not; any failing answer may then be the container's
+    fault (the database server is likely on the student's own computer). Never a connection
     string."""
 
     @property

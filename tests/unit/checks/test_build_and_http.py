@@ -25,6 +25,7 @@ from hw_checker.domain import (
     PathFixKind,
     PathNotRewrittenReason,
     PathRewrite,
+    ProbeCapture,
     ProbeResult,
     Requirement,
     RequirementKind,
@@ -852,9 +853,87 @@ def test_a_server_error_without_a_database_failure_in_the_log_is_a_finding() -> 
     assert isinstance(outcome, tuple) and len(outcome) == 1
 
 
-def test_a_client_error_next_to_an_unreachable_database_is_a_finding() -> None:
-    execution = run_ok(result(GET_MISSING, 400)).model_copy(
+# Any failure next to an unreachable database: no answer, a wrong 2xx, a client error.
+ANY_FAILURE = [
+    pytest.param(result(CREATE, None), id="no-answer"),
+    pytest.param(result(GET_MISSING, 200), id="wrong-2xx"),
+    pytest.param(result(GET_MISSING, 400), id="client-error"),
+    pytest.param(result(GET_MISSING, 500), id="server-error"),
+]
+
+
+@pytest.mark.parametrize("failed", ANY_FAILURE)
+def test_any_failure_next_to_an_unreachable_database_is_not_evaluated(
+    failed: ProbeResult,
+) -> None:
+    execution = run_ok(result(GET_ALL, 200), failed).model_copy(
         update={"unreachable_databases": SQL_SERVER}
+    )
+
+    outcome = evaluate_http(check_input(HTTP_REQUIREMENT, execution))
+
+    assert outcome is NotEvaluatedReason.DATABASE_UNAVAILABLE
+
+
+@pytest.mark.parametrize("failed", ANY_FAILURE)
+def test_any_failure_without_a_database_failure_in_the_log_is_a_finding(
+    failed: ProbeResult,
+) -> None:
+    outcome = evaluate_http(check_input(HTTP_REQUIREMENT, run_ok(result(GET_ALL, 200), failed)))
+
+    assert isinstance(outcome, tuple) and len(outcome) == 1
+
+
+def test_passing_probes_next_to_an_unreachable_database_still_pass() -> None:
+    execution = run_ok(
+        result(GET_ALL, 200), result(GET_MISSING, 404), result(CREATE, 201)
+    ).model_copy(update={"unreachable_databases": SQL_SERVER})
+
+    assert evaluate_http(check_input(HTTP_REQUIREMENT, execution)) == ()
+
+
+def unsent_after_a_timed_out_capture() -> ExecutionResult:
+    """CREATE timed out, so GET_MISSING, which needs the id it captures, was not sent."""
+    creating = CREATE.model_copy(update={"capture": ProbeCapture(name="id", source="body:id")})
+    reading = GET_MISSING.model_copy(update={"path": "/api/products/{id}"})
+    return run_ok(
+        result(GET_ALL, 200),
+        ProbeResult(
+            probe=reading, passed=False, route_resolution=RouteResolution.DEPENDENCY_MISSING
+        ),
+        result(creating, None),
+    )
+
+
+def test_a_probe_unsent_after_a_timed_out_capture_with_an_unreachable_database() -> None:
+    execution = unsent_after_a_timed_out_capture().model_copy(
+        update={"unreachable_databases": SQL_SERVER}
+    )
+
+    outcome = evaluate_http(check_input(HTTP_REQUIREMENT, execution))
+
+    assert outcome is NotEvaluatedReason.DATABASE_UNAVAILABLE
+
+
+def test_a_probe_unsent_after_a_timed_out_capture_without_a_database_failure() -> None:
+    outcome = evaluate_http(check_input(HTTP_REQUIREMENT, unsent_after_a_timed_out_capture()))
+
+    assert outcome is NotEvaluatedReason.DEPENDENCY_FAILED
+
+
+def test_a_probe_unsent_after_a_timed_out_capture_with_a_windows_path_is_held_back() -> None:
+    execution = unsent_after_a_timed_out_capture().model_copy(
+        update={"windows_paths": ("/app/..\\data\\users.txt",)}
+    )
+
+    outcome = evaluate_http(check_input(HTTP_REQUIREMENT, execution))
+
+    assert outcome is NotEvaluatedReason.DEPENDENCY_FAILED
+
+
+def test_a_wrong_2xx_with_a_windows_path_in_the_log_is_a_finding() -> None:
+    execution = run_ok(result(GET_MISSING, 200)).model_copy(
+        update={"windows_paths": ("/app/..\\data\\users.txt",)}
     )
 
     outcome = evaluate_http(check_input(HTTP_REQUIREMENT, execution))
