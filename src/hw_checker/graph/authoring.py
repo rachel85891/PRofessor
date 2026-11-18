@@ -58,6 +58,8 @@ class AuthoringOutput(TypedDict):
     report_path: NotRequired[str]
     written: NotRequired[list[str]]
     """The approved files, once approved."""
+    intake_warning: NotRequired[str]
+    """Set by `approve` when `intake.yaml` changed after the draft; empty otherwise."""
 
 
 class AuthoringState(AuthoringInput):
@@ -81,6 +83,7 @@ class AuthoringState(AuthoringInput):
     decision: NotRequired[AuthoringDecision | None]
     outcome: NotRequired[AuthoringOutcome | None]
     written: NotRequired[list[str]]
+    intake_warning: NotRequired[str]
 
 
 def _drafted(state: AuthoringState) -> AuthorReply:
@@ -125,6 +128,7 @@ def build_authoring_graph(
             "decision": None,
             "outcome": None,
             "written": [],
+            "intake_warning": "",
         }
 
     def draft(state: AuthoringState) -> Update:
@@ -197,25 +201,37 @@ def build_authoring_graph(
             current = authoring.current_files(state["assignment_id"])
             if current is None:
                 return {"approval_message": FILES_MISSING, "decision": None}
+            # The run keeps the intake read at the draft; a later change only warns.
+            warning = authoring.intake_changed(state["intake"])
             if current != expected:
-                return review_edits(state, current)
+                return review_edits(state, current, warning)
             try:
                 written = authoring.approve(state["intake"], _drafted(state), expected)
             except AuthoringError as error:
                 logger.warning("The approval was not applied: %s", error)
-                return {"approval_message": str(error), "decision": None}
-        return {"written": [str(path) for path in written], "outcome": AuthoringOutcome.APPROVED}
+                return {"approval_message": str(error), "decision": None, "intake_warning": warning}
+        return {
+            "written": [str(path) for path in written],
+            "outcome": AuthoringOutcome.APPROVED,
+            "intake_warning": warning,
+        }
 
-    def review_edits(state: AuthoringState, current: DraftFiles) -> Update:
+    def review_edits(state: AuthoringState, current: DraftFiles, warning: str) -> Update:
         """The developer edited the drafted files: validate them as they are, report, and
         go back to the approval; never approve in the same step."""
         reply, changed, report = authoring.review_edits(
             state["intake"], _drafted(state), current, state.get("with_execution", False)
         )
         path = authoring.write_report(
-            state["intake"], reply, report, state["attempt"], max_attempts, edited=changed
+            state["intake"],
+            reply,
+            report,
+            state["attempt"],
+            max_attempts,
+            edited=changed,
+            intake_warning=warning,
         )
-        update: Update = {"report_path": str(path), "decision": None}
+        update: Update = {"report_path": str(path), "decision": None, "intake_warning": warning}
         if not report.passed:
             logger.info("The hand edits of %s have problems", state["assignment_id"])
             return {**update, "approval_message": EDITS_INVALID}

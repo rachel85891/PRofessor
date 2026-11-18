@@ -46,6 +46,11 @@ REPORT_TEMPLATE = "authoring_report.md.j2"
 HAND_EDIT = Origin(source=OriginSource.DEVELOPER, quote="edited by hand before approval")
 """The origin of an item the developer changed or added in the drafted files."""
 AUTHOR_ROLE = "author"
+INTAKE_CHANGED = (
+    "intake.yaml changed after the draft: this run still checks against the intake read when "
+    "the draft started. To use the new one, stop and draft again."
+)
+"""The warning when `intake.yaml` is not what the run read at the draft (option B, 2026-11-17)."""
 _COMMENT_LINE = re.compile(r"^[ \t]*#(?: .*)?(?:\n|\Z)", re.MULTILINE)
 """A YAML comment line (`# ...` or a bare `#`), left out of the files shown to the author."""
 _DATA_TAGS = ("data_file", "intake", "task_text", "previous_draft")
@@ -137,10 +142,12 @@ class AuthoringService:
         max_attempts: int,
         failed: bool = False,
         edited: tuple[str, ...] | None = None,
+        intake_warning: str = "",
     ) -> Path:
         """Write `authoring_report.md` (and the draft as JSON) to the private authoring
         folder; return the report's path. `failed` says the last attempt still failed;
-        `edited`, when given, says the files were edited by hand, with the items changed.
+        `edited`, when given, says the files were edited by hand, with the items changed;
+        `intake_warning`, when given, goes at the top (`intake_changed`).
 
         Raises:
             AuthoringError: the report cannot be written.
@@ -159,11 +166,31 @@ class AuthoringService:
                 "items": _report_items(reply, report),
                 "suggestions": list(reply.frame_suggestions),
                 "edited": edited,
+                "intake_warning": intake_warning,
             },
         )
         path = self._files.write_report(intake.id, text, reply)
         logger.info("The authoring report of %s is at %s", intake.id, path)
         return path
+
+    def intake_changed(self, intake: AssignmentIntake) -> str:
+        """`INTAKE_CHANGED` when `intake.yaml` now parses to something other than `intake`
+        (the intake read at the draft), with the reason when it cannot be read; empty when
+        it is the same. A change only in a comment is the same. Never raises: the run goes
+        on with `intake` either way.
+        """
+        try:
+            current = self._files.load_intake(intake.id)
+        except (AuthoringError, InvalidAssignmentError) as error:
+            reason = " ".join(str(error).split())
+            logger.warning("The intake of %s cannot be read again: %s", intake.id, reason)
+            return f"{INTAKE_CHANGED} It cannot be read now: {reason}"
+        if current == intake:
+            return ""
+        logger.warning(
+            "The intake of %s changed after the draft; the run keeps the old one", intake.id
+        )
+        return INTAKE_CHANGED
 
     def current_files(self, assignment_id: str) -> DraftFiles | None:
         """The drafted files as they are now in the assignment's folder; None when one is

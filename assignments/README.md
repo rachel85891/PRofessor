@@ -94,6 +94,8 @@ You may edit the drafted files while they wait (change a word, a severity or a p
 
 `stop` removes only the files the draft wrote; files you edited are kept.
 
+The run keeps the intake it read when `draft` started: if `intake.yaml` changed since (a change only in a comment does not count) or cannot be read, `approve` still goes on but prints a warning, also put at the top of a hand-edit report; to use the new intake, `stop` and `draft` again.
+
 ### The author's limits
 
 The author's prompt is long: it holds the course's files, every earlier assignment's files and the check catalog (about 64,000 characters for a fourth assignment, more on a revise, which adds the previous draft). So the `author` role has its own limits in `config.yaml`: `llm.role_max_prompt_chars` (150,000 characters), `llm.role_max_output_tokens` (16,000 tokens) and `llm.role_timeouts` (300 s). The other roles keep `max_prompt_chars` and `max_output_tokens`. The Copilot runtime has no setting for a reply's length, so the token limit applies to `openrouter` only.

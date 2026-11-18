@@ -10,13 +10,15 @@ import yaml
 from hw_checker import cli
 from hw_checker.config.settings import Settings
 from hw_checker.graph import AuthoringGraph, build_authoring_graph
-from hw_checker.services.authoring import AuthoringService
+from hw_checker.services.authoring import INTAKE_CHANGED, AuthoringService
 from tests.fakes.llm import FakeLLMClient
 from tests.unit.services.authoring_data import (
+    INTAKE,
     build_service,
     capture_reply,
     make_folders,
     valid_reply,
+    write,
 )
 
 
@@ -153,6 +155,58 @@ def test_revise_after_a_failed_step_says_to_draft_again(
         'The last step of hw02 (write_approved) failed; run "assignment draft hw02" to '
         "start again.",
     )
+
+
+def test_approve_warns_when_the_intake_changed_after_the_draft_and_still_approves(
+    author: FakeLLMClient, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _run(capsys, "draft", "hw02")
+    folder = tmp_path / "assignments" / "hw02"
+    intake = {**INTAKE, "requirements": {"return_values": INTAKE["requirements"]["return_values"]}}
+    write(folder / "intake.yaml", intake)
+    requirements_file = folder / "requirements.yaml"
+    text = requirements_file.read_text("utf-8")
+    requirements_file.write_text(text.replace("severity: major", "severity: minor"), "utf-8")
+
+    code, out = _run(capsys, "approve", "hw02")
+
+    assert code == cli.EXIT_OK
+    assert out.startswith(f"Warning: {INTAKE_CHANGED}\nNot applied: Your edits were validated")
+    report_path = Path(out.splitlines()[3].strip())
+    report = report_path.read_text("utf-8")
+    assert report.index(INTAKE_CHANGED) < report.index("Edited by hand")
+    code, out = _run(capsys, "approve", "hw02")
+    assert code == cli.EXIT_OK
+    assert out.splitlines()[:2] == [f"Warning: {INTAKE_CHANGED}", "Approved hw02:"]
+    assert "status: draft" not in requirements_file.read_text("utf-8")
+
+
+def test_approve_ignores_a_change_only_in_a_comment_of_the_intake(
+    author: FakeLLMClient, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _run(capsys, "draft", "hw02")
+    intake_file = tmp_path / "assignments" / "hw02" / "intake.yaml"
+    intake_file.write_text("# A note added after the draft\n" + intake_file.read_text("utf-8"))
+
+    code, out = _run(capsys, "approve", "hw02")
+
+    assert (code, out.splitlines()[0]) == (cli.EXIT_OK, "Approved hw02:")
+    assert "Warning" not in out
+
+
+def test_approve_warns_with_the_reason_when_the_intake_cannot_be_read(
+    author: FakeLLMClient, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _run(capsys, "draft", "hw02")
+    (tmp_path / "assignments" / "hw02" / "intake.yaml").write_text("id: [hw02\n", "utf-8")
+
+    code, out = _run(capsys, "approve", "hw02")
+
+    assert code == cli.EXIT_OK
+    warning, approved = out.splitlines()[:2]
+    assert warning.startswith(f"Warning: {INTAKE_CHANGED} It cannot be read now: Invalid intake")
+    assert "not valid YAML" in warning
+    assert approved == "Approved hw02:"
 
 
 def test_revise_needs_a_note(author: FakeLLMClient) -> None:
