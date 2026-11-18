@@ -7,9 +7,18 @@ reads both from the full, bounded response body.
 """
 
 import json
+import re
 
 from hw_checker.adapters.docker_runner.http_response import HttpResponse
 from hw_checker.domain import ResponseShape
+from hw_checker.domain.execution import MAX_TYPE_NAME_CHARS
+
+BAD_REQUEST = 400
+ROOT_KEYS = frozenset({"$", ""})
+"""The `errors` keys ASP.NET uses for the body as a whole, not one of its fields."""
+NOT_CONVERTED = "could not be converted"
+_TARGET_TYPE = re.compile(r"could not be converted to ([\w.`\[\], +<>]+?)\.?\s+Path:", re.I)
+_NAMESPACE = re.compile(r"\b(?:\w+\.)+(?=\w)")
 
 
 def response_shape(response: HttpResponse) -> ResponseShape:
@@ -72,3 +81,34 @@ def _as_text(value: object) -> str | None:
 
 def _normalize(text: str) -> str:
     return text.strip().casefold()
+
+
+def body_rejection(response: HttpResponse) -> str | None:
+    """Whether the app rejected the body as a whole: None when it did not, otherwise the
+    type the body did not fit, without namespaces (empty when the error does not name it).
+
+    ASP.NET answers a JSON body that does not fit the action's parameter type (a string
+    sent where an object is expected) with a 400 validation problem whose `errors` hold
+    "could not be converted" under the root path `$`. An error on a named field only (a
+    property that could not be converted) is not a whole-body rejection.
+    """
+    if response.status != BAD_REQUEST or response.truncated:
+        return None
+    try:
+        data = json.loads(response.body)
+    except ValueError:
+        return None
+    errors = data.get("errors") if isinstance(data, dict) else None
+    if not isinstance(errors, dict):
+        return None
+    messages = [
+        message
+        for key, values in errors.items()
+        if key in ROOT_KEYS and isinstance(values, list)
+        for message in values
+        if isinstance(message, str) and NOT_CONVERTED in message.casefold()
+    ]
+    if not messages:
+        return None
+    match = _TARGET_TYPE.search(messages[0])
+    return "" if match is None else _NAMESPACE.sub("", match.group(1))[:MAX_TYPE_NAME_CHARS]

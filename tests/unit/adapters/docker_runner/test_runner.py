@@ -841,6 +841,24 @@ def test_probe_records_a_short_response_excerpt(repo: Path, tmp_path: Path) -> N
     assert result.probe_results[0].response_excerpt == ""
 
 
+def test_a_body_the_app_could_not_convert_at_all_is_marked_rejected(
+    repo: Path, tmp_path: Path
+) -> None:
+    problem = (
+        '{"title":"One or more validation errors occurred.","status":400,"errors":{"$":["The '
+        'JSON value could not be converted to Sample.Models.Product. Path: $ | LineNumber: 0"],'
+        '"product":["The product field is required."]}}'
+    )
+    engine = FakeEngine(probe_responses={("POST", "/api/products"): (400, {}, problem)})
+
+    result = runner(engine).execute(request(repo, tmp_path))
+
+    post = result.probe_results[2]
+    assert (post.body_rejected, post.rejected_type) == (True, "Product")
+    assert post.body_mismatched
+    assert not result.probe_results[0].body_rejected
+
+
 def test_sidecar_cuts_the_response_at_the_configured_size(repo: Path, tmp_path: Path) -> None:
     engine = FakeEngine()
 

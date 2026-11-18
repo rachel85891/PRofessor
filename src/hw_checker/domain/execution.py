@@ -35,6 +35,9 @@ MAX_ROUTE_TEXT_CHARS = 500
 MAX_BODY_CHARS = 10_000
 """Upper bound for a recorded probe body."""
 
+MAX_TYPE_NAME_CHARS = 100
+"""Upper bound for a type name read from an app's validation error."""
+
 
 class FailureKind(StrEnum):
     """Why a build or run failed (design §5). Choosing the kind is the runner's job."""
@@ -217,11 +220,19 @@ class ProbeResult(DomainModel):
     """The shape of the full response body; None when there was no answer."""
     missing_values: tuple[str, ...] = ()
     """The probe's expected values (variables filled in) that the response lacks."""
+    body_rejected: bool = False
+    """The app answered 400 because the body as a whole could not be converted to the
+    action's parameter type (a JSON string sent to an action that takes an object)."""
+    rejected_type: str | None = Field(default=None, max_length=MAX_TYPE_NAME_CHARS)
+    """The type the rejected body did not fit, without namespaces, when the error names it."""
 
     @property
     def body_mismatched(self) -> bool:
-        """True when the body sent had fields that do not fit the student's model."""
-        return self.body_adaptation is not None and self.body_adaptation.mismatched
+        """True when the body sent had fields that do not fit the student's model, or did
+        not fit the action's parameter type at all."""
+        return self.body_rejected or (
+            self.body_adaptation is not None and self.body_adaptation.mismatched
+        )
 
     @property
     def requirement_id(self) -> str:
