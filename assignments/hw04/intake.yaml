@@ -22,7 +22,8 @@ not_yet_taught: []
 # 3. The lecturer's decisions.
 lecturer_decisions:
   accepted_alternatives:
-    - "The strength check may be at any route the student's code declares. Students used these (planner survey 2026-11-16), so list them all as the probe's path alternatives, /api/password first: /api/password, /api/passwords, /api/strongpassword, /api/pass, /api/password/strength, /api/password/check, /api/passwords/password, /api/users/checkpassword, /api/user/passwordstrength, /api/user/passwordcheck, /api/users/password, /password/check_strengh"
+    # Developer decision 2026-11-18 (HW04 pilot): the route as the student's code spells it.
+    - "The strength check may be at any route the student's code declares. Students used these (planner survey 2026-11-16), so list them all as the probe's path alternatives, /api/password first: /api/password, /api/passwords, /api/strongpassword, /api/pass, /api/password/strength, /api/password/check, /api/passwords/password, /api/users/checkpassword, /api/user/passwordstrength, /api/user/passwordcheck, /api/users/password, /passward/check_strengh"
     - "The strength check is a POST whose body is the password as a JSON string"
     - "The strength check may return a bare number or an object with a score field"
     - "A score from 0 to 4 is valid (the Zxcvbn library students use scores 0-4, not 1-4)"

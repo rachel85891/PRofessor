@@ -312,6 +312,26 @@ def test_startup_crash_with_an_unresolved_path_is_not_evaluated() -> None:
     assert reason_of(outcome) is NotEvaluatedReason.ENVIRONMENT_ISSUE
 
 
+def test_startup_crash_with_an_unreachable_database_is_not_evaluated() -> None:
+    execution = startup_crash(STARTUP_LOG).model_copy(
+        update={"unreachable_databases": ("SQL Server",)}
+    )
+
+    outcome = evaluate_build(check_input(BUILD_REQUIREMENT, execution))
+
+    assert outcome is NotEvaluatedReason.DATABASE_UNAVAILABLE
+
+
+def test_an_unadapted_path_comes_before_an_unreachable_database_at_startup() -> None:
+    execution = with_paths(startup_crash(STARTUP_LOG), UNRESOLVED).model_copy(
+        update={"unreachable_databases": ("SQL Server",)}
+    )
+
+    outcome = evaluate_build(check_input(BUILD_REQUIREMENT, execution))
+
+    assert reason_of(outcome) is NotEvaluatedReason.ENVIRONMENT_ISSUE
+
+
 def test_startup_crash_with_every_path_rewritten_is_a_finding() -> None:
     execution = with_paths(startup_crash(STARTUP_LOG), REWRITTEN)
 
@@ -811,6 +831,58 @@ def test_a_server_error_with_a_windows_path_in_the_log_is_not_evaluated() -> Non
     outcome = evaluate_http(check_input(HTTP_REQUIREMENT, execution))
 
     assert outcome is NotEvaluatedReason.WINDOWS_PATH
+
+
+SQL_SERVER = ("SQL Server",)
+
+
+def test_a_server_error_with_an_unreachable_database_in_the_log_is_not_evaluated() -> None:
+    execution = run_ok(result(GET_MISSING, 500)).model_copy(
+        update={"unreachable_databases": SQL_SERVER}
+    )
+
+    outcome = evaluate_http(check_input(HTTP_REQUIREMENT, execution))
+
+    assert outcome is NotEvaluatedReason.DATABASE_UNAVAILABLE
+
+
+def test_a_server_error_without_a_database_failure_in_the_log_is_a_finding() -> None:
+    outcome = evaluate_http(check_input(HTTP_REQUIREMENT, run_ok(result(GET_MISSING, 500))))
+
+    assert isinstance(outcome, tuple) and len(outcome) == 1
+
+
+def test_a_client_error_next_to_an_unreachable_database_is_a_finding() -> None:
+    execution = run_ok(result(GET_MISSING, 400)).model_copy(
+        update={"unreachable_databases": SQL_SERVER}
+    )
+
+    outcome = evaluate_http(check_input(HTTP_REQUIREMENT, execution))
+
+    assert isinstance(outcome, tuple) and len(outcome) == 1
+
+
+def test_a_windows_path_comes_before_an_unreachable_database() -> None:
+    execution = run_ok(result(GET_MISSING, 500)).model_copy(
+        update={
+            "windows_paths": ("/app/..\\data\\users.txt",),
+            "unreachable_databases": SQL_SERVER,
+        }
+    )
+
+    outcome = evaluate_http(check_input(HTTP_REQUIREMENT, execution))
+
+    assert outcome is NotEvaluatedReason.WINDOWS_PATH
+
+
+def test_an_app_that_did_not_start_with_an_unreachable_database_is_not_evaluated() -> None:
+    execution = failure(FailureKind.STARTUP_FAILED).model_copy(
+        update={"unreachable_databases": SQL_SERVER}
+    )
+
+    outcome = evaluate_http(check_input(HTTP_REQUIREMENT, execution))
+
+    assert outcome is NotEvaluatedReason.DATABASE_UNAVAILABLE
 
 
 def reason_of(

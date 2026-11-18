@@ -1178,6 +1178,33 @@ def test_the_run_log_s_windows_paths_are_kept_with_the_result(repo: Path, tmp_pa
     assert result.windows_paths == ("/data/project/..\\data\\users.txt",)
 
 
+DATABASE_LOG = (
+    "      Microsoft.Data.SqlClient.SqlException (0x80131904): A network-related or "
+    "instance-specific error occurred while establishing a connection to SQL Server.\n"
+)
+
+
+def test_the_run_log_s_unreachable_databases_are_kept_with_the_result(
+    repo: Path, tmp_path: Path
+) -> None:
+    engine = FakeEngine(logs_by_kind={"app": DATABASE_LOG})
+
+    result = runner(engine).execute(request(repo, tmp_path))
+
+    assert result.unreachable_databases == ("SQL Server",)
+
+
+def test_an_app_that_did_not_start_keeps_its_unreachable_databases(
+    repo: Path, tmp_path: Path
+) -> None:
+    engine = FakeEngine(app="crash", logs_by_kind={"app": DATABASE_LOG})
+
+    result = runner(engine).execute(request(repo, tmp_path))
+
+    assert result.failure_kind is FailureKind.STARTUP_FAILED
+    assert result.unreachable_databases == ("SQL Server",)
+
+
 def test_a_reference_in_other_case_is_rewritten_in_both_copies_only(tmp_path: Path) -> None:
     repo = tmp_path / "repo"
     (repo / "Api").mkdir(parents=True)

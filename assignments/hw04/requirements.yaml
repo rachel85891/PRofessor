@@ -40,7 +40,8 @@ requirements:
     - /api/user/passwordstrength
     - /api/user/passwordcheck
     - /api/users/password
-    - /password/check_strengh
+    # Developer decision 2026-11-18 (HW04 pilot): the route as the student's code spells it.
+    - /passward/check_strengh
     expect_values:
     - '0'
     body: '"123456"'
@@ -58,7 +59,7 @@ requirements:
     - /api/user/passwordstrength
     - /api/user/passwordcheck
     - /api/users/password
-    - /password/check_strengh
+    - /passward/check_strengh
     expect_values:
     - '2'
     body: '"Probe9!"'
@@ -76,7 +77,7 @@ requirements:
     - /api/user/passwordstrength
     - /api/user/passwordcheck
     - /api/users/password
-    - /password/check_strengh
+    - /passward/check_strengh
     expect_values:
     - '3'
     body: '"Probe9!Alpha"'
@@ -122,6 +123,9 @@ requirements:
     - /api/user/signin
     body: '{"userName|email|name":"weak2.user@example.com","password":"Probe9!"}'
     expected_status: 400
+  # Developer decision 2026-11-18 (HW04 pilot): a broken registration is reported once, by hw01-create.
+  depends_on:
+  - hw01-create
   origin:
     source: developer
     quote: edited by hand before approval

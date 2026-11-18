@@ -214,7 +214,12 @@ def test_hw04_is_approved_for_every_repo_and_builds_on_hw01_create() -> None:
     assert [item["status"] for item in raw["requirements"]] == ["approved"] * len(requirements)
     assert all(r.status is ItemStatus.APPROVED for r in hw04.requirements)
     assert hw04.applies_when is None and hw04.skip_when is None
-    for requirement_id in ("hw04-register-strong", "hw04-update-weak", "hw04-update-strong"):
+    for requirement_id in (
+        "hw04-register-weak",
+        "hw04-register-strong",
+        "hw04-update-weak",
+        "hw04-update-strong",
+    ):
         assert "hw01-create" in requirements[requirement_id].depends_on
     strength = requirements["hw04-strength-score"].http_probes
     assert strength and all(p.path == "/api/password" for p in strength)

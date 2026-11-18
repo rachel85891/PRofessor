@@ -58,6 +58,7 @@ from hw_checker.ports import (
     TextTemplates,
 )
 from hw_checker.ports.llm import TokenUsage
+from hw_checker.services.dependencies import hold_back_dependents
 from hw_checker.services.deterministic_checks import DETERMINISTIC_KINDS, DeterministicCheckService
 from hw_checker.services.execution import ExecutionService
 from hw_checker.services.fix_edits import EditRules, apply_edits, fallback_edit
@@ -487,7 +488,8 @@ class FixService:
         compare with the checked commit's `execution` and `results`.
 
         It passes when the build is not worse, no requirement that passed now fails, and
-        every requirement a `fix` claims passes. A worse build or a newly failing
+        every requirement a `fix` claims passes. The rechecked results hold back dependents
+        across the assignments, as a round does. A worse build or a newly failing
         requirement blames every `fix`; an unmet claim blames its own fix, unless a
         requirement it `depends_on` still fails: then it is kept in `blocked`. Nothing is
         run when nothing was applied.
@@ -502,7 +504,9 @@ class FixService:
         copy = workspace.working_copy
         label = f"{repo.repo_id}{FIX_LABEL}{attempt}"
         rechecked = self._execution.execute(run_id, label, copy, assignments)
-        after = tuple(self._checks.evaluate(a, copy, rechecked) for a in assignments)
+        after = hold_back_dependents(
+            assignments, [self._checks.evaluate(a, copy, rechecked) for a in assignments]
+        )
         passed_after = _passing(assignments, after)
         problems: list[str] = []
         if _built(execution) and not _built(rechecked):

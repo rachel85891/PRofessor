@@ -40,7 +40,8 @@ UNJUDGEABLE_WHEN_NOT_SUCCESS = frozenset({ResponseShape.NOT_JSON, ResponseShape.
 ERROR_STATUS_MIN = 400
 """A failed request with a status from here on (4xx, 5xx) keeps its response as evidence."""
 SERVER_ERROR_MIN = 500
-"""A 5xx answer: with a Windows path in the run log, it may be the container's fault."""
+"""A 5xx answer: with a Windows path or an unreachable database in the run log, it may be
+the container's fault."""
 
 
 @dataclass(frozen=True)
@@ -69,7 +70,9 @@ def evaluate_http(
     A request that failed with a 5xx while the run log names a path written with Windows
     folder separators is not evaluated (`windows_path`): it likely works on Windows, so it is
     not held against the student; neither is a probe left unsent because it needed a value
-    from such a request.
+    from such a request. The same holds, with `database_unavailable`, while the run log
+    shows the app could not connect to its database (likely a server on the student's own
+    computer), also when the app did not start.
     A failing probe whose body did not fit the student's model (a field matched no property
     or could not be converted) is not evaluated either (`body_mismatch`): the request, not
     the student's code, may be what failed. A probe that was not sent because an earlier
@@ -91,6 +94,8 @@ def evaluate_http(
     if execution.run_status is not StepStatus.SUCCEEDED:
         if execution.has_unresolved_paths:
             return run_failed(execution)
+        if execution.unreachable_databases:
+            return NotEvaluatedReason.DATABASE_UNAVAILABLE
         return NotEvaluatedReason.RUN_NOT_HEALTHY
     results = [
         result
@@ -103,8 +108,10 @@ def evaluate_http(
     if any(result.route_resolution is RouteResolution.ROUTE_NOT_FOUND for result in results):
         return NotEvaluatedReason.ROUTE_NOT_FOUND
     if any(result.route_resolution is RouteResolution.DEPENDENCY_MISSING for result in results):
-        if _needs_a_windows_path_failure(execution, results):
+        if execution.windows_paths and _needs_a_server_error(execution, results):
             return NotEvaluatedReason.WINDOWS_PATH
+        if execution.unreachable_databases and _needs_a_server_error(execution, results):
+            return NotEvaluatedReason.DATABASE_UNAVAILABLE
         return NotEvaluatedReason.DEPENDENCY_FAILED
     failures = [(result, failure) for result in results if (failure := _failure(result))]
     if not failures:
@@ -113,8 +120,11 @@ def evaluate_http(
         return NotEvaluatedReason.BODY_MISMATCH
     if execution.has_unresolved_paths:
         return probe_failed_with_paths(execution)  # a path the run could not adapt
-    if execution.windows_paths and any(_server_error(result) for result, _ in failures):
-        return NotEvaluatedReason.WINDOWS_PATH
+    if any(_server_error(result) for result, _ in failures):
+        if execution.windows_paths:
+            return NotEvaluatedReason.WINDOWS_PATH
+        if execution.unreachable_databases:
+            return NotEvaluatedReason.DATABASE_UNAVAILABLE
     lines = [failure.line for _, failure in failures]
     probes = Localized(
         he="\n".join(line.he for line in lines), en="\n".join(line.en for line in lines)
@@ -139,11 +149,9 @@ def _server_error(result: ProbeResult) -> bool:
     return result.actual_status is not None and result.actual_status >= SERVER_ERROR_MIN
 
 
-def _needs_a_windows_path_failure(execution: ExecutionResult, results: list[ProbeResult]) -> bool:
+def _needs_a_server_error(execution: ExecutionResult, results: list[ProbeResult]) -> bool:
     """True when a probe was not sent for want of a value whose capturing probe failed with
-    a 5xx while the run log names a Windows path."""
-    if not execution.windows_paths:
-        return False
+    a 5xx."""
     needed = {
         name
         for result in results

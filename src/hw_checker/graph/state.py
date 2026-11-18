@@ -25,6 +25,17 @@ def merge(left: dict[str, str], right: dict[str, str]) -> dict[str, str]:
     return {**left, **right}
 
 
+def replace_results(
+    left: list[AssignmentResult], right: list[AssignmentResult]
+) -> list[AssignmentResult]:
+    """Reducer for assignment results: a result replaces the one of its assignment, in its
+    place, and one of a new assignment is added at the end. The parallel assignment nodes
+    each add their own; holding back dependents then replaces them."""
+    replaced = {result.assignment_id: result for result in right}
+    kept = [replaced.pop(result.assignment_id, result) for result in left]
+    return kept + list(replaced.values())
+
+
 class AssignmentInput(TypedDict):
     """What an assignment subgraph reads from its repo."""
 
@@ -38,7 +49,7 @@ class AssignmentInput(TypedDict):
 class AssignmentOutput(TypedDict):
     """What an assignment subgraph adds to its repo."""
 
-    assignment_results: Annotated[list[AssignmentResult], operator.add]
+    assignment_results: Annotated[list[AssignmentResult], replace_results]
     errors: Annotated[list[str], operator.add]
 
 
@@ -78,7 +89,7 @@ class RepoState(RepoInput, RepoOutput):
 
     fetched: NotRequired[FetchedRepo]
     execution: NotRequired[ExecutionResult]
-    assignment_results: Annotated[list[AssignmentResult], operator.add]
+    assignment_results: Annotated[list[AssignmentResult], replace_results]
     errors: Annotated[list[str], operator.add]
 
 

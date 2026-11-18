@@ -25,6 +25,7 @@ from hw_checker.reporting.wording import (
     NOT_EVALUATED_REASONS,
     TEMPLATE_WORDED_REASONS,
     describe_checked_commit,
+    describe_held_back,
 )
 from hw_checker.reporting.writer import (
     COUNTS_COLUMNS,
@@ -301,6 +302,16 @@ def test_every_not_evaluated_reason_has_a_sentence(reason: NotEvaluatedReason) -
     assert sentence[0].isupper() and sentence.endswith(".")
 
 
+def test_an_unreachable_database_is_worded_as_the_container_not_the_student() -> None:
+    sentence = NOT_EVALUATED_REASONS[NotEvaluatedReason.DATABASE_UNAVAILABLE]
+
+    assert sentence == (
+        "The app could not reach its database in the checker's container (it likely points "
+        "to a database server on the student's own computer), so this could not be checked "
+        "while it was running."
+    )
+
+
 def test_unreadable_evidence_is_worded_as_the_code_not_the_machine() -> None:
     sentence = NOT_EVALUATED_REASONS[NotEvaluatedReason.EVIDENCE_UNAVAILABLE]
 
@@ -481,7 +492,38 @@ def test_the_repo_report_names_the_failed_requirement_a_check_needs(tmp_path: Pa
     )
 
     text = path.read_text(encoding="utf-8")
-    assert "It needs `hw02-layer-projects`, which failed, so it was not checked." in text
+    assert "Not checked, because `hw02-layer-projects` failed first." in text
+
+
+def test_the_repo_report_says_when_the_requirement_a_check_needs_was_not_checked(
+    tmp_path: Path,
+) -> None:
+    report = data.full_report()
+    [first, *rest] = report.repo_run.assignment_results
+    needed = NotEvaluated(requirement_id="hw01-r8", reason=NotEvaluatedReason.ROUTE_NOT_FOUND)
+    held_back = NotEvaluated(
+        requirement_id="hw01-r9",
+        reason=NotEvaluatedReason.DEPENDENCY_FAILED,
+        detail="`hw01-r8`",
+    )
+    result = first.model_copy(update={"not_evaluated": (*first.not_evaluated, needed, held_back)})
+    repo_run = report.repo_run.model_copy(update={"assignment_results": (result, *rest)})
+
+    path = MarkdownReportWriter(tmp_path).write_repo_report(
+        report.model_copy(update={"repo_run": repo_run})
+    )
+
+    assert "Not checked, because `hw01-r8` was not checked." in path.read_text(encoding="utf-8")
+
+
+def test_a_held_back_requirement_names_what_failed_and_what_was_not_checked() -> None:
+    assert describe_held_back("`a`, `b`, `c`", {"c"}) == (
+        "Not checked, because `a` and `b` failed first and `c` was not checked."
+    )
+    assert describe_held_back("`a`, `b`", {"a", "b"}) == (
+        "Not checked, because `a` and `b` were not checked."
+    )
+    assert describe_held_back("", set()) == ""
 
 
 def _skipped(assignment_id: str, reason: NotEvaluatedReason, detail: str) -> AssignmentResult:

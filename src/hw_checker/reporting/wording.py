@@ -1,5 +1,8 @@
 """Plain-English wording for the reviewer's reports, kept in one place."""
 
+import re
+from collections.abc import Collection
+
 from hw_checker.domain import (
     CheckedCommit,
     CommitChoice,
@@ -38,9 +41,18 @@ NOT_EVALUATED_REASONS: dict[NotEvaluatedReason, str] = {
         "The request needed a value (such as a new user's id) that an earlier request did "
         "not return, so it was not sent."
     ),
+    NotEvaluatedReason.DATABASE_UNAVAILABLE: (
+        "The app could not reach its database in the checker's container (it likely points "
+        "to a database server on the student's own computer), so this could not be checked "
+        "while it was running."
+    ),
 }
 """One sentence per reason a requirement was not checked; the reasons in
-`TEMPLATE_WORDED_REASONS` are worded in the report template instead."""
+`TEMPLATE_WORDED_REASONS` are worded in the report template instead. A `dependency_failed`
+whose detail names the requirements it needs is worded by `describe_held_back` instead."""
+
+NAMED_REQUIREMENT = re.compile(r"`([^`]+)`")
+"""A requirement id as a not-evaluated detail names it."""
 
 TEMPLATE_WORDED_REASONS = frozenset(
     {
@@ -94,3 +106,28 @@ def describe_checked_commit(checked: CheckedCommit) -> str:
                 "the next task, so the commit before it cannot be found. Check by hand which "
                 "task this code is for."
             )
+
+
+def describe_held_back(detail: str, not_checked: Collection[str]) -> str:
+    """The sentence for a requirement held back because the requirements its `detail` names
+    did not pass: those in `not_checked` were not checked, the others failed. Empty when the
+    detail names none."""
+    needed = NAMED_REQUIREMENT.findall(detail)
+    if not needed:
+        return ""
+    failed = [item for item in needed if item not in not_checked]
+    unchecked = [item for item in needed if item in not_checked]
+    parts = []
+    if failed:
+        parts.append(f"{_names(failed)} failed first")
+    if unchecked:
+        verb = "was" if len(unchecked) == 1 else "were"
+        parts.append(f"{_names(unchecked)} {verb} not checked")
+    return f"Not checked, because {' and '.join(parts)}."
+
+
+def _names(items: list[str]) -> str:
+    named = [f"`{item}`" for item in items]
+    if len(named) == 1:
+        return named[0]
+    return f"{', '.join(named[:-1])} and {named[-1]}"

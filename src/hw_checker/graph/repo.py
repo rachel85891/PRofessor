@@ -10,6 +10,7 @@ from hw_checker.graph.fix import build_fix_graph
 from hw_checker.graph.guard import Update, guarded
 from hw_checker.graph.services import GraphServices
 from hw_checker.graph.state import RepoInput, RepoOutput, RepoState
+from hw_checker.services.dependencies import hold_back_dependents
 
 RepoGraph = CompiledStateGraph[RepoState, None, RepoInput, RepoOutput]
 
@@ -19,12 +20,15 @@ def build_repo_graph(
     services: GraphServices,
     cache: BaseCache[object] | None = None,
 ) -> RepoGraph:
-    """Build `fetch_repo → build_and_run → assignment_<id> (in parallel) → record_repo →
-    write_report`, then `fix_repo → update_report` when the fixer is on.
+    """Build `fetch_repo → build_and_run → assignment_<id> (in parallel) →
+    hold_back_dependents → record_repo → write_report`, then `fix_repo → update_report`
+    when the fixer is on.
 
     `assignments` is the whole catalog, so every assignment gets a node (ADR 0019); the
     ones outside a round's selection return no result. A failed fetch goes straight to
-    `record_repo`; a failed build still runs the assignment nodes. The fixer runs only on
+    `record_repo`; a failed build still runs the assignment nodes. `hold_back_dependents`
+    replaces the results of the requirements whose `depends_on` names one that did not pass,
+    in any assignment, so what is stored, reported and fixed reports it once. The fixer runs only on
     a fetched repo with assignment results (ADR 0021); `cache` keeps its LLM replies.
     """
     by_id = {assignment.id: assignment for assignment in assignments}
@@ -53,6 +57,18 @@ def build_repo_graph(
                     state["repo"].repo_id,
                     state["fetched"].working_copy,
                     selected(state),
+                )
+            },
+        )
+
+    def hold_back(state: RepoState) -> Update:
+        return guarded(
+            "hold_back_dependents",
+            state["run_id"],
+            state["repo"].repo_id,
+            lambda: {
+                "assignment_results": list(
+                    hold_back_dependents(selected(state), state.get("assignment_results", []))
                 )
             },
         )
@@ -124,6 +140,7 @@ def build_repo_graph(
     builder = StateGraph(RepoState, input_schema=RepoInput, output_schema=RepoOutput)
     builder.add_node("fetch_repo", fetch_repo)
     builder.add_node("build_and_run", build_and_run)
+    builder.add_node("hold_back_dependents", hold_back)
     builder.add_node("record_repo", record_repo)
     builder.add_node("write_report", write_report)
     builder.add_edge(START, "fetch_repo")
@@ -132,7 +149,8 @@ def build_repo_graph(
     for assignment, node_name in zip(assignments, node_names, strict=True):
         builder.add_node(node_name, build_assignment_graph(assignment, services))
         builder.add_edge("build_and_run", node_name)
-    builder.add_edge(node_names or "build_and_run", "record_repo")
+    builder.add_edge(node_names or "build_and_run", "hold_back_dependents")
+    builder.add_edge("hold_back_dependents", "record_repo")
     builder.add_edge("record_repo", "write_report")
     if services.fixing is None:
         builder.add_edge("write_report", END)

@@ -3,11 +3,13 @@
 from pathlib import Path
 
 from hw_checker.domain import (
+    Assignment,
     AssignmentResult,
     EditApplication,
     EditKind,
     ExecutionResult,
     FailureKind,
+    RequirementKind,
     Severity,
     StepStatus,
     VerifyResult,
@@ -267,3 +269,40 @@ def test_a_fix_that_clears_only_a_minor_requirement_is_small(tmp_path: Path) -> 
     assert title_after_verify(FixerSetup(tmp_path), results, minor_fix) == (
         "HW1 review: small fixes and questions"
     )
+
+
+LATER = Assignment(
+    id="hw04",
+    order=4,
+    title="Passwords",
+    requirements=(
+        builders.requirement(
+            id="hw04-register",
+            kind=RequirementKind.STRUCTURE,
+            check="file_exists",
+            params={"glob": "*.cs"},
+            depends_on=("hw01-update",),
+        ),
+    ),
+)
+REGISTER_FINDING = builders.finding(
+    id="f-3", requirement_id="hw04-register", assignment_id="hw04", message_en="No register."
+)
+
+
+def test_the_recheck_holds_back_a_dependent_in_a_later_assignment(tmp_path: Path) -> None:
+    setup = FixerSetup(tmp_path, outcomes={"hw01-update": (FINDING,)})
+    workspace = setup.service.prepare(RUN_ID, (ASSIGNMENT,), (), REPO, setup.fetched)
+    application = setup.service.apply(workspace, [NAMING_NOTE], ASSIGNMENT, (ASSIGNMENT,))
+    before = (
+        AssignmentResult(assignment_id="hw01", findings=(FINDING,)),
+        AssignmentResult(assignment_id="hw04", findings=(REGISTER_FINDING,)),
+    )
+
+    result = setup.service.verify(
+        RUN_ID, REPO, workspace, (ASSIGNMENT, LATER), SUCCEEDED, before, application, 1
+    )
+
+    # `hw04-register`'s own check passes now, but `hw01-update` still fails, so it is not
+    # checked: not cleared, as a round would not count it as passing either.
+    assert result.cleared == ()

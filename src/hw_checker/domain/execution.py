@@ -26,6 +26,9 @@ MAX_CAPTURED_CHARS = 500
 MAX_PATH_TEXT_CHARS = 1000
 """Upper bound for a path text recorded from student code."""
 
+MAX_DATABASE_TEXT_CHARS = 200
+"""Upper bound for what a run log says the app could not connect to (a database's name)."""
+
 MAX_ROUTE_TEXT_CHARS = 500
 """Upper bound for a route template or a routing description recorded from student code."""
 
@@ -484,6 +487,13 @@ class ExecutionResult(DomainModel):
     """Paths with a Windows folder separator that the app's run log names in a file or
     directory exception; a 5xx answer may then be the Linux container's fault."""
     """Names declared in the student's code, for the naming checks; None when not read."""
+    unreachable_databases: tuple[
+        Annotated[str, Field(max_length=MAX_DATABASE_TEXT_CHARS)], ...
+    ] = ()
+    """What the app's run log says it could not connect to (`SQL Server`, a database's
+    name), whether the app started or not; a 5xx answer may then be the container's fault
+    (the database server is likely on the student's own computer). Never a connection
+    string."""
 
     @property
     def steps(self) -> tuple[StepStatus, StepStatus, StepStatus]:

@@ -216,6 +216,7 @@ def test_not_evaluated_reasons() -> None:
         "body_mismatch",
         "dependency_failed",
         "windows_path",
+        "database_unavailable",
         "assignment_not_applicable",
         "assignment_condition_unknown",
         "awaiting_reviewer",

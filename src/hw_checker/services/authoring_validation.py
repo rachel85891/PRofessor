@@ -37,6 +37,7 @@ from hw_checker.domain.course import PolicyItem, in_effect
 from hw_checker.domain.errors import HwCheckerError, InvalidAssignmentError
 from hw_checker.ports import AuthoringFiles, CheckCatalog, Clock
 from hw_checker.services.assignments import check_problems
+from hw_checker.services.dependencies import hold_back_dependents
 from hw_checker.services.deterministic_checks import DeterministicCheckService
 from hw_checker.services.execution import ExecutionService
 
@@ -126,6 +127,9 @@ class DraftValidator:
         )
 
     def _dry_run(self, target: Assignment, selected: tuple[Assignment, ...]) -> DryRun:
+        """Check `target` alone on its reference solution. Only `target` is evaluated, so a
+        `depends_on` on another assignment's requirement is not held back here (a round
+        holds it back); one within `target` is."""
         reference = self._files.reference_dir(target.id)
         if reference is None:
             logger.info("No reference solution for %s: the dry run is skipped", target.id)
@@ -133,9 +137,10 @@ class DraftValidator:
         execution = self._execution()
         execution.prepare()
         run_id = new_run_id(self._clock.now())
-        result = self._checks.evaluate(
+        evaluated = self._checks.evaluate(
             target, reference, execution.execute(run_id, REFERENCE_REPO_ID, reference, selected)
         )
+        [result] = hold_back_dependents((target,), [evaluated])
         failures = tuple(
             f"{requirement_id}: {message}"
             for requirement_id, message in _first_messages(result).items()
@@ -157,6 +162,9 @@ class DraftValidator:
     def _preview(
         self, target: Assignment, selected: tuple[Assignment, ...], with_execution: bool
     ) -> Preview:
+        """Check `target` alone on the cloned repos. Only `target` is evaluated, so a
+        `depends_on` on another assignment's requirement is not held back here (a round
+        holds it back); one within `target` is."""
         clones = self._files.clone_dirs()
         if not clones:
             return Preview(status=PreviewStatus.NO_REPOS, with_execution=with_execution)
@@ -169,7 +177,8 @@ class DraftValidator:
         errors = 0
         for clone in clones:
             try:
-                results.append(self._checks.evaluate(previewed, clone, run(clone) if run else None))
+                result = self._checks.evaluate(previewed, clone, run(clone) if run else None)
+                results.extend(hold_back_dependents((previewed,), [result]))
             except HwCheckerError as error:
                 errors += 1
                 logger.warning("A repo could not be previewed (%s)", type(error).__name__)

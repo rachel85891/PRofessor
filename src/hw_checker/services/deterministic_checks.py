@@ -32,6 +32,11 @@ CHECK_FAILED_DETAIL = "the check stopped with an unexpected {error}"
 DETERMINISTIC_KINDS = frozenset(
     {RequirementKind.STRUCTURE, RequirementKind.CUSTOM, RequirementKind.BUILD, RequirementKind.HTTP}
 )
+CONTAINER_REASONS = frozenset(
+    {NotEvaluatedReason.WINDOWS_PATH, NotEvaluatedReason.DATABASE_UNAVAILABLE}
+)
+"""Reasons that blame the container, not the student; a requirement that depends on one
+not evaluated for such a reason follows it."""
 REGISTERED_KINDS = frozenset({RequirementKind.STRUCTURE, RequirementKind.CUSTOM})
 """The kinds that run a registered check; one whose `depends_on` failed is not run."""
 
@@ -98,7 +103,7 @@ class DeterministicCheckService:
                     for requirement in assignment.requirements
                 ),
             )
-        paths = ", ".join(execution.windows_paths) if execution else ""
+        details = _environment_details(execution)
         blocked: set[str] = set()  # failed, or not run because one they need failed
         for requirement in assignment.requirements:
             if requirement.kind not in DETERMINISTIC_KINDS:
@@ -115,7 +120,7 @@ class DeterministicCheckService:
                     NotEvaluated(
                         requirement_id=requirement.id,
                         reason=NotEvaluatedReason.DEPENDENCY_FAILED,
-                        detail=_bounded(", ".join(f"`{item}`" for item in needed)),
+                        detail=bounded(", ".join(f"`{item}`" for item in needed)),
                     )
                 )
                 continue
@@ -127,23 +132,25 @@ class DeterministicCheckService:
                     )
                 )
             elif isinstance(outcome, NotEvaluatedReason):
-                detail = paths if outcome is NotEvaluatedReason.WINDOWS_PATH else ""
                 not_evaluated.append(
-                    NotEvaluated(requirement_id=requirement.id, reason=outcome, detail=detail)
+                    NotEvaluated(
+                        requirement_id=requirement.id,
+                        reason=outcome,
+                        detail=details.get(outcome, ""),
+                    )
                 )
             else:
                 findings.extend(outcome)
                 if outcome:
                     blocked.add(requirement.id)
-        return _windows_path_dependents(
-            assignment,
-            AssignmentResult(
-                assignment_id=assignment.id,
-                findings=tuple(findings),
-                not_evaluated=tuple(not_evaluated),
-            ),
-            paths,
+        result = AssignmentResult(
+            assignment_id=assignment.id,
+            findings=tuple(findings),
+            not_evaluated=tuple(not_evaluated),
         )
+        for reason, detail in details.items():
+            result = _environment_dependents(assignment, result, reason, detail)
+        return result
 
     def _not_applicable(
         self, assignment: Assignment, inputs: "_Inputs"
@@ -160,12 +167,12 @@ class DeterministicCheckService:
             reason = outcome.reason.value if outcome.reason else "unknown"
             detail = f"{name} could not be evaluated ({reason}); check the repo by hand"
             logger.info("Assignment %s: its %s could not be evaluated", assignment.id, name)
-            return NotEvaluatedReason.ASSIGNMENT_CONDITION_UNKNOWN, _bounded(detail)
+            return NotEvaluatedReason.ASSIGNMENT_CONDITION_UNKNOWN, bounded(detail)
         if condition.applies(outcome.holds):
             return None
         said = outcome.message or ("holds" if outcome.holds else "does not hold")
         logger.info("Assignment %s does not apply to the repo (%s)", assignment.id, name)
-        return NotEvaluatedReason.ASSIGNMENT_NOT_APPLICABLE, _bounded(f"{name}: {said}")
+        return NotEvaluatedReason.ASSIGNMENT_NOT_APPLICABLE, bounded(f"{name}: {said}")
 
     def _condition(self, requirement: Requirement, check_input: CheckInput) -> ConditionOutcome:
         try:
@@ -261,24 +268,33 @@ class _Inputs:
         return self._architecture[0]
 
 
-def _bounded(detail: str) -> str:
+def bounded(detail: str) -> str:
     """`detail`, cut to what a not-evaluated entry holds."""
     if len(detail) <= MAX_NOT_EVALUATED_DETAIL_CHARS:
         return detail
     return detail[: MAX_NOT_EVALUATED_DETAIL_CHARS - 1] + "…"
 
 
-def _windows_path_dependents(
-    assignment: Assignment, result: AssignmentResult, paths: str
+def _environment_details(execution: ExecutionResult | None) -> dict[NotEvaluatedReason, str]:
+    """The reasons that blame the container rather than the student, each with what its
+    not-evaluated entries name (paths, or what the app could not connect to), in the order
+    their dependents follow them."""
+    windows = execution.windows_paths if execution else ()
+    databases = execution.unreachable_databases if execution else ()
+    return {
+        NotEvaluatedReason.WINDOWS_PATH: bounded(", ".join(windows)),
+        NotEvaluatedReason.DATABASE_UNAVAILABLE: bounded(", ".join(databases)),
+    }
+
+
+def _environment_dependents(
+    assignment: Assignment, result: AssignmentResult, reason: NotEvaluatedReason, detail: str
 ) -> AssignmentResult:
     """A requirement that failed or was not evaluated while it depends (`depends_on`, also
-    through others) on a `windows_path` requirement is `windows_path` too: its failure is
-    likely the same container problem."""
-    reached = {
-        entry.requirement_id
-        for entry in result.not_evaluated
-        if entry.reason is NotEvaluatedReason.WINDOWS_PATH
-    }
+    through others) on a requirement not evaluated for `reason` (`windows_path`,
+    `database_unavailable`) gets `reason` too: its failure is likely the same container
+    problem. One already not evaluated for another of these reasons keeps it."""
+    reached = {entry.requirement_id for entry in result.not_evaluated if entry.reason is reason}
     depends = {
         requirement.id: set(requirement.depends_on) for requirement in assignment.requirements
     }
@@ -292,15 +308,13 @@ def _windows_path_dependents(
     moved = [
         requirement_id
         for requirement_id in dict.fromkeys(failing)
-        if requirement_id in reached and requirement_id not in _windows(result)
+        if requirement_id in reached and requirement_id not in _blamed_on_the_container(result)
     ]
     if not moved:
         return result
     kept = [entry for entry in result.not_evaluated if entry.requirement_id not in moved]
     added = [
-        NotEvaluated(
-            requirement_id=requirement_id, reason=NotEvaluatedReason.WINDOWS_PATH, detail=paths
-        )
+        NotEvaluated(requirement_id=requirement_id, reason=reason, detail=detail)
         for requirement_id in moved
     ]
     return result.model_copy(
@@ -311,9 +325,7 @@ def _windows_path_dependents(
     )
 
 
-def _windows(result: AssignmentResult) -> set[str]:
+def _blamed_on_the_container(result: AssignmentResult) -> set[str]:
     return {
-        entry.requirement_id
-        for entry in result.not_evaluated
-        if entry.reason is NotEvaluatedReason.WINDOWS_PATH
+        entry.requirement_id for entry in result.not_evaluated if entry.reason in CONTAINER_REASONS
     }
