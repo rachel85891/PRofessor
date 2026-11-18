@@ -1,0 +1,4 @@
+# yaml-language-server: $schema=../../course/schemas/review_rules.schema.json
+# Approved on 2026-11-18 through the authoring graph (design §8.3); origins kept.
+rules: []
+examples: []

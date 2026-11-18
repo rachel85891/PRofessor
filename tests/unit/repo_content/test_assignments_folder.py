@@ -4,17 +4,31 @@ import json
 import string
 from collections.abc import Mapping
 
+import yaml
+
 from hw_checker.adapters.assignments_yaml import YamlAssignmentSource
 from hw_checker.checks.deterministic.builtin import builtin_checks
 from hw_checker.checks.registry import CheckRegistry
 from hw_checker.config.settings import REPO_ROOT
-from hw_checker.domain import ExpectedJson, Feedback, RequirementKind, Severity
+from hw_checker.domain import (
+    Assignment,
+    ExpectedJson,
+    Feedback,
+    ItemStatus,
+    RequirementKind,
+    Severity,
+)
 from hw_checker.services.assignments import AssignmentCatalogService
 
 
 def catalog() -> AssignmentCatalogService:
     source = YamlAssignmentSource(REPO_ROOT / "assignments", REPO_ROOT / "course")
     return AssignmentCatalogService(source, CheckRegistry(builtin_checks()))
+
+
+def by_id(*ids: str) -> tuple[Assignment, ...]:
+    assignments = {a.id: a for a in catalog().list_assignments()}
+    return tuple(assignments[assignment_id] for assignment_id in ids)
 
 
 def test_committed_assignments_folder_loads_general_and_hw01() -> None:
@@ -25,6 +39,7 @@ def test_committed_assignments_folder_loads_general_and_hw01() -> None:
         ("hw01", 1),
         ("hw02", 2),
         ("hw03", 3),
+        ("hw04", 4),
     ]
     general, hw01, *_ = assignments
     assert [(r.id, r.severity.value) for r in general.requirements] == [
@@ -151,7 +166,7 @@ def test_the_created_user_id_is_captured_before_it_is_used() -> None:
 
 
 def test_hw02_and_hw03_are_major_notes_only_and_need_the_layer_projects() -> None:
-    _, _, hw02, hw03 = catalog().list_assignments()
+    hw02, hw03 = by_id("hw02", "hw03")
 
     assert hw02.short_name == "HW2" and hw03.short_name == "HW3"
     assert [r.id for r in hw02.requirements] == [
@@ -180,7 +195,7 @@ def test_hw02_and_hw03_are_major_notes_only_and_need_the_layer_projects() -> Non
 
 
 def test_hw02_skips_and_hw03_applies_on_the_same_di_condition_and_roles() -> None:
-    _, _, hw02, hw03 = catalog().list_assignments()
+    hw02, hw03 = by_id("hw02", "hw03")
 
     assert hw02.skip_when is not None and hw03.applies_when is not None
     assert hw02.applies_when is None and hw03.skip_when is None
@@ -188,6 +203,23 @@ def test_hw02_skips_and_hw03_applies_on_the_same_di_condition_and_roles() -> Non
     assert dict(hw02.skip_when.params) == {"min_registrations": 0, "min_interface_constructors": 1}
     roles = [r.params["roles"] for a in (hw02, hw03) for r in a.requirements]
     assert len({json.dumps(_plain(role), sort_keys=True) for role in roles}) == 1
+
+
+def test_hw04_is_approved_for_every_repo_and_builds_on_hw01_create() -> None:
+    (hw04,) = by_id("hw04")
+    path = REPO_ROOT / "assignments" / "hw04" / "requirements.yaml"
+    raw = yaml.safe_load(path.read_text("utf-8"))
+    requirements = {r.id: r for r in hw04.requirements}
+
+    assert [item["status"] for item in raw["requirements"]] == ["approved"] * len(requirements)
+    assert all(r.status is ItemStatus.APPROVED for r in hw04.requirements)
+    assert hw04.applies_when is None and hw04.skip_when is None
+    for requirement_id in ("hw04-register-strong", "hw04-update-weak", "hw04-update-strong"):
+        assert "hw01-create" in requirements[requirement_id].depends_on
+    strength = requirements["hw04-strength-score"].http_probes
+    assert strength and all(p.path == "/api/password" for p in strength)
+    button = requirements["hw04-client-button"]
+    assert (button.severity, button.feedback) == (Severity.MAJOR, Feedback.NOTES_ONLY)
 
 
 def _plain(value: object) -> object:

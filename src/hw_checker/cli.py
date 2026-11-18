@@ -317,7 +317,10 @@ def run_assignment_command(settings: Settings, args: argparse.Namespace, out: Te
 
 def print_authoring(output: dict[str, Any], out: TextIO) -> int:
     """Print how an authoring run stopped: waiting for approval, approved, stopped, or
-    failed after the last attempt, with the report's path."""
+    failed after the last attempt, with the report's path; first, `approve`'s warning
+    that `intake.yaml` changed after the draft."""
+    if output.get("intake_warning"):
+        print(f"Warning: {output['intake_warning']}", file=out)
     interrupts = output.get(INTERRUPT_KEY, ())
     if interrupts:
         prompt = AuthoringPrompt.model_validate(interrupts[0].value)

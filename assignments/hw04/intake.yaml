@@ -1,0 +1,53 @@
+# yaml-language-server: $schema=../../course/schemas/intake.schema.json
+# The intake of hw04: what you give for the new assignment, in your own words.
+# Fill it in, write the task's text in task.md (and optionally put a reference solution in
+# reference/), then run: python -m hw_checker assignment draft hw04
+# The format: assignments/README.md, "Adding an assignment".
+
+# 1. The basics.
+id: hw04
+order: 4
+title: Password strength validation in the client, registration and update
+# short_name is derived from the id; give it only to confirm it.
+# short_name: HW1
+# The commit to check: latest, or the last one before the next task starts:
+#   check_commit:
+#     ends_when: {check: project_count, params: {min: 2}}
+check_commit: latest
+
+# 2. What has been taught so far, and what has not been taught yet.
+taught: [controllers, http endpoints, text-file storage, client pages with fetch, layer projects, dependency injection]
+not_yet_taught: []
+
+# 3. The lecturer's decisions.
+lecturer_decisions:
+  accepted_alternatives:
+    - "The strength check may be at any route the student's code declares. Students used these (planner survey 2026-11-16), so list them all as the probe's path alternatives, /api/password first: /api/password, /api/passwords, /api/strongpassword, /api/pass, /api/password/strength, /api/password/check, /api/passwords/password, /api/users/checkpassword, /api/user/passwordstrength, /api/user/passwordcheck, /api/users/password, /password/check_strengh"
+    - "The strength check is a POST whose body is the password as a JSON string"
+    - "The strength check may return a bare number or an object with a score field"
+    - "A score from 0 to 4 is valid (the Zxcvbn library students use scores 0-4, not 1-4)"
+    - "Any 400 body is accepted for a weak password; an empty BadRequest() gets a note, not a failure"
+  not_to_mention: []
+  required_statuses:
+    - "A password scoring below 3 is rejected with 400; a password scoring 3 is accepted"
+    - "Test passwords (developer-approved 2026-11-16, scores measured with zxcvbn-core 7.0.92): 123456 scores 0, Probe9! scores 2, Probe9!Alpha scores 3"
+
+# 4. The task's requirements, by heading. Each item is a short text in your words, with an
+#    optional severity (critical, major or minor):
+#      - text: "GET by id returns 404 for an unknown user"
+#        severity: major
+requirements:
+  return_values:      # return values and statuses: checked with HTTP requests
+    - {text: "The password strength check returns the password's score: 0 for 123456, 2 for Probe9!, 3 for Probe9!Alpha", severity: major}
+    - {text: "POST /api/users with a password scoring below 3 (123456, and Probe9!) returns 400", severity: major}
+    - {text: "POST /api/users with Probe9!Alpha (score 3) still creates the user. It depends on hw01-create, so a broken registration is reported once, by hw01-create (developer decision 2026-11-17)", severity: critical}
+    - {text: "PUT /api/users/{id} with a password scoring below 3 (123456, and Probe9!) returns 400", severity: major}
+    - {text: "PUT /api/users/{id} with Probe9!Alpha (score 3) still updates the user", severity: major}
+  clean_code: []      # clean code: names, and code read by the code reviewer
+  architecture:       # architecture: projects, layers, interfaces, registrations
+    # "The password service is behind an interface" is not listed: hw03-service-interfaces
+    # already checks every service class in an HW04 round (planner, 2026-11-16), and a
+    # missing interface must not be reported twice (developer decision 2026-11-17).
+    - {text: "Both the users controller and the password controller take the password service's interface in their constructor and call it", severity: major}
+  general:            # anything else
+    - {text: "The client page has a button that checks the password's strength and shows the returned score", severity: major}  # notes only (developer decision 2026-11-18)
