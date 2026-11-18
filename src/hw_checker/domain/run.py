@@ -55,8 +55,9 @@ class NotEvaluatedReason(StrEnum):
     """A failing probe's body had fields that do not fit the student's model."""
     DEPENDENCY_FAILED = "dependency_failed"
     """A probe needed a value an earlier probe failed to capture, so it was not sent; or a
-    structure or custom requirement needs (`depends_on`, or a layer role it reads) one that
-    failed, so it was not run (the detail names it, when known)."""
+    requirement needs (`depends_on`, in any assignment, or a layer role it reads) one that
+    failed or was not evaluated, so it was not run or not judged (the detail names it, when
+    known)."""
     WINDOWS_PATH = "windows_path"
     """A request failed with a 5xx while the app could not open a path written with
     Windows folder separators, which likely works on Windows but not in the Linux

@@ -120,7 +120,7 @@ class DeterministicCheckService:
                     NotEvaluated(
                         requirement_id=requirement.id,
                         reason=NotEvaluatedReason.DEPENDENCY_FAILED,
-                        detail=_bounded(", ".join(f"`{item}`" for item in needed)),
+                        detail=bounded(", ".join(f"`{item}`" for item in needed)),
                     )
                 )
                 continue
@@ -167,12 +167,12 @@ class DeterministicCheckService:
             reason = outcome.reason.value if outcome.reason else "unknown"
             detail = f"{name} could not be evaluated ({reason}); check the repo by hand"
             logger.info("Assignment %s: its %s could not be evaluated", assignment.id, name)
-            return NotEvaluatedReason.ASSIGNMENT_CONDITION_UNKNOWN, _bounded(detail)
+            return NotEvaluatedReason.ASSIGNMENT_CONDITION_UNKNOWN, bounded(detail)
         if condition.applies(outcome.holds):
             return None
         said = outcome.message or ("holds" if outcome.holds else "does not hold")
         logger.info("Assignment %s does not apply to the repo (%s)", assignment.id, name)
-        return NotEvaluatedReason.ASSIGNMENT_NOT_APPLICABLE, _bounded(f"{name}: {said}")
+        return NotEvaluatedReason.ASSIGNMENT_NOT_APPLICABLE, bounded(f"{name}: {said}")
 
     def _condition(self, requirement: Requirement, check_input: CheckInput) -> ConditionOutcome:
         try:
@@ -268,7 +268,7 @@ class _Inputs:
         return self._architecture[0]
 
 
-def _bounded(detail: str) -> str:
+def bounded(detail: str) -> str:
     """`detail`, cut to what a not-evaluated entry holds."""
     if len(detail) <= MAX_NOT_EVALUATED_DETAIL_CHARS:
         return detail
@@ -282,8 +282,8 @@ def _environment_details(execution: ExecutionResult | None) -> dict[NotEvaluated
     windows = execution.windows_paths if execution else ()
     databases = execution.unreachable_databases if execution else ()
     return {
-        NotEvaluatedReason.WINDOWS_PATH: _bounded(", ".join(windows)),
-        NotEvaluatedReason.DATABASE_UNAVAILABLE: _bounded(", ".join(databases)),
+        NotEvaluatedReason.WINDOWS_PATH: bounded(", ".join(windows)),
+        NotEvaluatedReason.DATABASE_UNAVAILABLE: bounded(", ".join(databases)),
     }
 
 

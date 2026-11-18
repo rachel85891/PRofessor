@@ -15,6 +15,8 @@ from jinja2 import Environment, FileSystemLoader, StrictUndefined
 from hw_checker.domain import (
     AssignmentResult,
     Finding,
+    NotEvaluated,
+    NotEvaluatedReason,
     RepoRunResult,
     RepoSummary,
     RepoTarget,
@@ -27,6 +29,7 @@ from hw_checker.reporting.wording import (
     NOT_EVALUATED_REASONS,
     SEVERITY_ORDER,
     describe_checked_commit,
+    describe_held_back,
 )
 
 TEMPLATES_DIR = Path(__file__).parent / "templates"
@@ -236,12 +239,15 @@ def _assignment_line(result: AssignmentResult) -> _AssignmentLine:
 
 def _not_evaluated(report: RepoReport) -> list[_NotEvaluatedItem]:
     """The requirements not evaluated, except those of an assignment that was not checked
-    at all (the assignments' list says why)."""
+    at all (the assignments' list says why). One held back for the requirements it needs
+    names them, and says whether each failed or was not checked."""
+    results = report.repo_run.assignment_results
+    not_checked = {entry.requirement_id for result in results for entry in result.not_evaluated}
     return [
         _NotEvaluatedItem(
             entry.requirement_id,
             _title(report, entry.requirement_id),
-            NOT_EVALUATED_REASONS.get(entry.reason, ""),
+            _reason(entry, not_checked),
             entry.reason.value,
             entry.detail,
         )
@@ -249,6 +255,15 @@ def _not_evaluated(report: RepoReport) -> list[_NotEvaluatedItem]:
         for entry in result.not_evaluated
         if entry.reason not in CONDITION_REASONS
     ]
+
+
+def _reason(entry: NotEvaluated, not_checked: set[str]) -> str:
+    """The sentence for why `entry` was not checked."""
+    if entry.reason is NotEvaluatedReason.DEPENDENCY_FAILED:
+        held_back = describe_held_back(entry.detail, not_checked)
+        if held_back:
+            return held_back
+    return NOT_EVALUATED_REASONS.get(entry.reason, "")
 
 
 def _counts_csv(rows: list[_RoundRow]) -> str:

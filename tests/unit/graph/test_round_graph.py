@@ -9,7 +9,10 @@ import pytest
 from hw_checker.domain import (
     ExecutionResult,
     FailureKind,
+    Finding,
     FindingBrief,
+    NotEvaluated,
+    NotEvaluatedReason,
     RepoRunResult,
     RepoRunStatus,
     RunStatus,
@@ -330,4 +333,46 @@ def test_summary_lists_each_repos_findings(tmp_path: Path) -> None:
             message="GET /api/hw01: expected 200, got 500.",
         ),
     )
+    assert line.critical == 1
+
+
+def test_a_requirement_whose_dependency_failed_in_an_earlier_assignment_is_counted_once(
+    tmp_path: Path,
+) -> None:
+    def failed(requirement_id: str, assignment_id: str) -> Finding:
+        return builders.finding(
+            id=f"{requirement_id}-f",
+            requirement_id=requirement_id,
+            assignment_id=assignment_id,
+            severity=Severity.CRITICAL,
+        )
+
+    later = assignment("hw02", 2)
+    [build, probe] = later.requirements
+    later = later.model_copy(
+        update={"requirements": (build, probe.model_copy(update={"depends_on": ("hw01-http",)}))}
+    )
+    harness = Harness(
+        tmp_path,
+        catalog=(*CATALOG[:2], later),
+        names=("avigail",),
+        outcomes={
+            "hw01-http": (failed("hw01-http", "hw01"),),
+            "hw02-http": (failed("hw02-http", "hw02"),),
+        },
+    )
+
+    output = harness.run(assignment_id="hw02")
+
+    held_back = NotEvaluated(
+        requirement_id="hw02-http",
+        reason=NotEvaluatedReason.DEPENDENCY_FAILED,
+        detail="`hw01-http`",
+    )
+    for repo_run in (harness.repo_run(REPO_IDS[0]), harness.report_writer.repo_reports[0].repo_run):
+        [_, hw01, hw02] = repo_run.assignment_results
+        assert [f.requirement_id for f in hw01.findings] == ["hw01-http"]
+        assert hw02.findings == ()
+        assert hw02.not_evaluated == (held_back,)
+    [line] = output["summary"].repos
     assert line.critical == 1

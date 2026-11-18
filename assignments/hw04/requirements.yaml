@@ -123,6 +123,9 @@ requirements:
     - /api/user/signin
     body: '{"userName|email|name":"weak2.user@example.com","password":"Probe9!"}'
     expected_status: 400
+  # Developer decision 2026-11-18 (HW04 pilot): a broken registration is reported once, by hw01-create.
+  depends_on:
+  - hw01-create
   origin:
     source: developer
     quote: edited by hand before approval
