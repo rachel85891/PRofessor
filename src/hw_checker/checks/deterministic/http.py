@@ -12,6 +12,7 @@ from hw_checker.checks.deterministic.environment import (
 )
 from hw_checker.checks.deterministic.findings import deterministic_finding
 from hw_checker.checks.deterministic.messages import (
+    BODY_REJECTED_DETAIL,
     HTTP_PROBES_FAILED,
     HTTP_PROBES_WRONG_ANSWER,
     PROBE_MISSING_VALUES,
@@ -78,9 +79,12 @@ def evaluate_http(
     app did not start. A passing request still passes.
     A failing probe whose body did not fit the student's model (a field matched no property
     or could not be converted) is not evaluated either (`body_mismatch`): the request, not
-    the student's code, may be what failed. A probe that was not sent because an earlier
-    probe failed to capture a value it needs gives `dependency_failed`: the earlier probe
-    is judged on its own, so the failure is never counted twice.
+    the student's code, may be what failed. So is one the app answered with a 400 saying
+    the body as a whole could not be converted to the action's parameter type (a JSON
+    string where the action takes an object); the detail names that type when the error
+    does. A probe that was not sent because an earlier probe failed to capture a value it
+    needs gives `dependency_failed`: the earlier probe is judged on its own, so the failure
+    is never counted twice.
     Every `environment_issue` comes with a detail: which step failed, the paths that could
     not be adapted and why, or why the requirement was not probed.
     """
@@ -120,7 +124,7 @@ def evaluate_http(
     if not failures:
         return ()
     if any(result.body_mismatched for result, _ in failures):
-        return NotEvaluatedReason.BODY_MISMATCH
+        return _body_mismatch([result for result, _ in failures])
     if execution.has_unresolved_paths:
         return probe_failed_with_paths(execution)  # a path the run could not adapt
     if execution.windows_paths and any(_server_error(result) for result, _ in failures):
@@ -144,6 +148,17 @@ def evaluate_http(
         deterministic_finding(
             check_input, header.render(probes=probes), facts, responses=responses
         ),
+    )
+
+
+def _body_mismatch(failed: list[ProbeResult]) -> NotEvaluatedReason | NotEvaluatedOutcome:
+    """`body_mismatch`, naming the type a body did not fit when the app's error named it."""
+    types = sorted({result.rejected_type for result in failed if result.rejected_type})
+    if not types:
+        return NotEvaluatedReason.BODY_MISMATCH
+    return NotEvaluatedOutcome(
+        reason=NotEvaluatedReason.BODY_MISMATCH,
+        detail=BODY_REJECTED_DETAIL.format(types=", ".join(f"`{name}`" for name in types)),
     )
 
 

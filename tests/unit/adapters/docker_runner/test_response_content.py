@@ -1,7 +1,13 @@
+import json
+
 import pytest
 
 from hw_checker.adapters.docker_runner.http_response import HttpResponse, parse_response
-from hw_checker.adapters.docker_runner.response_content import missing_values, response_shape
+from hw_checker.adapters.docker_runner.response_content import (
+    body_rejection,
+    missing_values,
+    response_shape,
+)
 from hw_checker.domain import ResponseShape
 
 
@@ -86,3 +92,55 @@ def test_a_body_that_is_not_json_lacks_every_value() -> None:
         "probe.user@example.com",
     )
     assert missing_values("anything", []) == ()
+
+
+ROOT_ERROR = (
+    "The JSON value could not be converted to Sample.Entity.Credentials. Path: $ | "
+    "LineNumber: 0 | BytePositionInLine: 8."
+)
+
+
+def problem(errors: object) -> str:
+    return json.dumps(
+        {"title": "One or more validation errors occurred.", "status": 400, "errors": errors}
+    )
+
+
+@pytest.mark.parametrize(
+    ("errors", "rejected"),
+    [
+        ({"$": [ROOT_ERROR], "credentials": ["The credentials field is required."]}, "Credentials"),
+        ({"": [ROOT_ERROR]}, "Credentials"),
+        ({"$": ["The JSON value could not be converted."]}, ""),
+        (
+            {
+                "$": [
+                    "The JSON value could not be converted to System.Collections.Generic."
+                    "List`1[Sample.Entity.Item]. Path: $ | LineNumber: 0"
+                ]
+            },
+            "List`1[Item]",
+        ),
+    ],
+)
+def test_a_400_saying_the_whole_body_could_not_be_converted_is_a_rejection(
+    errors: object, rejected: str
+) -> None:
+    assert body_rejection(HttpResponse(400, {}, problem(errors))) == rejected
+
+
+@pytest.mark.parametrize(
+    "response",
+    [
+        HttpResponse(400, {}, problem({"password": ["The JSON value could not be converted."]})),
+        HttpResponse(400, {}, problem({"$.age": ["The JSON value could not be converted."]})),
+        HttpResponse(400, {}, problem({"$": ["The password field is required."]})),
+        HttpResponse(400, {}, "The JSON value could not be converted to Credentials."),
+        HttpResponse(400, {}, ""),
+        HttpResponse(422, {}, problem({"$": [ROOT_ERROR]})),
+        HttpResponse(200, {}, problem({"$": [ROOT_ERROR]})),
+        HttpResponse(400, {}, problem({"$": [ROOT_ERROR]})[:40], truncated=True),
+    ],
+)
+def test_anything_else_is_not_a_whole_body_rejection(response: HttpResponse) -> None:
+    assert body_rejection(response) is None

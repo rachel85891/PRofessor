@@ -495,9 +495,10 @@ AMBIGUOUS_NAMES = MessageTemplate(
 )
 
 # ---------------------------------------------------------------- not-evaluated details
-# Why an `environment_issue` happened, for the reviewer's report (English only, like the
-# report); the report template words the sentence around the detail.
+# Why an `environment_issue` (or a `body_mismatch`) happened, for the reviewer's report
+# (English only, like the report); the report template words the sentence around the detail.
 
+BODY_REJECTED_DETAIL = "the app could not convert the request body as a whole to {types}"
 ENVIRONMENT_PREPARE = "the prepare step failed: {message}"
 ENVIRONMENT_BUILD = "the build step failed on the checking machine ({kind}): {message}"
 ENVIRONMENT_RUN = "the run step failed on the checking machine ({kind}): {message}"

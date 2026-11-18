@@ -522,6 +522,56 @@ def test_passing_probe_with_a_mismatched_body_still_passes() -> None:
     assert evaluate_http(check_input(HTTP_REQUIREMENT, execution)) == ()
 
 
+def rejected(probe_: HttpProbe, status: int, type_name: str | None) -> ProbeResult:
+    return ProbeResult(
+        probe=probe_,
+        actual_status=status,
+        passed=status in probe_.allowed_statuses,
+        sent_path=probe_.path,
+        route_resolution=RouteResolution.RESOLVED,
+        sent_body='"Desk"',
+        body_adaptation=BodyAdaptation(adapted=False, reason="the action takes no model"),
+        body_rejected=True,
+        rejected_type=type_name,
+    )
+
+
+def test_a_body_the_app_could_not_convert_at_all_is_a_body_mismatch_naming_the_type() -> None:
+    execution = run_ok(
+        result(GET_ALL, 200), result(GET_MISSING, 404), rejected(CREATE, 400, "Product")
+    )
+
+    outcome = evaluate_http(check_input(HTTP_REQUIREMENT, execution))
+
+    assert isinstance(outcome, NotEvaluatedOutcome)
+    assert outcome.reason is NotEvaluatedReason.BODY_MISMATCH
+    assert outcome.detail == "the app could not convert the request body as a whole to `Product`"
+
+
+def test_a_rejected_body_without_a_named_type_is_a_plain_body_mismatch() -> None:
+    execution = run_ok(result(GET_ALL, 200), result(GET_MISSING, 404), rejected(CREATE, 400, None))
+
+    assert evaluate_http(check_input(HTTP_REQUIREMENT, execution)) is (
+        NotEvaluatedReason.BODY_MISMATCH
+    )
+
+
+def test_a_passing_probe_marked_rejected_still_passes() -> None:
+    execution = run_ok(result(GET_ALL, 200), result(GET_MISSING, 404), rejected(CREATE, 201, None))
+
+    assert evaluate_http(check_input(HTTP_REQUIREMENT, execution)) == ()
+
+
+def test_a_400_without_a_whole_body_rejection_stays_a_finding() -> None:
+    execution = run_ok(
+        result(GET_ALL, 200),
+        result(GET_MISSING, 404),
+        with_body(CREATE, 400, BodyFieldOutcome.MATCHED),
+    )
+
+    assert len(_findings(evaluate_http(check_input(HTTP_REQUIREMENT, execution)))) == 1
+
+
 def test_probe_with_a_missing_dependency_makes_the_requirement_not_evaluated() -> None:
     dependent = ProbeResult(
         probe=GET_MISSING, passed=False, route_resolution=RouteResolution.DEPENDENCY_MISSING

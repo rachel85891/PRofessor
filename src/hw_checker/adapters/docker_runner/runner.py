@@ -55,7 +55,11 @@ from hw_checker.adapters.docker_runner.probe_variables import (
     fill_text,
     not_sent,
 )
-from hw_checker.adapters.docker_runner.response_content import missing_values, response_shape
+from hw_checker.adapters.docker_runner.response_content import (
+    body_rejection,
+    missing_values,
+    response_shape,
+)
 from hw_checker.adapters.docker_runner.routes import (
     ControllerChoice,
     ProbeRoute,
@@ -608,6 +612,7 @@ class _Execution:
             if response is None or shape is ResponseShape.CUT
             else missing_values(response.body, expected)
         )
+        rejection = None if response is None else body_rejection(response)
         captured = None if probe.capture is None else capture_value(probe.capture, response)
         if captured is not None and captured.value is not None:
             self.variables[captured.name] = captured.value
@@ -625,6 +630,8 @@ class _Execution:
             capture=captured,
             response_shape=shape,
             missing_values=absent,
+            body_rejected=rejection is not None,
+            rejected_type=rejection or None,
         )
 
     def _probe_body(
