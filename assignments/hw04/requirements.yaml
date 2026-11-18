@@ -40,6 +40,9 @@ requirements:
     - /api/user/passwordstrength
     - /api/user/passwordcheck
     - /api/users/password
+    # Developer decision 2026-11-18 (HW04 round): two more routes students used.
+    - /api/users/check
+    - /api/user/check
     # Developer decision 2026-11-18 (HW04 pilot): the route as the student's code spells it.
     - /passward/check_strengh
     expect_values:
@@ -59,6 +62,8 @@ requirements:
     - /api/user/passwordstrength
     - /api/user/passwordcheck
     - /api/users/password
+    - /api/users/check
+    - /api/user/check
     - /passward/check_strengh
     expect_values:
     - '2'
@@ -77,6 +82,8 @@ requirements:
     - /api/user/passwordstrength
     - /api/user/passwordcheck
     - /api/users/password
+    - /api/users/check
+    - /api/user/check
     - /passward/check_strengh
     expect_values:
     - '3'

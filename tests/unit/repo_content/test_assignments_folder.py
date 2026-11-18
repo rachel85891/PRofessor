@@ -223,6 +223,10 @@ def test_hw04_is_approved_for_every_repo_and_builds_on_hw01_create() -> None:
         assert "hw01-create" in requirements[requirement_id].depends_on
     strength = requirements["hw04-strength-score"].http_probes
     assert strength and all(p.path == "/api/password" for p in strength)
+    intake = (REPO_ROOT / "assignments" / "hw04" / "intake.yaml").read_text("utf-8")
+    for route in ("/api/users/check", "/api/user/check"):
+        assert all(route in p.path_alternatives for p in strength)
+        assert f" {route}," in intake
     button = requirements["hw04-client-button"]
     assert (button.severity, button.feedback) == (Severity.MAJOR, Feedback.NOTES_ONLY)
 
