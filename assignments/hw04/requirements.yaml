@@ -1,0 +1,301 @@
+# Approved on 2026-11-18 through the authoring graph (design §8.3); origins kept.
+id: hw04
+order: 4
+title: Password strength validation in the client, registration and update
+taught_techniques:
+- controllers
+- http endpoints
+- text-file storage
+- client pages with fetch
+- layer projects
+- dependency injection
+lenient_notes:
+- The strength check may be at any route the student's code declares
+- The strength check may return a bare number or an object with a score field
+- A score from 0 to 4 is valid
+- Any 400 body for a weak password is accepted; an empty BadRequest() gets a note, not a failure
+requirements:
+- id: hw04-strength-score
+  kind: http
+  title: The password strength check returns the password's score
+  description: POST with the password as a JSON string. The reply is a bare number or an object with a
+    score field.
+  severity: major
+  allowed_alternatives:
+  - The route may be any the student's code declares (the listed alternatives)
+  - The body is the password as a JSON string
+  - The reply may be a bare number or an object with a score field
+  - A score from 0 to 4 is valid
+  probes:
+  - method: POST
+    path: /api/password
+    path_alternatives:
+    - /api/passwords
+    - /api/strongpassword
+    - /api/pass
+    - /api/password/strength
+    - /api/password/check
+    - /api/passwords/password
+    - /api/users/checkpassword
+    - /api/user/passwordstrength
+    - /api/user/passwordcheck
+    - /api/users/password
+    - /password/check_strengh
+    expect_values:
+    - '0'
+    body: '"123456"'
+    expected_status: 200
+  - method: POST
+    path: /api/password
+    path_alternatives:
+    - /api/passwords
+    - /api/strongpassword
+    - /api/pass
+    - /api/password/strength
+    - /api/password/check
+    - /api/passwords/password
+    - /api/users/checkpassword
+    - /api/user/passwordstrength
+    - /api/user/passwordcheck
+    - /api/users/password
+    - /password/check_strengh
+    expect_values:
+    - '2'
+    body: '"Probe9!"'
+    expected_status: 200
+  - method: POST
+    path: /api/password
+    path_alternatives:
+    - /api/passwords
+    - /api/strongpassword
+    - /api/pass
+    - /api/password/strength
+    - /api/password/check
+    - /api/passwords/password
+    - /api/users/checkpassword
+    - /api/user/passwordstrength
+    - /api/user/passwordcheck
+    - /api/users/password
+    - /password/check_strengh
+    expect_values:
+    - '3'
+    body: '"Probe9!Alpha"'
+    expected_status: 200
+  origin:
+    source: intake
+    quote: 'The password strength check returns the password''s score: 0 for 123456, 2 for Probe9!, 3
+      for Probe9!Alpha'
+    item: requirements.return_values.1
+  status: approved
+- id: hw04-register-weak
+  kind: http
+  title: POST /api/users with a weak password (score below 3) returns 400
+  severity: major
+  allowed_alternatives:
+  - Any 400 body is accepted; an empty BadRequest() gets a note, not a failure
+  probes:
+  - method: POST
+    path: /api/users
+    path_alternatives:
+    - /api/user
+    - /users
+    - /user
+    - /api/login
+    - /api/users/register
+    - /api/users/signup
+    - /users/loguppost
+    - /api/users/signin
+    - /api/user/signin
+    body: '{"userName|email|name":"weak1.user@example.com","password":"123456"}'
+    expected_status: 400
+  - method: POST
+    path: /api/users
+    path_alternatives:
+    - /api/user
+    - /users
+    - /user
+    - /api/login
+    - /api/users/register
+    - /api/users/signup
+    - /users/loguppost
+    - /api/users/signin
+    - /api/user/signin
+    body: '{"userName|email|name":"weak2.user@example.com","password":"Probe9!"}'
+    expected_status: 400
+  origin:
+    source: developer
+    quote: edited by hand before approval
+  status: approved
+- id: hw04-register-strong
+  kind: http
+  title: POST /api/users with Probe9!Alpha (score 3) still creates the user
+  severity: critical
+  allowed_alternatives:
+  - Returning 200 instead of 201 is acceptable
+  probes:
+  - method: POST
+    path: /api/users
+    path_alternatives:
+    - /api/user
+    - /users
+    - /user
+    - /api/login
+    - /api/users/register
+    - /api/users/signup
+    - /users/loguppost
+    - /api/users/signin
+    - /api/user/signin
+    body: '{"userName|email|name":"strong.user@example.com","password":"Probe9!Alpha"}'
+    expected_status: 201
+    allowed_statuses:
+    - 201
+    - 200
+  depends_on:
+  - hw01-create
+  origin:
+    source: developer
+    quote: edited by hand before approval
+  status: approved
+- id: hw04-update-weak
+  kind: http
+  title: PUT /api/users/{id} with a weak password (score below 3) returns 400
+  description: The user id comes from the registration probe of hw01-create.
+  severity: major
+  allowed_alternatives:
+  - Any 400 body is accepted; an empty BadRequest() gets a note, not a failure
+  probes:
+  - method: POST
+    path: /api/users
+    path_alternatives:
+    - /api/user
+    - /users
+    - /user
+    - /api/login
+    - /api/users/register
+    - /api/users/signup
+    - /users/loguppost
+    - /api/users/signin
+    - /api/user/signin
+    capture:
+      name: user_id
+      from: body:id
+    expect_json: object
+    body: '{"userName|email|name":"update.weak@example.com","password":"Probe9!Alpha"}'
+    expected_status: 201
+    allowed_statuses:
+    - 201
+    - 200
+    notes: Creates the user to update
+  - method: PUT
+    path: /api/users/{user_id}
+    path_alternatives:
+    - /api/user/{user_id}
+    - /users/{user_id}
+    - /user/{user_id}
+    - /api/login/{user_id}
+    body: '{"id":"{user_id}","userName|email|name":"update.weak@example.com","password":"123456"}'
+    expected_status: 400
+  - method: PUT
+    path: /api/users/{user_id}
+    path_alternatives:
+    - /api/user/{user_id}
+    - /users/{user_id}
+    - /user/{user_id}
+    - /api/login/{user_id}
+    body: '{"id":"{user_id}","userName|email|name":"update.weak@example.com","password":"Probe9!"}'
+    expected_status: 400
+  depends_on:
+  - hw01-create
+  origin:
+    source: developer
+    quote: edited by hand before approval
+  status: approved
+- id: hw04-update-strong
+  kind: http
+  title: PUT /api/users/{id} with Probe9!Alpha (score 3) still updates the user
+  description: The user id comes from the registration probe of this requirement.
+  severity: major
+  allowed_alternatives:
+  - 204 is also accepted
+  probes:
+  - method: POST
+    path: /api/users
+    path_alternatives:
+    - /api/user
+    - /users
+    - /user
+    - /api/login
+    - /api/users/register
+    - /api/users/signup
+    - /users/loguppost
+    - /api/users/signin
+    - /api/user/signin
+    capture:
+      name: user_id
+      from: body:id
+    expect_json: object
+    body: '{"userName|email|name":"update.strong@example.com","password":"Probe9!Alpha"}'
+    expected_status: 201
+    allowed_statuses:
+    - 201
+    - 200
+    notes: Creates the user to update
+  - method: PUT
+    path: /api/users/{user_id}
+    path_alternatives:
+    - /api/user/{user_id}
+    - /users/{user_id}
+    - /user/{user_id}
+    - /api/login/{user_id}
+    body: '{"id":"{user_id}","userName|email|name":"update.strong@example.com","password":"Probe9!Alpha"}'
+    expected_status: 200
+    allowed_statuses:
+    - 200
+    - 204
+  depends_on:
+  - hw01-create
+  origin:
+    source: developer
+    quote: edited by hand before approval
+  status: approved
+- id: hw04-password-service-used
+  kind: code
+  title: The users controller and the password controller both take the password service's interface and
+    call it
+  severity: major
+  feedback: notes_only
+  reviewer_guidance: 'Both controllers must receive the password service through its interface in the
+    constructor and call it. A finding: a controller that takes the class, creates it with new, or does
+    its own strength check.'
+  lenient_notes:
+  - Do not judge the names of the interface or the controllers
+  - Do not judge the route
+  concerns:
+    roles:
+    - api
+    - services
+  origin:
+    source: intake
+    quote: Both the users controller and the password controller take the password service's interface
+      in their constructor and call it
+    item: requirements.architecture.1
+  status: approved
+- id: hw04-client-button
+  kind: code
+  title: The client page has a button that checks the password's strength and shows the score
+  severity: major
+  feedback: notes_only
+  reviewer_guidance: 'A page under wwwroot has a button whose script sends the password to the strength
+    check with fetch and shows the returned score on the page. A finding: no such button, or the score
+    is not shown.'
+  lenient_notes:
+  - Do not judge the look of the page
+  - Do not judge element names
+  concerns:
+    files:
+    - '**/wwwroot/**/*.html'
+    - '**/wwwroot/**/*.js'
+  origin:
+    source: developer
+    quote: edited by hand before approval
+  status: approved
