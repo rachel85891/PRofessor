@@ -312,6 +312,26 @@ def test_startup_crash_with_an_unresolved_path_is_not_evaluated() -> None:
     assert reason_of(outcome) is NotEvaluatedReason.ENVIRONMENT_ISSUE
 
 
+def test_startup_crash_with_an_unreachable_database_is_not_evaluated() -> None:
+    execution = startup_crash(STARTUP_LOG).model_copy(
+        update={"unreachable_databases": ("SQL Server",)}
+    )
+
+    outcome = evaluate_build(check_input(BUILD_REQUIREMENT, execution))
+
+    assert outcome is NotEvaluatedReason.DATABASE_UNAVAILABLE
+
+
+def test_an_unadapted_path_comes_before_an_unreachable_database_at_startup() -> None:
+    execution = with_paths(startup_crash(STARTUP_LOG), UNRESOLVED).model_copy(
+        update={"unreachable_databases": ("SQL Server",)}
+    )
+
+    outcome = evaluate_build(check_input(BUILD_REQUIREMENT, execution))
+
+    assert reason_of(outcome) is NotEvaluatedReason.ENVIRONMENT_ISSUE
+
+
 def test_startup_crash_with_every_path_rewritten_is_a_finding() -> None:
     execution = with_paths(startup_crash(STARTUP_LOG), REWRITTEN)
 

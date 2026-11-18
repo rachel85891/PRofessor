@@ -74,7 +74,9 @@ def evaluate_build(
     """Return a finding when the project does not build, or builds but crashes on startup.
 
     A failure that is not a student issue (environment, timeout, no project) is not
-    evaluated rather than reported, with a detail of the step that failed.
+    evaluated rather than reported, with a detail of the step that failed. Neither is a
+    startup crash while the run log shows the app could not connect to its database
+    (`database_unavailable`): the server is likely on the student's own computer.
     """
     execution = check_input.execution
     if execution is None:
@@ -106,13 +108,15 @@ def _build_failure(
 
 def _run_failure(
     check_input: CheckInput, execution: ExecutionResult
-) -> tuple[Finding, ...] | NotEvaluatedOutcome:
+) -> tuple[Finding, ...] | NotEvaluatedReason | NotEvaluatedOutcome:
     kind = execution.failure_kind
     if kind is FailureKind.DB_UNREACHABLE:
         return ()  # the app started; reaching the database is not what `build` checks
     if kind is not FailureKind.STARTUP_FAILED or execution.has_unresolved_paths:
         # A crash with a hard-coded path we could not adapt may be our environment's fault.
         return run_failed(execution)
+    if execution.unreachable_databases:
+        return NotEvaluatedReason.DATABASE_UNAVAILABLE
     crash = first_startup_crash(execution.logs_excerpt)
     if crash is None:
         message = STARTUP_CRASHED_NO_DETAIL.render()

@@ -17,7 +17,10 @@ from hw_checker.domain import (
     NotEvaluated,
     NotEvaluatedReason,
     ProbeResult,
+    Requirement,
+    RequirementKind,
     RouteResolution,
+    Severity,
     StepStatus,
 )
 from hw_checker.services.deterministic_checks import DeterministicCheckService
@@ -127,6 +130,34 @@ def test_an_app_that_did_not_start_for_its_database_is_not_held_against_the_stud
     assert result.not_evaluated == (
         NotEvaluated(
             requirement_id="hw05-create",
+            reason=NotEvaluatedReason.DATABASE_UNAVAILABLE,
+            detail=DETAIL,
+        ),
+    )
+
+
+def test_a_startup_crash_for_its_database_is_not_a_build_finding() -> None:
+    execution = ExecutionResult(
+        build_status=StepStatus.SUCCEEDED,
+        run_status=StepStatus.FAILED,
+        failure_kind=FailureKind.STARTUP_FAILED,
+        logs_excerpt="Unhandled exception. " + DATABASE_LOG,
+        unreachable_databases=unreachable_databases_in_log(DATABASE_LOG),
+    )
+    build = Requirement(
+        id="gen-build",
+        title="Builds and starts",
+        severity=Severity.CRITICAL,
+        kind=RequirementKind.BUILD,
+    )
+    assignment = ASSIGNMENT.model_copy(update={"requirements": (build,)})
+
+    result = DeterministicCheckService(checker()).evaluate(assignment, Path("repo"), execution)
+
+    assert result.findings == ()
+    assert result.not_evaluated == (
+        NotEvaluated(
+            requirement_id="gen-build",
             reason=NotEvaluatedReason.DATABASE_UNAVAILABLE,
             detail=DETAIL,
         ),
