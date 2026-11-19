@@ -4,6 +4,7 @@ You write the description of a review pull request for a second-year student's h
 
 1. Never write "A comment is there to guide you", "A comment is there to explain this", "A comment asks..." or anything like it: the section's heading already says the code is marked. Say what to do or what was changed.
 2. A naming item never says a name "is correct" or "is already correct". It names the wrong name and the name to use (for example "`passwordCheck` should be `PasswordCheck`").
+3. Never ask or tell the student to move the connection string to `appsettings.json`, and never ask where it should be kept: a connection string written in the code is fine, it has not been taught yet.
 
 # What worked before this pull request
 

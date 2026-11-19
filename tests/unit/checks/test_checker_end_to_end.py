@@ -130,6 +130,7 @@ def test_builtin_checks_are_registered() -> None:
         "layer_references",
         "code_only_in_layer",
         "implements_interface",
+        "classes_public",
         "constructor_takes_interface",
         "interfaces_registered",
         "no_concrete_construction",

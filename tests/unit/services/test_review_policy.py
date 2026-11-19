@@ -89,7 +89,8 @@ def test_each_role_sees_only_its_rules() -> None:
 
 def test_the_full_round_review_rules_reach_their_roles() -> None:
     by_id = {rule.id: rule.text for rule in COURSE.rules.rules}
-    unrequested = by_id["only-what-is-needed"]
+    # Up to its `{rule:safe-fixes}` placeholder, which is filled with a number.
+    unrequested = by_id["only-what-is-needed"].split("{rule:")[0]
     writer = (by_id["no-comment-pointers"], by_id["naming-items"])
     hw = HW02.model_copy(update={"review_rules": ReviewRuleSet()})
 
@@ -97,10 +98,10 @@ def test_the_full_round_review_rules_reach_their_roles() -> None:
         return role_policy(COURSE, hw, (hw,), role, (CONTROLLER,)).rules
 
     for role in (ReviewRole.FIXER, ReviewRole.JUDGE):
-        assert unrequested in rules(role)
+        assert any(text.startswith(unrequested) for text in rules(role))
         assert not set(writer) & set(rules(role))
     assert set(writer) <= set(rules(ReviewRole.WRITER))
-    assert unrequested not in rules(ReviewRole.WRITER)
+    assert not any(text.startswith(unrequested) for text in rules(ReviewRole.WRITER))
     forbidden = role_policy(COURSE, hw, (hw,), ReviewRole.WRITER, (CONTROLLER,)).forbidden
     assert [scoped.item.message for scoped in forbidden] == [
         'never write "A comment is there to guide you" or "A comment asks..."; the section\'s '
@@ -186,3 +187,43 @@ def test_the_fixer_and_judge_prompts_show_the_naming_rules_stored_property_note(
         assert "the `PropertyNameCaseInsensitive` tip instead" not in prompt
         # The rule's own example: the rename made safe by the option, never instead of it.
         assert "if you rename them, set PropertyNameCaseInsensitive = true" in prompt
+
+
+CONNECTION_STRING = (
+    "Never ask or tell the student to move the connection string to `appsettings.json`"
+)
+
+
+def test_the_connection_string_rule_reaches_the_fixer_judge_and_writer_prompts(
+    tmp_path: Path,
+) -> None:
+    rule = next(rule for rule in COURSE.rules.rules if rule.id == "connection-string")
+    setup = FixerSetup(tmp_path)
+    workspace = setup.service.prepare(RUN_ID, (ASSIGNMENT,), (), REPO, setup.fetched)
+
+    plan = setup.service.plan_prompt(workspace, ASSIGNMENT, (ASSIGNMENT,), RESULTS, 1)
+
+    assert rule.until is None and rule.replaces is None
+    assert rule.origin.quote == "developer decision 2026-11-19 (HW04 round review)"
+    assert CONNECTION_STRING in plan
+    for role in (ReviewRole.FIXER, ReviewRole.JUDGE, ReviewRole.WRITER):
+        rules = role_policy(COURSE, ASSIGNMENT, (ASSIGNMENT,), role).rules
+        assert any(text.startswith(CONNECTION_STRING) for text in rules)
+
+
+ONLY_SAFE_FIXES = "A `fix` is only one of the safe fixes the rules in effect allow"
+STOCK_NOTE = "//Which property should the stock be saved in?"
+
+
+def test_the_fixer_and_judge_prompts_show_a_real_bug_as_a_note(tmp_path: Path) -> None:
+    setup = FixerSetup(tmp_path)
+    workspace = setup.service.prepare(RUN_ID, (ASSIGNMENT,), (), REPO, setup.fetched)
+
+    plan = setup.service.plan_prompt(workspace, ASSIGNMENT, (ASSIGNMENT,), RESULTS, 1)
+    judge = role_policy(COURSE, ASSIGNMENT, (ASSIGNMENT,), ReviewRole.JUDGE)
+
+    assert ONLY_SAFE_FIXES in plan
+    assert STOCK_NOTE in plan
+    assert "existing.Stock = product.Stock" not in plan
+    assert any(text.startswith(ONLY_SAFE_FIXES) for text in judge.rules)
+    assert any(STOCK_NOTE in example.plan for example in judge.examples)

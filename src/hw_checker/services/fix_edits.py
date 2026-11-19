@@ -8,6 +8,7 @@ byte-order mark and line endings. What may never be added, and how comments are 
 in each edited file type, is the course's data (ADR 0023).
 """
 
+import dataclasses
 import difflib
 import re
 from collections.abc import Mapping, Sequence
@@ -22,7 +23,12 @@ from hw_checker.domain import (
     PlannedEdit,
     RejectedEdit,
 )
-from hw_checker.services.fix_review import Allowances, detector_problem, note_problem
+from hw_checker.services.fix_review import (
+    Allowances,
+    detector_problem,
+    never_a_violation,
+    note_problem,
+)
 from hw_checker.services.review_policy import Scoped
 
 MIN_REASON_CHARS = 8
@@ -56,8 +62,9 @@ class EditRules:
     """The repo's data files, the only ones a `final_newline` edit may change."""
     allowances: Allowances | None = None
     """The safe fixes in effect: a `fix` of a safe fix's shape that its detector still
-    refuses is rejected with the detector's reason; so is an edit with a note in an
-    approved wording that the repo's results do not allow."""
+    refuses is rejected with the detector's reason, and a `fix` no detector in effect
+    recognizes is rejected; so is an edit with a note in an approved wording that the
+    repo's results do not allow."""
     notes_only: frozenset[str] = field(default_factory=frozenset)
     """The ids of the notes-only requirements (`feedback: notes_only`) and of their
     findings: a `fix` that claims one is rejected."""
@@ -219,13 +226,39 @@ def _replace(
     style = rules.style(path)
     if style is None:  # Refused by the path check.
         return f"{path} is not edited"
+    edited = text.replace(find.replace("\n", newline), replace.replace("\n", newline), 1)
     problem = _content_problem(path, find, replace, edit.kind, rules, style)
     if problem is None and rules.allowances is not None:
-        problem = detector_problem(edit, rules.allowances) or note_problem(edit, rules.allowances)
+        problem = safe_fix_problem(edit, rules.allowances, edited) or note_problem(
+            edit, rules.allowances
+        )
     if problem:
         return problem
-    texts[path] = text.replace(find.replace("\n", newline), replace.replace("\n", newline), 1)
+    texts[path] = edited
     return None
+
+
+def safe_fix_problem(edit: PlannedEdit, allowances: Allowances, edited: str) -> str | None:
+    """Why a `fix` is not one of the safe fixes `allowances` allow, reading its file as the
+    edit leaves it (`edited`): a detector in effect refuses its shape, or no detector in
+    effect recognizes it (developer decision 2026-11-19; the self-review alone let such
+    fixes through). None for any other edit kind."""
+    after = _after(allowances, edit.file, edited)
+    return detector_problem(edit, after) or _unsafe_fix_problem(edit, after)
+
+
+def _after(allowances: Allowances, path: str, edited: str) -> Allowances:
+    """`allowances` reading the file at `path` as the edit leaves it, as the self-review
+    does: a removed `using` counts as a duplicate only when another copy is still there."""
+    code = allowances.code
+    texts = {**code.texts, path: edited}
+    return dataclasses.replace(allowances, code=dataclasses.replace(code, texts=texts))
+
+
+def _unsafe_fix_problem(edit: PlannedEdit, allowances: Allowances) -> str | None:
+    if edit.kind is not EditKind.FIX or never_a_violation(edit, allowances) is not None:
+        return None
+    return "this change is not one of the safe fixes the rules allow; plan a note instead"
 
 
 def _content_problem(

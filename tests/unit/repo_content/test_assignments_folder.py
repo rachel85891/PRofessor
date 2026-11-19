@@ -15,10 +15,13 @@ from hw_checker.domain import (
     ExpectedJson,
     Feedback,
     ItemStatus,
+    OriginSource,
     RequirementKind,
+    ReviewRole,
     Severity,
 )
 from hw_checker.services.assignments import AssignmentCatalogService
+from hw_checker.services.review_policy import role_policy
 
 
 def catalog() -> AssignmentCatalogService:
@@ -178,20 +181,44 @@ def test_hw02_and_hw03_are_major_notes_only_and_need_the_layer_projects() -> Non
         "hw03-layer-projects",
         "hw03-references",
         "hw03-service-interfaces",
+        "hw03-service-classes-public",
         "hw03-service-interfaces-taken",
         "hw03-repository-interfaces",
+        "hw03-repository-classes-public",
         "hw03-repository-interfaces-taken",
         "hw03-registered",
         "hw03-no-new-dependencies",
     ]
     for assignment in (hw02, hw03):
         first, *rest = assignment.requirements
-        assert all(r.severity is Severity.MAJOR for r in assignment.requirements)
+        assert all(
+            r.severity is Severity.MAJOR
+            for r in assignment.requirements
+            if r.check != "classes_public"
+        )
         assert all(r.feedback is Feedback.NOTES_ONLY for r in assignment.requirements)
         assert first.depends_on == ()
         assert all(r.depends_on == (first.id,) for r in rest)
         references = next(r for r in assignment.requirements if r.check == "layer_references")
         assert references.params["transitive_required"] is True
+
+
+def test_hw03s_classes_public_requirements_mirror_the_interface_ones() -> None:
+    (hw03,) = by_id("hw03")
+    requirements = {r.id: r for r in hw03.requirements}
+
+    for layer, role in (("service", "services"), ("repository", "repositories")):
+        public = requirements[f"hw03-{layer}-classes-public"]
+        interfaces = requirements[f"hw03-{layer}-interfaces"]
+        assert public.check == "classes_public"
+        assert (public.severity, public.feedback) == (Severity.MINOR, Feedback.NOTES_ONLY)
+        assert public.depends_on == interfaces.depends_on
+        assert public.params["role"] == role
+        for key in ("exclude", "exclude_bases"):
+            assert public.params[key] == interfaces.params[key]
+        assert public.origin is not None
+        assert public.origin.source is OriginSource.DEVELOPER
+        assert public.origin.quote == "developer decision 2026-11-19 (HW04 round review)"
 
 
 def test_hw02_skips_and_hw03_applies_on_the_same_di_condition_and_roles() -> None:
@@ -231,7 +258,51 @@ def test_hw04_is_approved_for_every_repo_and_builds_on_hw01_create() -> None:
     assert (button.severity, button.feedback) == (Severity.MAJOR, Feedback.NOTES_ONLY)
 
 
+CLIENT_FIXES = {"client-reference-fix", "client-condition-fix"}
+
+
+def test_hw01s_client_fixes_end_after_hw03() -> None:
+    source = YamlAssignmentSource(REPO_ROOT / "assignments", REPO_ROOT / "course")
+    course, assignments = source.load_course(), catalog().list_assignments()
+    rules = {rule.text: rule.id for a in assignments for rule in a.review_rules.rules}
+
+    def in_effect(assignment_id: str, role: ReviewRole) -> set[str]:
+        (assignment,) = by_id(assignment_id)
+        policy = role_policy(course, assignment, assignments, role, ("wwwroot/index.js",))
+        return {rules[text] for text in policy.rules if text in rules}
+
+    for role in (ReviewRole.FIXER, ReviewRole.JUDGE):
+        assert in_effect("hw01", role) >= CLIENT_FIXES
+        assert in_effect("hw03", role) >= CLIENT_FIXES
+        assert not CLIENT_FIXES & in_effect("hw04", role)
+        assert "client-questions" in in_effect("hw04", role)
+
+
 def _plain(value: object) -> object:
     if isinstance(value, Mapping):
         return {key: _plain(item) for key, item in value.items()}
     return value
+
+
+PUBLIC_NOTE = "The assignment asks layer classes to be public: write public class UserService"
+
+
+def test_hw03s_public_class_note_is_shown_only_for_a_classes_public_finding() -> None:
+    source = YamlAssignmentSource(REPO_ROOT / "assignments", REPO_ROOT / "course")
+    course, assignments = source.load_course(), catalog().list_assignments()
+    (hw03,) = by_id("hw03")
+    rule = next(rule for rule in hw03.review_rules.rules if rule.id == "public-class-note")
+
+    def shown(role: ReviewRole, *found: str) -> bool:
+        policy = role_policy(course, hw03, assignments, role, ("Services/UserService.cs",), found)
+        return any(PUBLIC_NOTE in example.plan for example in policy.examples)
+
+    assert rule.origin.quote == "developer decision 2026-11-19 (HW04 round review)"
+    assert [note.words for note in rule.approved_notes] == [
+        "The assignment asks layer classes to be public"
+    ]
+    for role in (ReviewRole.FIXER, ReviewRole.JUDGE):
+        assert not shown(role)
+        assert not shown(role, "hw03-service-interfaces")
+        assert shown(role, "hw03-service-classes-public")
+        assert shown(role, "hw03-repository-classes-public")

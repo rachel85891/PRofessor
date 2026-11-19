@@ -294,8 +294,10 @@ def test_a_judge_keeps_a_removed_duplicate_using_but_not_a_removed_correct_one(
     )
 
     assert kept.applied == (duplicate,)
+    # The code refuses the removed correct `using` before the self-review sees it
+    # (developer decision 2026-11-19).
     assert [rejected.reason for rejected in kept.rejected] == [
-        "self-review: rule 9: Nobody asked for it."
+        "this change is not one of the safe fixes the rules allow; plan a note instead"
     ]
     assert "using System.Linq;" in setup.text(STORE)
     [ignored] = kept.ignored_review

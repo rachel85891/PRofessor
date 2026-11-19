@@ -441,6 +441,104 @@ def test_implements_interface_cannot_tell_without_the_signals(tmp_path: Path) ->
     assert outcome is NotEvaluatedReason.EVIDENCE_UNAVAILABLE
 
 
+# ---------------------------------------------------------------- classes_public
+
+INTERNAL_SERVICE = FILES[SERVICE].replace("public class UserService", "internal class UserService")
+NO_INTERFACE_INTERNAL = (
+    "Classes in the services layer that implement no interface declared in the repository: "
+    f"`UserService` ({SERVICE}, line 6). Total: 1."
+)
+NOT_PUBLIC_SERVICE = (
+    "Classes in the services layer that aren't `public`: `UserService` isn't `public`; make "
+    f"it `public class UserService` ({SERVICE}, line 6). Total: 1."
+)
+
+
+def both(root: Path) -> tuple[CheckResult, CheckResult]:
+    return (
+        run("implements_interface", root, role="services"),
+        run("classes_public", root, role="services"),
+    )
+
+
+@pytest.mark.parametrize(
+    "declaration", ["internal class UserService", "class UserService"], ids=["internal", "default"]
+)
+def test_a_non_public_service_without_an_interface_is_in_both_findings(
+    tmp_path: Path, declaration: str
+) -> None:
+    service = FILES[SERVICE].replace("public class UserService", declaration)
+    files = variant({SERVICE: service.replace(") : IUserService", ")")})
+
+    interface, public = both(solution(tmp_path, files))
+
+    assert message(interface) == NO_INTERFACE_INTERNAL
+    assert message(public) == NOT_PUBLIC_SERVICE.replace(
+        "make it `public class UserService`",
+        f"make it `public {declaration.removeprefix('internal ')}`",
+    )
+
+
+def test_a_non_public_service_with_its_interface_is_only_told_to_be_public(
+    tmp_path: Path,
+) -> None:
+    interface, public = both(solution(tmp_path, variant({SERVICE: INTERNAL_SERVICE})))
+
+    assert interface == ()
+    assert message(public) == NOT_PUBLIC_SERVICE
+
+
+def test_public_classes_are_in_neither_finding(tmp_path: Path) -> None:
+    assert both(solution(tmp_path)) == ((), ())
+
+
+def test_the_other_modifiers_are_kept_in_the_public_declaration(tmp_path: Path) -> None:
+    sealed = FILES[SERVICE].replace("public class UserService", "internal sealed class UserService")
+
+    public = run("classes_public", solution(tmp_path, variant({SERVICE: sealed})), role="services")
+
+    assert "make it `public sealed class UserService`" in message(public)
+
+
+@pytest.mark.parametrize(
+    "code",
+    [
+        "static class ServiceExtensions { }\n",
+        "record UserResult(int Id);\n",
+        "internal record UserReply(int Id);\n",
+        "public class Outer : IUserService\n{\n    private class Helper { }\n}\n",
+    ],
+    ids=["static", "record", "internal-record", "nested-private"],
+)
+def test_static_classes_records_and_nested_private_classes_are_not_read(
+    tmp_path: Path, code: str
+) -> None:
+    files = variant({"Services/Extra.cs": code})
+
+    assert both(solution(tmp_path, files)) == ((), ())
+
+
+def test_an_excluded_class_is_not_told_to_be_public(tmp_path: Path) -> None:
+    files = variant({"Services/UserDto.cs": "class UserDto { }\n"})
+
+    outcome = run("classes_public", solution(tmp_path, files), role="services", exclude=["Dto$"])
+
+    assert outcome == ()
+
+
+def test_a_partial_class_with_a_public_part_is_public(tmp_path: Path) -> None:
+    files = variant({"Services/UserService.Part.cs": "partial class UserService { }\n"})
+    files = {**files, SERVICE: files[SERVICE].replace("public class", "public partial class")}
+
+    assert run("classes_public", solution(tmp_path, files), role="services") == ()
+
+
+def test_classes_public_cannot_tell_without_the_signals(tmp_path: Path) -> None:
+    outcome = run("classes_public", tmp_path, unavailable(), role="services")
+
+    assert outcome is NotEvaluatedReason.EVIDENCE_UNAVAILABLE
+
+
 # ---------------------------------------------------------------- constructor_takes_interface
 
 

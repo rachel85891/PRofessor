@@ -428,6 +428,18 @@ NO_INTERFACE = MessageTemplate(
     ),
 )
 
+NOT_PUBLIC = MessageTemplate(
+    name="NOT_PUBLIC",
+    he="מחלקות בשכבת {role} שאינן `public`: {examples}. סך הכול: {count}.",
+    en="Classes in the {role} layer that aren't `public`: {examples}. Total: {count}.",
+)
+
+NOT_PUBLIC_EXAMPLE = MessageTemplate(
+    name="NOT_PUBLIC_EXAMPLE",
+    he="{name} אינה `public`; כתבו `{declaration}`",
+    en="{name} isn't `public`; make it `{declaration}`",
+)
+
 CONSTRUCTOR_TAKES_CLASS = MessageTemplate(
     name="CONSTRUCTOR_TAKES_CLASS",
     he=(
@@ -570,6 +582,8 @@ ALL_TEMPLATES: tuple[MessageTemplate, ...] = (
     LAYER_REFERENCE_FORBIDDEN,
     CODE_OUTSIDE_LAYER,
     NO_INTERFACE,
+    NOT_PUBLIC,
+    NOT_PUBLIC_EXAMPLE,
     CONSTRUCTOR_TAKES_CLASS,
     TAKES_CLASS_EXAMPLE,
     INTERFACES_UNREGISTERED,
