@@ -152,16 +152,24 @@ rules:
     applies_to: [fixer, writer]
     kind: note_only
     when_found: [gen-gitignore, gen-no-build-output]
+    # Reworded on 2026-11-19: the HW04 round copied the old fixed sentence word for word,
+    # saying `bin/` and `obj/` (and "build output") for `.vs/` or `*.csproj.user`, and
+    # "Add a `.gitignore`" when one existed.
     text: >-
       A failed repository requirement (no `.gitignore` that leaves out build and IDE files,
-      or build or IDE folders committed) becomes one item in `files_notes`, never an edit:
-      one item for both findings, in the approved PRs' wording ("The `bin/` and `obj/`
-      folders are in the repository. They are build output and should not be committed.
-      Add a `.gitignore` (in Visual Studio: Git > Settings, or `dotnet new gitignore`) and
-      remove them from the repository.").
+      or build or IDE files committed) becomes one item in `files_notes`, never an edit:
+      one item for both findings, in the approved PRs' style. The item names the files and
+      folders the findings list, and calls each what it is: `bin/` and `obj/` are build
+      output, `.vs/` and `*.user` files are Visual Studio files; say that they should not
+      be committed. Say "Add a `.gitignore` (in Visual Studio: Git > Settings, or `dotnet
+      new gitignore`)" only when the `gen-gitignore` finding says the repository has no
+      `.gitignore`; when it has one that misses entries, say which entries to add to it.
+      End with how to remove the files from the repository.
     origin:
       source: developer
-      quote: "the approved PRs, one Files item (stage 17 pilot run, 2026-11-05)"
+      quote: >-
+        the approved PRs, one Files item (stage 17 pilot run, 2026-11-05); naming what was
+        found: developer decision 2026-11-19 (HW04 round review)
     status: approved
 
   - id: student-level
