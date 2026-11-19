@@ -35,6 +35,8 @@ from hw_checker.checks.deterministic.messages import (
     LAYER_UNASSIGNED,
     LOCATED_EXAMPLE,
     NO_INTERFACE,
+    NOT_PUBLIC,
+    NOT_PUBLIC_EXAMPLE,
     TAKES_CLASS_EXAMPLE,
     UNREGISTERED_EXAMPLE,
     UNTYPED_REGISTRATIONS,
@@ -69,6 +71,11 @@ SOURCE_SUFFIX = ".cs"
 NOTHING = Localized(he="", en="")
 NONE_FOUND = Localized(he="אין", en="none")
 _OR = Localized(he=" או ", en=" or ")
+_PUBLIC = "public"
+_INTERNAL = "internal"
+_NOT_READ = frozenset({"static", "private", "protected", "file"})
+"""A static class cannot implement an interface; the others are nested or file-local
+helpers, not layer classes."""
 _REFERENCED = frozenset({ProjectReferenceStatus.MATCHED, ProjectReferenceStatus.CASE_MISMATCHED})
 """Reference statuses that name a project of the repo."""
 
@@ -149,6 +156,16 @@ class _ClassesLeftOutParams(_RolesParams):
 class ImplementsInterfaceParams(_ClassesLeftOutParams):
     """`role`: the role whose public classes must implement an interface declared in the
     repo; `exclude` and `exclude_bases`: the classes left out."""
+
+    role: Role
+
+    def named_roles(self) -> tuple[str, ...]:
+        return (self.role,)
+
+
+class ClassesPublicParams(_ClassesLeftOutParams):
+    """`role`: the role whose classes must be `public`; `exclude` and `exclude_bases`: the
+    classes left out."""
 
     role: Role
 
@@ -344,14 +361,17 @@ def code_only_in_layer(check_input: CheckInput, params: CodeOnlyInLayerParams) -
 @check(
     "implements_interface",
     ImplementsInterfaceParams,
-    "Every public class in the role's projects implements an interface declared in the "
-    "repo (directly or through its base class); exclude: class name patterns left out; "
-    "exclude_bases: a class whose base list has a matching name is left out.",
+    "Every class in the role's projects (public, or internal: `classes_public` asks for "
+    "public) implements an interface declared in the repo (directly or through its base "
+    "class); exclude: class name patterns left out; exclude_bases: a class whose base list "
+    "has a matching name is left out.",
     reads_architecture=True,
 )
 def implements_interface(check_input: CheckInput, params: ImplementsInterfaceParams) -> CheckResult:
-    """One finding listing the public classes of the role with no declared interface. A
-    static class (which cannot implement one) and a record are not read."""
+    """One finding listing the classes of the role with no declared interface. A class
+    without `public` is read too (developer decision 2026-11-19); a static class (which
+    cannot implement one), a record and a nested `private` or `protected` class are not
+    read."""
     found = _layers(check_input, params, signals=True)
     if not isinstance(found, tuple):
         return found
@@ -360,10 +380,8 @@ def implements_interface(check_input: CheckInput, params: ImplementsInterfacePar
     left_out = _LeftOut(params, types)
     problems: list[_Problem] = []
     ambiguous: list[str] = []
-    for declaration in types.classes_in(roles, (params.role,)):
+    for declaration in _layer_classes(types, roles, params.role):
         name = _subject(declaration)
-        if "public" not in declaration.keywords or "static" in declaration.keywords:
-            continue
         if left_out(name):
             continue
         if types.interfaces_of(name):
@@ -375,6 +393,35 @@ def implements_interface(check_input: CheckInput, params: ImplementsInterfacePar
     return _finding(
         check_input, NO_INTERFACE, problems, ambiguous=_ambiguous(ambiguous), role=params.role
     )
+
+
+@check(
+    "classes_public",
+    ClassesPublicParams,
+    "Every class in the role's projects is public; exclude: class name patterns left out; "
+    "exclude_bases: a class whose base list has a matching name is left out.",
+    reads_architecture=True,
+)
+def classes_public(check_input: CheckInput, params: ClassesPublicParams) -> CheckResult:
+    """One finding listing the classes of the role without `public`: "`UserService` isn't
+    `public`; make it `public class UserService`". The classes read are the ones
+    `implements_interface` reads; a partial class with a public part is public."""
+    found = _layers(check_input, params, signals=True)
+    if not isinstance(found, tuple):
+        return found
+    evidence, roles = found
+    types = _Types(evidence)
+    left_out = _LeftOut(params, types)
+    problems = [
+        _Problem(
+            NOT_PUBLIC_EXAMPLE.render(name=_code(name), declaration=_public(declaration, name)),
+            declaration.file_path,
+            declaration.line,
+        )
+        for declaration in _layer_classes(types, roles, params.role)
+        if not types.public(name := _subject(declaration)) and not left_out(name)
+    ]
+    return _finding(check_input, NOT_PUBLIC, problems, role=params.role)
 
 
 @check(
@@ -518,6 +565,7 @@ LAYER_CHECKS = (
     layer_references,
     code_only_in_layer,
     implements_interface,
+    classes_public,
     constructor_takes_interface,
     interfaces_registered,
     no_concrete_construction,
@@ -556,6 +604,11 @@ class _Types:
             and "record" not in declaration.keywords
             and roles.role_of(declaration.file_path) in wanted
         ]
+
+    def public(self, name: str) -> bool:
+        """Whether a declaration of the type `name` is `public` (one part of a partial
+        class is enough)."""
+        return any(_PUBLIC in declaration.keywords for declaration in self._by_name.get(name, []))
 
     def declared_more_than_once(self, name: str) -> bool:
         """A type name declared twice (the parts of one partial class count once), or
@@ -600,6 +653,22 @@ class _LeftOut:
             return True
         bases = self._types.bases_of(name) if self._bases else ()
         return any(pattern.search(base) for pattern in self._bases for base in bases)
+
+
+def _layer_classes(types: _Types, roles: Layers, role: str) -> list[ArchitectureSignal]:
+    """The classes of `role`'s projects that `implements_interface` and `classes_public`
+    read: public or internal (written or by default), not static and not records."""
+    return [
+        declaration
+        for declaration in types.classes_in(roles, (role,))
+        if not _NOT_READ & set(declaration.keywords)
+    ]
+
+
+def _public(declaration: ArchitectureSignal, name: str) -> str:
+    """The declaration made `public`: `internal sealed class X` as `public sealed class X`."""
+    keywords = [word for word in declaration.keywords if word != _INTERNAL]
+    return " ".join([_PUBLIC, *keywords, name])
 
 
 def _evidence(check_input: CheckInput, *, signals: bool) -> ArchitectureEvidence | None:

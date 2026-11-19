@@ -15,6 +15,7 @@ from hw_checker.domain import (
     ExpectedJson,
     Feedback,
     ItemStatus,
+    OriginSource,
     RequirementKind,
     ReviewRole,
     Severity,
@@ -180,20 +181,44 @@ def test_hw02_and_hw03_are_major_notes_only_and_need_the_layer_projects() -> Non
         "hw03-layer-projects",
         "hw03-references",
         "hw03-service-interfaces",
+        "hw03-service-classes-public",
         "hw03-service-interfaces-taken",
         "hw03-repository-interfaces",
+        "hw03-repository-classes-public",
         "hw03-repository-interfaces-taken",
         "hw03-registered",
         "hw03-no-new-dependencies",
     ]
     for assignment in (hw02, hw03):
         first, *rest = assignment.requirements
-        assert all(r.severity is Severity.MAJOR for r in assignment.requirements)
+        assert all(
+            r.severity is Severity.MAJOR
+            for r in assignment.requirements
+            if r.check != "classes_public"
+        )
         assert all(r.feedback is Feedback.NOTES_ONLY for r in assignment.requirements)
         assert first.depends_on == ()
         assert all(r.depends_on == (first.id,) for r in rest)
         references = next(r for r in assignment.requirements if r.check == "layer_references")
         assert references.params["transitive_required"] is True
+
+
+def test_hw03s_classes_public_requirements_mirror_the_interface_ones() -> None:
+    (hw03,) = by_id("hw03")
+    requirements = {r.id: r for r in hw03.requirements}
+
+    for layer, role in (("service", "services"), ("repository", "repositories")):
+        public = requirements[f"hw03-{layer}-classes-public"]
+        interfaces = requirements[f"hw03-{layer}-interfaces"]
+        assert public.check == "classes_public"
+        assert (public.severity, public.feedback) == (Severity.MINOR, Feedback.NOTES_ONLY)
+        assert public.depends_on == interfaces.depends_on
+        assert public.params["role"] == role
+        for key in ("exclude", "exclude_bases"):
+            assert public.params[key] == interfaces.params[key]
+        assert public.origin is not None
+        assert public.origin.source is OriginSource.DEVELOPER
+        assert public.origin.quote == "developer decision 2026-11-19 (HW04 round review)"
 
 
 def test_hw02_skips_and_hw03_applies_on_the_same_di_condition_and_roles() -> None:
