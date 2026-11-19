@@ -22,6 +22,7 @@ from tests.unit.domain import builders
 from tests.unit.services.fixer_data import (
     ASSIGNMENT,
     BREAK_FIX,
+    CONTROLLER,
     REPO,
     RESULTS,
     RUN_ID,
@@ -69,18 +70,20 @@ def test_without_a_repository_finding_the_files_rule_is_not_in_the_plan(tmp_path
     assert ONE_ITEM not in _plan(tmp_path, RESULTS)
 
 
-USING = "using System.Text.Json;\n\npublic class UsersController\n"
+STRAY = "using UsersApi.Modles;\n"
+"""A `using` of a namespace nothing declares: the safe fix deletes it."""
+USING = f"{STRAY}using System.Text.Json;\n"
 
 
 def _using_fix(replace: str) -> PlannedEdit:
     return PlannedEdit(
-        file="Controllers/UsersController.cs",
+        file=CONTROLLER,
         find=USING,
         replace=replace,
         kind=EditKind.FIX,
         finding_ids=(),
-        reason="Nothing in the file uses System.Text.Json.",
-        fallback_note="Is this using needed? Nothing in the file uses it.",
+        reason="Nothing declares the namespace UsersApi.Modles.",
+        fallback_note="Is this using needed? Nothing declares UsersApi.Modles.",
         note_section=None,
     )
 
@@ -88,10 +91,10 @@ def _using_fix(replace: str) -> PlannedEdit:
 @pytest.mark.parametrize(
     ("replace", "reason"),
     [
-        ("//fix: Removed a using nothing uses\n\npublic class UsersController\n", None),
+        ("//fix: Removed a using nothing declares\nusing System.Text.Json;\n", None),
         (
-            "//fix: Commented out a using nothing uses\n//using System.Text.Json;\n\n"
-            "public class UsersController\n",
+            "//fix: Commented out a using nothing declares\n//using UsersApi.Modles;\n"
+            "using System.Text.Json;\n",
             "a stray `using` is deleted, with its //fix: line where it was; never comment it out",
         ),
     ],
@@ -101,6 +104,8 @@ def test_a_stray_using_is_deleted_never_commented_out(
     tmp_path: Path, replace: str, reason: str | None
 ) -> None:
     setup = FixerSetup(tmp_path)
+    controller = setup.checked / CONTROLLER
+    controller.write_bytes(STRAY.encode() + controller.read_bytes())
     workspace = setup.service.prepare(RUN_ID, (ASSIGNMENT,), (), REPO, setup.fetched)
 
     application = setup.service.apply(workspace, [_using_fix(replace)], ASSIGNMENT, (ASSIGNMENT,))

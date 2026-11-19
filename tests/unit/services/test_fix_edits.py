@@ -4,14 +4,15 @@ from typing import Any
 
 import pytest
 
-from hw_checker.domain import EditKind, NoteSection, PlannedEdit, ReviewRole
+from hw_checker.domain import Assignment, EditKind, NoteSection, PlannedEdit, ReviewRole
 from hw_checker.services.fix_edits import EditRules, apply_edits, fallback_edit
-from hw_checker.services.fix_review import Allowances
+from hw_checker.services.fix_review import Allowances, repo_code
 from hw_checker.services.review_policy import role_policy
 from tests.unit.services.fixer_data import ASSIGNMENT, COURSE
 
 CONTROLLER = "Controllers/UsersController.cs"
 DATA = "users.json"
+SCRIPT = "Api/wwwroot/update.js"
 STYLES = {".cs": COURSE.profile.comment_style[".cs"]}
 STYLE = STYLES[".cs"]
 POLICY = role_policy(COURSE, ASSIGNMENT, (ASSIGNMENT,), ReviewRole.FIXER, (CONTROLLER, DATA))
@@ -422,3 +423,130 @@ def test_the_windows_separator_note_needs_a_windows_path_requirement(
             "requirement not checked because of `windows_path`, and no requirement of this "
             "repo was; leave it out"
         ]
+
+
+SAFE_ONLY_CODE = (
+    "using System.Text.Json;\n"
+    "using System.Text.Json;\n"
+    "using System.Linq;\n"
+    "\n"
+    "public class Users : ControllerBase\n"
+    "{\n"
+    '    private string path = "users.txt";\n'
+    "\n"
+    "    public void Put(int id, User user)\n"
+    "    {\n"
+    "        var users = Read();\n"
+    f"{SWITCH}"
+    "    }\n"
+    "}\n"
+)
+SAFE_ONLY_RULES = dataclasses.replace(
+    RULES,
+    allowances=Allowances(
+        detectors=POLICY.detectors,
+        approved_notes=POLICY.approved_notes,
+        styles=STYLES,
+        code=repo_code(files(SAFE_ONLY_CODE)),
+    ),
+)
+"""hw01's guardrails with the safe fixes of the real course in effect, reading the repo's
+code before the edits, as the fixing service does."""
+NOT_A_SAFE_FIX = "this change is not one of the safe fixes the rules allow; plan a note instead"
+
+
+@pytest.mark.parametrize(
+    ("find", "replace"),
+    [
+        (MISSING_BREAK, WITH_BREAK),
+        (
+            "        var users = Read();\n",
+            "        //fix: Keep the id, otherwise the user is saved without it\n"
+            "        user.id = id;\n        var users = Read();\n",
+        ),
+        (
+            '    private string path = "users.txt";\n',
+            "    //fix: readonly, the path never changes\n"
+            '    private readonly string path = "users.txt";\n',
+        ),
+        (
+            "using System.Text.Json;\nusing System.Text.Json;\n",
+            "//fix: Removed the duplicate using\nusing System.Text.Json;\n",
+        ),
+        (
+            "public class Users : ControllerBase\n",
+            "//fix: Controller suffix, the route stays the same\n"
+            "public class UsersController : ControllerBase\n",
+        ),
+    ],
+    ids=["break", "id", "readonly", "duplicate-using", "controller"],
+)
+def test_a_fix_a_safe_fix_detector_recognizes_is_applied(find: str, replace: str) -> None:
+    fix = edit(find=find, replace=replace)
+
+    result = apply_edits(files(SAFE_ONLY_CODE), [fix], SAFE_ONLY_RULES)
+
+    assert result.application.applied == (fix,)
+
+
+@pytest.mark.parametrize(
+    ("find", "replace"),
+    [
+        ("using System.Linq;\n", "//fix: Removed the unused using\n"),
+        (
+            "                count--;\n",
+            "                //fix: Count down by two\n                count -= 2;\n",
+        ),
+    ],
+    ids=["unused-using", "other-change"],
+)
+def test_a_fix_no_safe_fix_detector_recognizes_is_rejected(find: str, replace: str) -> None:
+    result = apply_edits(files(SAFE_ONLY_CODE), [edit(find=find, replace=replace)], SAFE_ONLY_RULES)
+
+    assert result.files == {}
+    assert reasons(result) == [NOT_A_SAFE_FIX]
+
+
+def test_a_note_next_to_a_rejected_fix_in_the_same_file_is_applied() -> None:
+    unused = edit(find="using System.Linq;\n", replace="//fix: Removed the unused using\n")
+    note = edit(
+        kind=EditKind.NOTE,
+        find="using System.Linq;\n",
+        replace="//This using isn't used in this file: you can remove it\nusing System.Linq;\n",
+        fallback_note=None,
+        note_section=NoteSection.FOR_YOU,
+    )
+
+    result = apply_edits(files(SAFE_ONLY_CODE), [unused, note], SAFE_ONLY_RULES)
+
+    assert result.application.applied == (note,)
+    assert reasons(result) == [NOT_A_SAFE_FIX]
+
+
+def test_hw01s_client_condition_fix_is_rejected_in_an_hw04_review() -> None:
+    script = "async function save() {\n    if (res.status = 200) {\n    }\n}\n"
+    hw03 = Assignment(id="hw03", order=3, title="Layers", requirements=())
+    hw04 = Assignment(id="hw04", order=4, title="Passwords", requirements=())
+    styles = {".js": COURSE.profile.comment_style[".js"]}
+
+    def condition_fix(assignment: Assignment) -> list[str]:
+        assignments = (ASSIGNMENT, hw03, hw04)
+        policy = role_policy(COURSE, assignment, assignments, ReviewRole.FIXER, (SCRIPT,))
+        rules = EditRules(
+            max_edits=5,
+            max_fix_lines=6,
+            styles=styles,
+            allowances=Allowances(
+                detectors=policy.detectors, approved_notes=policy.approved_notes, styles=styles
+            ),
+        )
+        fix = edit(
+            file=SCRIPT,
+            find="    if (res.status = 200) {\n",
+            replace="    //fix: === compares\n    if (res.status === 200) {\n",
+        )
+        return reasons(apply_edits({SCRIPT: script.encode("utf-8")}, [fix], rules))
+
+    assert condition_fix(ASSIGNMENT) == []
+    assert condition_fix(hw03) == []
+    assert condition_fix(hw04) == [NOT_A_SAFE_FIX]
