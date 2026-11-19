@@ -550,3 +550,18 @@ def test_hw01s_client_condition_fix_is_rejected_in_an_hw04_review() -> None:
     assert condition_fix(ASSIGNMENT) == []
     assert condition_fix(hw03) == []
     assert condition_fix(hw04) == [NOT_A_SAFE_FIX]
+
+
+def test_a_real_bug_fixed_in_code_is_rejected_for_a_note() -> None:
+    service = "Services/ProductService.cs"
+    bug = "        existing.Price = product.Stock;\n"
+    fix = edit(
+        file=service,
+        find=bug,
+        replace="        //fix: Save the stock in Stock\n        existing.Stock = product.Stock;\n",
+    )
+    rules = dataclasses.replace(SAFE_ONLY_RULES, editable=None)
+
+    result = apply_edits(files(extra={service: bug.encode("utf-8")}), [fix], rules)
+
+    assert reasons(result) == [NOT_A_SAFE_FIX]
