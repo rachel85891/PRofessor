@@ -211,6 +211,9 @@ examples:
     # Stage 18 (hw01 client task): the approved PRs' client items, as an invented repo.
     applies_to: [fixer, judge]
     files: [.html, .js]
+    # until hw03: it shows the client fixes, which end after hw03 (developer decision
+    # 2026-11-19, HW04 round review)
+    until: hw03
     situation: >-
       `wwwroot/update.js` looks up `#firstname`, but `wwwroot/update.html` has the id `name`
       (finding `hw01-client-element-ids`). The script also checks `if (res.status = 200)`,

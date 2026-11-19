@@ -229,16 +229,22 @@ def _replace(
     edited = text.replace(find.replace("\n", newline), replace.replace("\n", newline), 1)
     problem = _content_problem(path, find, replace, edit.kind, rules, style)
     if problem is None and rules.allowances is not None:
-        allowances = _after(rules.allowances, edit.file, edited)
-        problem = (
-            detector_problem(edit, allowances)
-            or _unsafe_fix_problem(edit, allowances)
-            or note_problem(edit, allowances)
+        problem = safe_fix_problem(edit, rules.allowances, edited) or note_problem(
+            edit, rules.allowances
         )
     if problem:
         return problem
     texts[path] = edited
     return None
+
+
+def safe_fix_problem(edit: PlannedEdit, allowances: Allowances, edited: str) -> str | None:
+    """Why a `fix` is not one of the safe fixes `allowances` allow, reading its file as the
+    edit leaves it (`edited`): a detector in effect refuses its shape, or no detector in
+    effect recognizes it (developer decision 2026-11-19; the self-review alone let such
+    fixes through). None for any other edit kind."""
+    after = _after(allowances, edit.file, edited)
+    return detector_problem(edit, after) or _unsafe_fix_problem(edit, after)
 
 
 def _after(allowances: Allowances, path: str, edited: str) -> Allowances:
@@ -250,8 +256,6 @@ def _after(allowances: Allowances, path: str, edited: str) -> Allowances:
 
 
 def _unsafe_fix_problem(edit: PlannedEdit, allowances: Allowances) -> str | None:
-    """A `fix` that no safe-fix detector in effect for its file recognizes (developer
-    decision 2026-11-19): the self-review alone let such fixes through."""
     if edit.kind is not EditKind.FIX or never_a_violation(edit, allowances) is not None:
         return None
     return "this change is not one of the safe fixes the rules allow; plan a note instead"
