@@ -504,8 +504,9 @@ class FixService:
             ExecutionEnvironmentError: the engine cannot be reached.
             InvalidAssignmentError: a requirement names an unknown check.
         """
+        uncovered = _uncovered(workspace.assignment_id, results, application)
         if not application.applied:
-            return VerifyResult(passed=True)
+            return VerifyResult(passed=True, uncovered=uncovered)
         failed_before = {f.requirement_id for result in results for f in result.findings}
         copy = workspace.working_copy
         label = f"{repo.repo_id}{FIX_LABEL}{attempt}"
@@ -553,6 +554,7 @@ class FixService:
             failing_fixes=tuple(sorted(blamed)),
             cleared=tuple(sorted(failed_before & passed_after)),
             blocked=tuple(blocked),
+            uncovered=uncovered,
         )
 
     def fall_back(
@@ -806,14 +808,24 @@ class FixService:
         )
 
     @staticmethod
-    def feedback(application: EditApplication, verification: VerifyResult | None) -> list[str]:
-        """What went wrong in an attempt, one line each, for the next plan."""
+    def feedback(
+        application: EditApplication,
+        verification: VerifyResult | None,
+        with_uncovered: bool = True,
+    ) -> list[str]:
+        """What went wrong in an attempt, one line each, for the next plan; `with_uncovered`,
+        also the failing requirements no edit claims."""
         lines = [
             f"Rejected {rejected.edit.kind.value} in {rejected.edit.file}: {rejected.reason}"
             for rejected in application.rejected
         ]
         if verification is not None and not verification.passed:
             lines += [f"Recheck failed: {problem}" for problem in verification.problems]
+        if verification is not None and verification.uncovered and with_uncovered:
+            lines.append(
+                "These failing requirements have no question or fix yet: "
+                f"{', '.join(f'`{item}`' for item in verification.uncovered)}"
+            )
         return lines
 
     def _shown_paths(self, paths: Sequence[str], assignments: Sequence[Assignment]) -> list[str]:
@@ -1076,6 +1088,25 @@ def _notes_only(
     ids = requirements | {f.id for f in findings if f.requirement_id in requirements}
     files = {path for path, owners in pointing.items() if owners <= requirements}
     return frozenset(ids), frozenset(files)
+
+
+def _uncovered(
+    assignment_id: str, results: Sequence[AssignmentResult], application: EditApplication
+) -> tuple[str, ...]:
+    """The requirements of `assignment_id` with a finding that no applied edit claims (by
+    requirement id or finding id), in the findings' order. A notes-only requirement is
+    claimed by its note."""
+    claimed = {item for edit in application.applied for item in edit.finding_ids}
+    return tuple(
+        dict.fromkeys(
+            finding.requirement_id
+            for result in results
+            for finding in result.findings
+            if finding.assignment_id == assignment_id
+            and finding.requirement_id not in claimed
+            and finding.id not in claimed
+        )
+    )
 
 
 def _failed(results: Sequence[AssignmentResult]) -> set[str]:

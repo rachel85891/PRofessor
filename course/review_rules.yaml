@@ -307,6 +307,24 @@ rules:
       quote: "developer decision 2026-11-16 (full-round review)"
     status: approved
 
+  - id: every-failing-requirement
+    # The HW04 round left about 15 failing requirements with no question (PUT accepting a
+    # weak password with 200, no password service or controller, 204 for a wrong login).
+    # The code asks once more for the review's own failing requirements that no edit
+    # claims (services/fixing.py, `uncovered`).
+    applies_to: [fixer]
+    kind: style
+    text: >-
+      Every failing requirement of {short_name} gets at least one question or note in the
+      code (or a fix, where the rules allow one), on the line where the student should
+      work, and that edit lists the requirement's id in `finding_ids`. When the code it
+      needs does not exist yet (for example there is no password service), put the
+      question where that code would be used, and ask where it is.
+    origin:
+      source: developer
+      quote: "developer decision 2026-11-19 (HW04 round review)"
+    status: approved
+
 examples:
   - id: break-and-naming
     # Moved from code in stage 3f.

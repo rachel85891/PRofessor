@@ -1,5 +1,5 @@
 {#- The fixer's prompt (role: fixer). Version 7, 2026-11-19: a notes-only file type
-    (`fix_styles` leaves it out). Version 6, stage 18: a frame; the audience, rules,
+    (`fix_styles` leaves it out), and a note about a failing requirement lists its id. Version 6, stage 18: a frame; the audience, rules,
     examples and the comment style of each file type shown come from `course/` and the
     assignments' files (ADR 0023). `styles` groups the shown types by comment style. -#}
 {% set style = styles | first %}
@@ -23,7 +23,7 @@ Return a `FixPlan`: `edits` (at most {{ max_edits }}) and `files_notes`. Each ed
   - `final_newline`: adds the missing final newline to the data file ({{ data_files | join(", ") if data_files else "none in this repo" }}); `find` and `replace` may be empty.
 - `find`: text copied exactly from the file, long enough to occur exactly once (include the line's indentation).
 - `replace`: the new text for `find`.
-- `finding_ids`: the requirement ids the edit addresses (from the requirements below); empty for a naming note or a question.
+- `finding_ids`: the requirement ids the edit addresses (from the requirements below), for a fix and for a question or note about a failing requirement; empty for a naming note or another question.
 - `reason`: one sentence.
 - `fallback_note`: for a `fix`, the comment to keep if the fix is dropped; otherwise null.
 - `note_section`: for a `note`, the PR section it belongs in: `names` for a naming note{% if languages %} ({{ languages }} conventions){% endif %}, `for_you` for a question or an instruction for the student. Each note belongs in exactly one section. Null for `fix` and `final_newline`.

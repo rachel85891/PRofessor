@@ -14,7 +14,9 @@ from hw_checker.domain import (
     EditKind,
     ExecutionResult,
     FailureKind,
+    Feedback,
     FixPlan,
+    NoteSection,
     ProposalStatus,
     PublishOutcome,
     PullRequestText,
@@ -467,3 +469,58 @@ def test_the_gate_shows_the_fixers_proposal_and_publishes_it(tmp_path: Path) -> 
     assert pull.body == proposal.pr_body
     assert pull.body.startswith(PR_TEXT.opening)
     assert "__interrupt__" not in done
+
+
+# ------------------------------------------- every failing requirement gets an edit (2026-11-19)
+
+UNCOVERED = "These failing requirements have no question or fix yet: `hw01-http`"
+HTTP_NOTE = NAMING_NOTE.model_copy(
+    update={
+        "replace": "        //Why does the update return 400?\n        int New_Count = count;\n",
+        "finding_ids": ("hw01-http",),
+        "note_section": NoteSection.FOR_YOU,
+        "reason": "The update is answered with 400.",
+    }
+)
+
+
+def test_a_failing_requirement_no_edit_claims_is_fed_back_once(tmp_path: Path) -> None:
+    failing = builders.finding(requirement_id="hw01-http", assignment_id="hw01")
+    fixer = llm(NOTE_PLAN, NOTE_PLAN, NOTE_PLAN)
+    harness = one_repo(
+        tmp_path, fixer, outcomes={"hw01-http": (failing,)}, fixer_overrides={"max_attempts": 3}
+    )
+
+    harness.run()
+
+    assert roles(fixer) == ["fixer", "judge", "fixer", "judge", "writer"]
+    assert UNCOVERED not in fixer.calls[0].prompt
+    assert UNCOVERED in fixer.calls[2].prompt
+    [proposal] = harness.storage.proposals.list_for_run("run-1")
+    assert "camelCase" in proposal.diff
+
+
+def test_a_general_finding_no_edit_claims_is_not_fed_back(tmp_path: Path) -> None:
+    general = builders.finding(requirement_id="_general-build", assignment_id="_general")
+    fixer = llm(NOTE_PLAN, NOTE_PLAN)
+    harness = one_repo(tmp_path, fixer, outcomes={"_general-build": (general,)})
+
+    harness.run()
+
+    assert roles(fixer) == ["fixer", "judge", "writer"]
+
+
+def test_a_notes_only_requirement_is_covered_by_its_note(tmp_path: Path) -> None:
+    [general, hw01, hw02] = CATALOG
+    build, http = hw01.requirements
+    notes_only = http.model_copy(update={"feedback": Feedback.NOTES_ONLY})
+    catalog = (general, hw01.model_copy(update={"requirements": (build, notes_only)}), hw02)
+    failing = builders.finding(requirement_id="hw01-http", assignment_id="hw01")
+    fixer = llm(FixPlan(edits=(HTTP_NOTE,), files_notes=()), NOTE_PLAN)
+    harness = one_repo(tmp_path, fixer, catalog=catalog, outcomes={"hw01-http": (failing,)})
+
+    harness.run()
+
+    assert roles(fixer) == ["fixer", "judge", "writer"]
+    [proposal] = harness.storage.proposals.list_for_run("run-1")
+    assert "Why does the update return 400?" in proposal.diff
