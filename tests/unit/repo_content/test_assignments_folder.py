@@ -16,9 +16,11 @@ from hw_checker.domain import (
     Feedback,
     ItemStatus,
     RequirementKind,
+    ReviewRole,
     Severity,
 )
 from hw_checker.services.assignments import AssignmentCatalogService
+from hw_checker.services.review_policy import role_policy
 
 
 def catalog() -> AssignmentCatalogService:
@@ -229,6 +231,26 @@ def test_hw04_is_approved_for_every_repo_and_builds_on_hw01_create() -> None:
         assert f" {route}," in intake
     button = requirements["hw04-client-button"]
     assert (button.severity, button.feedback) == (Severity.MAJOR, Feedback.NOTES_ONLY)
+
+
+CLIENT_FIXES = {"client-reference-fix", "client-condition-fix"}
+
+
+def test_hw01s_client_fixes_end_after_hw03() -> None:
+    source = YamlAssignmentSource(REPO_ROOT / "assignments", REPO_ROOT / "course")
+    course, assignments = source.load_course(), catalog().list_assignments()
+    rules = {rule.text: rule.id for a in assignments for rule in a.review_rules.rules}
+
+    def in_effect(assignment_id: str, role: ReviewRole) -> set[str]:
+        (assignment,) = by_id(assignment_id)
+        policy = role_policy(course, assignment, assignments, role, ("wwwroot/index.js",))
+        return {rules[text] for text in policy.rules if text in rules}
+
+    for role in (ReviewRole.FIXER, ReviewRole.JUDGE):
+        assert in_effect("hw01", role) >= CLIENT_FIXES
+        assert in_effect("hw03", role) >= CLIENT_FIXES
+        assert not CLIENT_FIXES & in_effect("hw04", role)
+        assert "client-questions" in in_effect("hw04", role)
 
 
 def _plain(value: object) -> object:
