@@ -80,6 +80,8 @@ class ProjectReferenceEvidence(DomainModel):
     source_project: EvidencePath
     target_project: EvidencePath | None
     status: ProjectReferenceStatus
+    line: int | None = Field(default=None, ge=1)
+    """The line of the `<ProjectReference` in the source project; None when unknown."""
 
 
 class ProjectEvidence(DomainModel):

@@ -56,6 +56,7 @@ from hw_checker.domain import (
     ArchitectureSignalKind,
     CheckInput,
     CheckPassed,
+    Evidence,
     EvidenceCoverageStatus,
     Finding,
     NotEvaluatedReason,
@@ -244,7 +245,9 @@ def layer_projects(check_input: CheckInput, params: LayerProjectsParams) -> Chec
     reads_architecture=True,
 )
 def layer_references(check_input: CheckInput, params: LayerReferencesParams) -> CheckResult:
-    """One finding listing the missing required references and the forbidden ones."""
+    """One finding listing the missing required references and the forbidden ones. A
+    forbidden one is located at its `<ProjectReference>` line in the source project, and
+    the first located one is the finding's evidence: the note goes on that line."""
     found = _layers(check_input, params, signals=False)
     if not isinstance(found, tuple):
         return found
@@ -273,7 +276,7 @@ def layer_references(check_input: CheckInput, params: LayerReferencesParams) -> 
                     )
                 )
             )
-    for source, target in edges:
+    for source, target, line in edges:
         from_role = roles.role_of_project.get(source)
         to_role = roles.role_of_project.get(target)
         if from_role is None or to_role is None:
@@ -290,10 +293,14 @@ def layer_references(check_input: CheckInput, params: LayerReferencesParams) -> 
                         target=code(project_name(target)),
                         source_role=from_role,
                         target_role=to_role,
-                    )
+                    ),
+                    source if line else "",
+                    line or 0,
                 )
             )
-    return _finding(check_input, LAYER_REFERENCES, problems)
+    located = next((problem for problem in problems if problem.file), None)
+    quoted = _line_evidence(check_input, located) if located else None
+    return _finding(check_input, LAYER_REFERENCES, problems, quoted)
 
 
 @check(
@@ -624,17 +631,32 @@ def _finding(
     check_input: CheckInput,
     template: MessageTemplate,
     problems: list[_Problem],
+    evidence: Evidence | None = None,
     **fields: str | int | Localized,
 ) -> tuple[Finding, ...]:
     if not problems:
         return ()
     examples = joined_examples(problem.example() for problem in problems[:MAX_EXAMPLES])
     message = template.render(examples=examples, count=len(problems), **fields)
-    return (deterministic_finding(check_input, message, [p.fact for p in problems]),)
+    facts = [p.fact for p in problems]
+    return (deterministic_finding(check_input, message, facts, evidence),)
+
+
+def _line_evidence(check_input: CheckInput, problem: _Problem) -> Evidence | None:
+    """The problem's line as a finding's evidence, quoted from the repo; None when the
+    line cannot be read."""
+    text = read_source(check_input.repo_dir, problem.file)
+    lines = text.splitlines() if text is not None else []
+    quote = lines[problem.line - 1].strip() if 0 < problem.line <= len(lines) else ""
+    if not quote:
+        return None
+    return Evidence(
+        file_path=problem.file, line_start=problem.line, line_end=problem.line, quote=quote
+    )
 
 
 def _references(
-    edges: list[tuple[str, str]],
+    edges: list[tuple[str, str, int | None]],
     sources: tuple[str, ...],
     targets: tuple[str, ...],
     *,
@@ -643,7 +665,7 @@ def _references(
     """Whether a project of `sources` references one of `targets`: directly, or with
     `transitive` through other projects (SDK-style references flow through)."""
     following: dict[str, set[str]] = {}
-    for source, target in edges:
+    for source, target, _ in edges:
         following.setdefault(source, set()).add(target)
     reached: set[str] = set()
     frontier = {target for source in sources for target in following.get(source, ())}
@@ -659,18 +681,19 @@ def _references(
     return False
 
 
-def _reference_edges(evidence: ArchitectureEvidence) -> list[tuple[str, str]]:
-    """The project references as (source, target) project files of the inventory. A
+def _reference_edges(evidence: ArchitectureEvidence) -> list[tuple[str, str, int | None]]:
+    """The project references as (source, target, line) project files of the inventory and
+    the reference's line in the source project (None when unknown). A
     reference written with other letter case (`case_mismatched`) is still a reference here:
     the build and file-reference checks own the letter case."""
     by_lower = {project.lower(): project for project in evidence.project_files}
-    edges: list[tuple[str, str]] = []
+    edges: list[tuple[str, str, int | None]] = []
     for reference in evidence.project_references:
         if reference.status not in _REFERENCED or reference.target_project is None:
             continue
         target = by_lower.get(reference.target_project.lower())
         if target is not None:
-            edges.append((reference.source_project, target))
+            edges.append((reference.source_project, target, reference.line))
     return edges
 
 

@@ -446,3 +446,27 @@ def test_symlinked_source_is_skipped_when_supported(tmp_path: Path) -> None:
     assert EvidenceIssueKind.UNSAFE_PATH_SKIPPED in {
         issue.kind for issue in evidence.inventory_coverage.issues
     }
+
+
+def test_each_project_reference_has_the_line_of_its_tag(tmp_path: Path) -> None:
+    write(
+        tmp_path,
+        "Api/Api.csproj",
+        "<Project>\n"
+        "  <ItemGroup>\n"
+        '    <!-- <ProjectReference Include="../Old/Old.csproj" /> -->\n'
+        '    <ProjectReference Include="../Core/Core.csproj" />\n'
+        "    <ProjectReference\n"
+        '      Include="../Data/Data.csproj" />\n'
+        "  </ItemGroup>\n"
+        "</Project>\n",
+    )
+    write(tmp_path, "Core/Core.csproj", "<Project />")
+    write(tmp_path, "Data/Data.csproj", "<Project />")
+
+    evidence = LocalArchitectureEvidenceReader().scan(tmp_path)
+
+    assert [(r.target_project, r.line) for r in evidence.project_references] == [
+        ("Core/Core.csproj", 4),
+        ("Data/Data.csproj", 5),
+    ]

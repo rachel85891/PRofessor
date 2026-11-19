@@ -94,6 +94,8 @@ class FixState(FixInput, FixOutput):
     review: NotRequired[SelfReview | None]
     verification: NotRequired[VerifyResult]
     fell_back: NotRequired[bool]
+    uncovered_asked: NotRequired[bool]
+    """Set once the uncovered failing requirements were fed back; they are asked for once."""
     pr_title: NotRequired[str]
     pr_body: NotRequired[str]
     failed: NotRequired[bool]
@@ -264,10 +266,13 @@ def build_fix_graph(
         return step("verify", state, work)
 
     def next_attempt(state: FixState) -> Update:
+        asked = state.get("uncovered_asked", False)
+        verification = state["verification"]
         return {
             "attempt": state["attempt"] + 1,
-            "feedback": FixService.feedback(state["application"], state["verification"]),
+            "feedback": FixService.feedback(state["application"], verification, not asked),
             "kept": list(state["application"].applied),
+            "uncovered_asked": asked or bool(verification.uncovered),
         }
 
     def use_best(state: FixState) -> Update:
@@ -356,7 +361,8 @@ def build_fix_graph(
         verification, application = state["verification"], state["application"]
         if state.get("fell_back"):
             return _finish(application) if verification.passed else "give_up"
-        revise = bool(application.rejected) or not verification.passed
+        uncovered = bool(verification.uncovered) and not state.get("uncovered_asked", False)
+        revise = bool(application.rejected) or not verification.passed or uncovered
         if revise and state["attempt"] < fixing.max_attempts:
             return "next_attempt"
         best = best_attempt(state.get("tried", []))

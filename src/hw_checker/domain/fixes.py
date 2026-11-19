@@ -125,6 +125,9 @@ class VerifyResult(DomainModel):
     """Requirements that failed before (had a finding) and pass on the fix working copy."""
     blocked: tuple[str, ...] = ()
     """Claims not held against their fix, because a requirement they depend on still fails."""
+    uncovered: tuple[str, ...] = ()
+    """The review's own assignment's failing requirements that no applied edit claims (no
+    fix, question or note lists them); asked for once more, never held against a fix."""
 
 
 class FixAttempt(DomainModel):

@@ -165,9 +165,12 @@ def _path_problem(
         return f"{path} does not exist; edits never add, delete or rename files"
     if kind is EditKind.FINAL_NEWLINE:
         return None if path in rules.data_files else f"{path} is not the data file"
-    if rules.style(path) is None:
+    style = rules.style(path)
+    if style is None:
         suffixes = " or ".join(rules.styles)
         return f"{path} is not a {suffixes} file; only {suffixes} files are edited"
+    if kind is EditKind.FIX and style.notes_only:
+        return f"{path} gets notes only; plan a note, not a fix"
     if rules.editable is not None and path not in rules.editable:
         return f"{path} was not shown to you; only the files shown are edited"
     return None

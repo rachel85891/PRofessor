@@ -85,7 +85,9 @@ rules:
     status: approved
 
   - id: naming
-    # Moved from code in stage 3f.
+    # Moved from code in stage 3f. The stored-property note and its example: the HW04 round
+    # read "use PropertyNameCaseInsensitive instead of renaming"; the option is what makes
+    # a rename safe, not an alternative to it.
     applies_to: [fixer, judge]
     kind: note_only
     files: [.cs]
@@ -93,9 +95,17 @@ rules:
     text: >-
       Naming (C# conventions) is in scope, as notes only: PascalCase types, properties and
       methods; camelCase locals; files named after their type; uncommon file names; unclear
-      abbreviations. Never rename a stored model property: System.Text.Json is
-      case-sensitive, so the existing data file would stop loading. Add a note with the
-      `PropertyNameCaseInsensitive` tip instead.
+      abbreviations. Never rename a stored model property yourself: System.Text.Json is
+      case-sensitive, so the existing data file would stop loading. The note on a stored
+      property says, in this order: the name to use (PascalCase); that the data file stores
+      the current names; that if the student renames them, they set
+      `PropertyNameCaseInsensitive = true` in the `JsonSerializerOptions`, so the existing
+      file still loads. The option is what makes the rename safe, never an alternative to
+      renaming: write the note in the wording of this rule's example.
+    example:
+      file: Models/Product.cs
+      find: "    public string name { get; set; }"
+      replace: "    //In C#, properties are written in PascalCase: Name. products.json stores the current names: if you rename them, set PropertyNameCaseInsensitive = true in the JsonSerializerOptions, so the existing file still loads\n    public string name { get; set; }"
     approved_notes:
       - words: PropertyNameCaseInsensitive
         what: a naming note with the PropertyNameCaseInsensitive tip
@@ -103,7 +113,9 @@ rules:
       A naming note with the `PropertyNameCaseInsensitive` tip for a stored model property.
     origin:
       source: developer
-      quote: "docs/fix-pr-workflow.md §3, rule 7"
+      quote: >-
+        docs/fix-pr-workflow.md §3, rule 7; the stored-property note and its example:
+        developer decision 2026-11-19 (HW04 round review)
     status: approved
 
   - id: property-declarations
@@ -140,16 +152,24 @@ rules:
     applies_to: [fixer, writer]
     kind: note_only
     when_found: [gen-gitignore, gen-no-build-output]
+    # Reworded on 2026-11-19: the HW04 round copied the old fixed sentence word for word,
+    # saying `bin/` and `obj/` (and "build output") for `.vs/` or `*.csproj.user`, and
+    # "Add a `.gitignore`" when one existed.
     text: >-
       A failed repository requirement (no `.gitignore` that leaves out build and IDE files,
-      or build or IDE folders committed) becomes one item in `files_notes`, never an edit:
-      one item for both findings, in the approved PRs' wording ("The `bin/` and `obj/`
-      folders are in the repository. They are build output and should not be committed.
-      Add a `.gitignore` (in Visual Studio: Git > Settings, or `dotnet new gitignore`) and
-      remove them from the repository.").
+      or build or IDE files committed) becomes one item in `files_notes`, never an edit:
+      one item for both findings, in the approved PRs' style. The item names the files and
+      folders the findings list, and calls each what it is: `bin/` and `obj/` are build
+      output, `.vs/` and `*.user` files are Visual Studio files; say that they should not
+      be committed. Say "Add a `.gitignore` (in Visual Studio: Git > Settings, or `dotnet
+      new gitignore`)" only when the `gen-gitignore` finding says the repository has no
+      `.gitignore`; when it has one that misses entries, say which entries to add to it.
+      End with how to remove the files from the repository.
     origin:
       source: developer
-      quote: "the approved PRs, one Files item (stage 17 pilot run, 2026-11-05)"
+      quote: >-
+        the approved PRs, one Files item (stage 17 pilot run, 2026-11-05); naming what was
+        found: developer decision 2026-11-19 (HW04 round review)
     status: approved
 
   - id: student-level
@@ -293,6 +313,24 @@ rules:
     origin:
       source: developer
       quote: "developer decision 2026-11-16 (full-round review)"
+    status: approved
+
+  - id: every-failing-requirement
+    # The HW04 round left about 15 failing requirements with no question (PUT accepting a
+    # weak password with 200, no password service or controller, 204 for a wrong login).
+    # The code asks once more for the review's own failing requirements that no edit
+    # claims (services/fixing.py, `uncovered`).
+    applies_to: [fixer]
+    kind: style
+    text: >-
+      Every failing requirement of {short_name} gets at least one question or note in the
+      code (or a fix, where the rules allow one), on the line where the student should
+      work, and that edit lists the requirement's id in `finding_ids`. When the code it
+      needs does not exist yet (for example there is no password service), put the
+      question where that code would be used, and ask where it is.
+    origin:
+      source: developer
+      quote: "developer decision 2026-11-19 (HW04 round review)"
     status: approved
 
 examples:

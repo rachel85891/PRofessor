@@ -164,7 +164,8 @@ def test_nothing_is_rebuilt_when_nothing_was_applied(tmp_path: Path) -> None:
 
     result, _, _ = verified(setup)
 
-    assert result == VerifyResult(passed=True)
+    # Nothing claims the failing requirement: it is asked for once more (part 3, 2026-11-19).
+    assert result == VerifyResult(passed=True, uncovered=("hw01-update",))
     assert setup.runner.requests == []
 
 

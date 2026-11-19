@@ -20,6 +20,19 @@
           "default": "",
           "title": "End",
           "type": "string"
+        },
+        "notes_only": {
+          "default": false,
+          "title": "Notes Only",
+          "type": "boolean"
+        },
+        "when_found": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "When Found",
+          "type": "array"
         }
       },
       "required": [

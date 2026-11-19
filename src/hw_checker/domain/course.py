@@ -7,7 +7,7 @@ model per file: `CourseProfile` is `course/course.yaml`, `ReviewRuleSet` is a
 """
 
 import re
-from collections.abc import Mapping, Sequence
+from collections.abc import Collection, Mapping, Sequence
 from enum import StrEnum
 from typing import Annotated, Self
 
@@ -330,6 +330,11 @@ class CommentStyle(DomainModel):
     """What starts the line that marks a code change; it starts with `line`."""
     end: str = ""
     """What closes a comment line, for languages that need it."""
+    notes_only: bool = False
+    """Files of this type get notes only, never a `fix`."""
+    when_found: tuple[Identifier, ...] = ()
+    """The requirements this style is for: files of this type are edited only when one of
+    them has a finding, so other prompts do not show the style. Empty: always."""
 
     @model_validator(mode="after")
     def _marker_is_a_comment(self) -> Self:
@@ -450,6 +455,15 @@ class CourseProfile(DomainModel):
             (style for suffix, style in self.comment_style.items() if path.endswith(suffix)),
             None,
         )
+
+    def styles(self, found: Collection[str] = ()) -> dict[str, CommentStyle]:
+        """The comment styles in effect when the requirements `found` have a finding: a
+        style `when_found` is left out when none of its requirements has one."""
+        return {
+            suffix: style
+            for suffix, style in self.comment_style.items()
+            if not style.when_found or any(item in found for item in style.when_found)
+        }
 
 
 class Course(DomainModel):

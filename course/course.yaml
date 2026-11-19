@@ -42,6 +42,16 @@ comment_style:
     line: "/*"
     fix_marker: "/*fix:"
     end: "*/"
+  # Developer decision 2026-11-19 (HW04 round review): a layer-reference finding is noted
+  # on its `<ProjectReference>` line. Notes only, and only when such a finding exists, so
+  # every other prompt is unchanged.
+  .csproj:
+    language: XML
+    line: "<!--"
+    fix_marker: "<!--fix:"
+    end: "-->"
+    notes_only: true
+    when_found: [hw02-references, hw03-references]
 
 pr_format:
   opening: "Hi! "

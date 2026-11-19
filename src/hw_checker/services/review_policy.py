@@ -149,7 +149,7 @@ def role_policy(
     ]
     edited = [
         suffix
-        for suffix in course.profile.comment_style
+        for suffix in course.profile.styles(found)
         if any(path.endswith(suffix) for path in files)
     ]
     numbers = {rule.id: number for number, rule in enumerate(rules, start=1)}
