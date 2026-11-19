@@ -85,7 +85,9 @@ rules:
     status: approved
 
   - id: naming
-    # Moved from code in stage 3f.
+    # Moved from code in stage 3f. The stored-property note and its example: the HW04 round
+    # read "use PropertyNameCaseInsensitive instead of renaming"; the option is what makes
+    # a rename safe, not an alternative to it.
     applies_to: [fixer, judge]
     kind: note_only
     files: [.cs]
@@ -93,9 +95,17 @@ rules:
     text: >-
       Naming (C# conventions) is in scope, as notes only: PascalCase types, properties and
       methods; camelCase locals; files named after their type; uncommon file names; unclear
-      abbreviations. Never rename a stored model property: System.Text.Json is
-      case-sensitive, so the existing data file would stop loading. Add a note with the
-      `PropertyNameCaseInsensitive` tip instead.
+      abbreviations. Never rename a stored model property yourself: System.Text.Json is
+      case-sensitive, so the existing data file would stop loading. The note on a stored
+      property says, in this order: the name to use (PascalCase); that the data file stores
+      the current names; that if the student renames them, they set
+      `PropertyNameCaseInsensitive = true` in the `JsonSerializerOptions`, so the existing
+      file still loads. The option is what makes the rename safe, never an alternative to
+      renaming: write the note in the wording of this rule's example.
+    example:
+      file: Models/Product.cs
+      find: "    public string name { get; set; }"
+      replace: "    //In C#, properties are written in PascalCase: Name. products.json stores the current names: if you rename them, set PropertyNameCaseInsensitive = true in the JsonSerializerOptions, so the existing file still loads\n    public string name { get; set; }"
     approved_notes:
       - words: PropertyNameCaseInsensitive
         what: a naming note with the PropertyNameCaseInsensitive tip
@@ -103,7 +113,9 @@ rules:
       A naming note with the `PropertyNameCaseInsensitive` tip for a stored model property.
     origin:
       source: developer
-      quote: "docs/fix-pr-workflow.md §3, rule 7"
+      quote: >-
+        docs/fix-pr-workflow.md §3, rule 7; the stored-property note and its example:
+        developer decision 2026-11-19 (HW04 round review)
     status: approved
 
   - id: property-declarations

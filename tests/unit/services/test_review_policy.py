@@ -11,6 +11,7 @@ from tests.unit.services.fixer_data import (
     CONTROLLER,
     COURSE,
     HW01_RULES,
+    NAMING_NOTE,
     REPO,
     RESULTS,
     RUN_ID,
@@ -140,7 +141,7 @@ def test_a_rules_own_example_is_shown_after_the_examples(tmp_path: Path) -> None
     policy = role_policy(COURSE, hw, (HW01, hw), ReviewRole.FIXER, (CONTROLLER,))
     number = policy.rules.index(rule.text) + 1
     # The course's own rule examples come first; this one follows them.
-    assert f"Example 5. An edit that follows rule {number}.\n\n```json\n" in prompt
+    assert f"Example 6. An edit that follows rule {number}.\n\n```json\n" in prompt
     assert '"find": "x;"' in prompt
 
 
@@ -161,3 +162,27 @@ def test_hw01s_not_yet_taught_rule_stops_after_hw01(tmp_path: Path) -> None:
     assert NOT_YET_TAUGHT not in hw02_prompt
     judge = role_policy(COURSE, layers, (HW01, layers), ReviewRole.JUDGE).rules
     assert not any(NOT_YET_TAUGHT in text for text in judge)
+
+
+STORED_NAME_NOTE = (
+    "The note on a stored property says, in this order: the name to use (PascalCase); that "
+    "the data file stores the current names; that if the student renames them, they set "
+    "`PropertyNameCaseInsensitive = true` in the `JsonSerializerOptions`"
+)
+
+
+def test_the_fixer_and_judge_prompts_show_the_naming_rules_stored_property_note(
+    tmp_path: Path,
+) -> None:
+    setup = FixerSetup(tmp_path)
+    workspace = setup.service.prepare(RUN_ID, (HW01,), (), REPO, setup.fetched)
+    plan = setup.service.plan_prompt(workspace, HW01, (HW01,), RESULTS, 1)
+    application = setup.service.apply(workspace, [NAMING_NOTE], HW01, (HW01,))
+    setup.service.self_review(RUN_ID, workspace, HW01, (HW01,), application)
+    [judge] = setup.llm.calls
+
+    for prompt in (plan, judge.prompt):
+        assert STORED_NAME_NOTE in prompt
+        assert "the `PropertyNameCaseInsensitive` tip instead" not in prompt
+        # The rule's own example: the rename made safe by the option, never instead of it.
+        assert "if you rename them, set PropertyNameCaseInsensitive = true" in prompt
