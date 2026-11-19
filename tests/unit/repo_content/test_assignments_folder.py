@@ -282,3 +282,27 @@ def _plain(value: object) -> object:
     if isinstance(value, Mapping):
         return {key: _plain(item) for key, item in value.items()}
     return value
+
+
+PUBLIC_NOTE = "The assignment asks layer classes to be public: write public class UserService"
+
+
+def test_hw03s_public_class_note_is_shown_only_for_a_classes_public_finding() -> None:
+    source = YamlAssignmentSource(REPO_ROOT / "assignments", REPO_ROOT / "course")
+    course, assignments = source.load_course(), catalog().list_assignments()
+    (hw03,) = by_id("hw03")
+    rule = next(rule for rule in hw03.review_rules.rules if rule.id == "public-class-note")
+
+    def shown(role: ReviewRole, *found: str) -> bool:
+        policy = role_policy(course, hw03, assignments, role, ("Services/UserService.cs",), found)
+        return any(PUBLIC_NOTE in example.plan for example in policy.examples)
+
+    assert rule.origin.quote == "developer decision 2026-11-19 (HW04 round review)"
+    assert [note.words for note in rule.approved_notes] == [
+        "The assignment asks layer classes to be public"
+    ]
+    for role in (ReviewRole.FIXER, ReviewRole.JUDGE):
+        assert not shown(role)
+        assert not shown(role, "hw03-service-interfaces")
+        assert shown(role, "hw03-service-classes-public")
+        assert shown(role, "hw03-repository-classes-public")

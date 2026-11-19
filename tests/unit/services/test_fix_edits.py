@@ -565,3 +565,15 @@ def test_a_real_bug_fixed_in_code_is_rejected_for_a_note() -> None:
     result = apply_edits(files(extra={service: bug.encode("utf-8")}), [fix], rules)
 
     assert reasons(result) == [NOT_A_SAFE_FIX]
+
+
+def test_a_fix_that_makes_a_class_public_is_rejected_for_the_note() -> None:
+    declaration = "class Users : ControllerBase\n"
+    fix = edit(
+        find=declaration,
+        replace=f"//fix: The class should be public\npublic {declaration}",
+    )
+
+    result = apply_edits(files(declaration), [fix], SAFE_ONLY_RULES)
+
+    assert reasons(result) == [NOT_A_SAFE_FIX]

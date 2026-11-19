@@ -52,6 +52,27 @@ rules:
       quote: "developer decision 2026-11-10 (planner/tasks/hw02-hw03-layers-di-draft.md)"
     status: approved
 
+  - id: public-class-note
+    applies_to: [fixer, judge]
+    kind: note_only
+    when_found: [hw03-service-classes-public, hw03-repository-classes-public]
+    text: >-
+      When a service or repository class is not `public`, add a note above that class, in
+      the wording of this rule's example; never change the declaration.
+    example:
+      file: Services/UserService.cs
+      find: "    class UserService : IUserService"
+      replace: "    //The assignment asks layer classes to be public: write public class UserService\n    class UserService : IUserService"
+    approved_notes:
+      - words: The assignment asks layer classes to be public
+        what: the note about a layer class that is not public
+    never_a_violation: >-
+      The note of rule {rule:public-class-note} about a layer class that is not public.
+    origin:
+      source: developer
+      quote: "developer decision 2026-11-19 (HW04 round review)"
+    status: approved
+
   - id: registration-note
     applies_to: [fixer, judge]
     kind: note_only
