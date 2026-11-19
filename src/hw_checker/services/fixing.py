@@ -11,7 +11,7 @@ import fnmatch
 import hashlib
 import json
 import logging
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Collection, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Any
@@ -282,7 +282,7 @@ class FixService:
                 shown_paths,
                 _failed(results),
             )
-            styles = self._styles(shown_paths)
+            styles = self._styles(shown_paths, _failed(results))
             naming_languages = (
                 style.language
                 for suffix, style in styles.items()
@@ -304,6 +304,12 @@ class FixService:
                     "omitted": omitted,
                     "edited_suffixes": list(styles),
                     "styles": _style_groups(styles),
+                    "fix_styles": _style_groups(
+                        {suffix: style for suffix, style in styles.items() if not style.notes_only}
+                    ),
+                    "notes_only_suffixes": joined(
+                        f"`{suffix}`" for suffix, style in styles.items() if style.notes_only
+                    ),
                     "languages": joined(dict.fromkeys(naming_languages)),
                 },
             )
@@ -341,7 +347,7 @@ class FixService:
         policy = role_policy(
             self._course, assignment, assignments, ReviewRole.FIXER, selected, _failed(results)
         )
-        styles = self._styles(selected)
+        styles = self._styles(selected, _failed(results))
         notes_only, notes_only_files = _notes_only(assignments, results)
         rules = EditRules(
             max_edits=self._config.max_edits,
@@ -815,7 +821,8 @@ class FixService:
         files with a comment style first), the files the assignments review (`reviewed_files`),
         then configuration and data. Only these files are edited."""
         code = [p for p in paths if PurePosixPath(p).suffix in self._config.source_suffixes]
-        code.sort(key=lambda path: (self._course.profile.style_for(path) is None, path))
+        always = self._course.profile.styles()
+        code.sort(key=lambda path: (not any(path.endswith(s) for s in always), path))
         globs = [a.reviewed_files for a in assignments if a.reviewed_files is not None]
         reviewed = sorted(p for p in paths if any(files.matches(p) for files in globs))
         configs = [p for p in paths if self._matches(p, self._config.config_globs)]
@@ -854,10 +861,11 @@ class FixService:
         paths = self._files.list_files(root, frozenset(self._config.skip_dirs))
         return {path: self._files.read_bytes(root, path) for path in paths}
 
-    def _styles(self, shown: Sequence[str]) -> dict[str, CommentStyle]:
-        """The comment styles of the `shown` files' types, in the course's order: the files
-        that may be edited. All of the course's styles when no shown file has one."""
-        styles = self._course.profile.comment_style
+    def _styles(self, shown: Sequence[str], found: Collection[str]) -> dict[str, CommentStyle]:
+        """The comment styles of the `shown` files' types in effect for the requirements
+        `found` with a finding, in the course's order: the files that may be edited. All of
+        the styles in effect when no shown file has one."""
+        styles = self._course.profile.styles(found)
         used = {
             suffix: style
             for suffix, style in styles.items()

@@ -31,6 +31,8 @@ _DRIVE_PATH = re.compile(r"^[A-Za-z]:")
 _SAFE_SDK_REFERENCE = re.compile(r"^[A-Za-z0-9._/-]{1,256}$")
 _UNSUPPORTED_PATH = re.compile(r"[$*?\[\]{}]")
 _DOCTYPE = re.compile(r"<!\s*DOCTYPE\b", re.IGNORECASE)
+_XML_COMMENT = re.compile(r"<!--.*?-->", re.DOTALL)
+_REFERENCE_TAG = re.compile(r"<(?:[\w.-]+:)?ProjectReference\b")
 
 
 def inventory_files(root: Path) -> tuple[tuple[str, ...], EvidenceCoverageIssue | None]:
@@ -179,9 +181,9 @@ def read_project(
         for value in raw_sdk_references
         if not _SAFE_SDK_REFERENCE.fullmatch(value.strip())
     ]
-    for element in xml_root.iter():
-        if _local_name(element.tag) != "ProjectReference":
-            continue
+    elements = [e for e in xml_root.iter() if _local_name(e.tag) == "ProjectReference"]
+    lines = _reference_lines(project_text, len(elements))
+    for element, line in zip(elements, lines, strict=True):
         include = element.get("Include")
         target, status = _project_reference_target(relative, include, project_files)
         references.append(
@@ -189,6 +191,7 @@ def read_project(
                 source_project=relative,
                 target_project=target,
                 status=status,
+                line=line,
             )
         )
         if status is ProjectReferenceStatus.UNSAFE:
@@ -217,6 +220,17 @@ def read_project(
                 )
             )
     return evidence, tuple(references), tuple(issues)
+
+
+def _reference_lines(project_text: str, count: int) -> list[int | None]:
+    """The line of each `<ProjectReference` start tag, in document order (the order
+    ElementTree iterates them); all None when the tags found outside comments are not
+    `count`. ElementTree keeps no line numbers, so the tags are found in the text."""
+    text = _XML_COMMENT.sub(lambda match: re.sub(r"[^\n]", " ", match[0]), project_text)
+    lines: list[int | None] = [
+        text.count("\n", 0, match.start()) + 1 for match in _REFERENCE_TAG.finditer(text)
+    ]
+    return lines if len(lines) == count else [None] * count
 
 
 def _project_reference_target(

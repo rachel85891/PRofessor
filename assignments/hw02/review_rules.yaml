@@ -29,17 +29,24 @@ rules:
     status: approved
 
   - id: layer-references-note
+    # Where the note goes: developer decision 2026-11-19 (HW04 round review). The HW04
+    # round put it on the repository's registration in Program.cs, where following it
+    # breaks DI; the finding now gives the reference's `.csproj` line.
     applies_to: [fixer, judge]
     kind: note_only
     when_found: [hw02-references, hw03-references]
     text: >-
-      When a project reference skips or reverses a layer (the API uses Repositories
-      directly, Repositories uses Services), add a note where the code uses the wrong layer,
-      in the wording of this rule's example; never change a project reference or a `using`.
+      When a project reference skips or reverses a layer (the API references Repositories,
+      Repositories references Services), add one note in that `.csproj`, right above the
+      `<ProjectReference>` line the finding names, as an XML comment, in the wording of
+      this rule's example; never change a project reference or a `using`. A layer-reference
+      finding is noted on the `<ProjectReference>` line in the `.csproj`, never in
+      `Program.cs`: the API project registers every layer, so its registrations are never
+      questioned for it.
     example:
-      file: Controllers/UsersController.cs
-      find: "        private readonly UserRepository _repository;"
-      replace: "        //The assignment asks the controller to use the service, not the repository: the API project references Services, and Services references Repositories\n        private readonly UserRepository _repository;"
+      file: Api/Api.csproj
+      find: '    <ProjectReference Include="..\Repositories\Repositories.csproj" />'
+      replace: "    <!--The assignment asks the controller to use the service, not the repository: the API project references Services, and Services references Repositories-->\n    <ProjectReference Include=\"..\\Repositories\\Repositories.csproj\" />"
     approved_notes:
       - words: The assignment asks the controller to use the service, not the repository
         what: the note about a reference that skips a layer
@@ -48,7 +55,10 @@ rules:
       a layer.
     origin:
       source: developer
-      quote: "developer decision 2026-11-10 (planner/tasks/hw02-hw03-layers-di-draft.md)"
+      quote: >-
+        developer decision 2026-11-10 (planner/tasks/hw02-hw03-layers-di-draft.md); the
+        note on the `<ProjectReference>` line: developer decision 2026-11-19 (HW04 round
+        review)
     status: approved
 
   - id: file-access-note
@@ -78,7 +88,9 @@ rules:
     # Enforced in code (stage 3f's forbidden_text): stage 20's guard blocks only fixes that
     # claim a notes-only finding or sit in a file only those findings point to, so an
     # unclaimed fix could still add a registration. Comment lines are not matched, so a
-    # note may still name AddScoped or an interface. hw03 inherits this rule.
+    # note may still name AddScoped or an interface. hw03 inherits this rule. An XML
+    # comment line is a comment too, for the note on a `<ProjectReference>` line in a
+    # `.csproj` (developer decision 2026-11-19, HW04 round review).
     applies_to: [fixer, judge]
     kind: never_do
     text: >-
@@ -91,10 +103,12 @@ rules:
       - pattern: '(?m)^(?!\s*//).*\binterface\s+I'
         new_only: true
         message: added code must never declare an interface; ask in a note instead
-      - pattern: '(?m)^(?!\s*//).*\bProjectReference\b'
+      - pattern: '(?m)^(?!\s*(?://|<!--)).*\bProjectReference\b'
         new_only: true
         message: added text must never add a ProjectReference; ask in a note instead
     origin:
       source: developer
-      quote: "developer decision 2026-11-10 (planner/tasks/hw02-hw03-layers-di-draft.md)"
+      quote: >-
+        developer decision 2026-11-10 (planner/tasks/hw02-hw03-layers-di-draft.md); XML
+        comment lines: developer decision 2026-11-19 (HW04 round review)
     status: approved

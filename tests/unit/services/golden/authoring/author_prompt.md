@@ -57,6 +57,8 @@ comment_style:
     line: //
     fix_marker: '//fix:'
     end: ''
+    notes_only: false
+    when_found: []
 pr_format:
   opening: 'Hello! '
   opening_intro: starts with the greeting.

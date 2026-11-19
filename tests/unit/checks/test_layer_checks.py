@@ -201,8 +201,34 @@ def test_api_referencing_repositories_skips_a_layer(tmp_path: Path) -> None:
 
     assert message(outcome) == (
         "The project references do not follow the layers: `Api` references `Repositories` "
-        "(api → repositories is not allowed). Total: 1."
+        "(api → repositories is not allowed) (Api/Api.csproj, line 5). Total: 1."
     )
+
+
+def test_a_wrong_reference_is_located_on_its_project_reference_line(tmp_path: Path) -> None:
+    files = variant({"Api/Api.csproj": references("Services", "Entities", "Repositories")})
+
+    outcome = run("layer_references", solution(tmp_path, files), **REFERENCES)
+
+    assert isinstance(outcome, tuple)
+    [finding] = outcome
+    assert finding.evidence is not None
+    assert finding.evidence.file_path == "Api/Api.csproj"
+    assert (finding.evidence.line_start, finding.evidence.line_end) == (5, 5)
+    assert finding.evidence.quote == (
+        r'<ProjectReference Include="..\Repositories\Repositories.csproj" />'
+    )
+
+
+def test_a_missing_reference_alone_has_no_location(tmp_path: Path) -> None:
+    files = variant({"Api/Api.csproj": references("Entities")})
+
+    outcome = run("layer_references", solution(tmp_path, files), **REFERENCES)
+
+    assert isinstance(outcome, tuple)
+    [finding] = outcome
+    assert finding.evidence is None
+    assert ", line " not in finding.message_en
 
 
 def test_a_reversed_reference_is_reported_with_the_missing_one(tmp_path: Path) -> None:
@@ -218,7 +244,8 @@ def test_a_reversed_reference_is_reported_with_the_missing_one(tmp_path: Path) -
     assert message(outcome) == (
         "The project references do not follow the layers: `Services` does not reference "
         "`Repositories` (services → repositories is required); `Repositories` references "
-        "`Services` (repositories → services is not allowed). Total: 2."
+        "`Services` (repositories → services is not allowed) "
+        "(Repositories/Repositories.csproj, line 3). Total: 2."
     )
 
 
@@ -286,7 +313,7 @@ def test_a_forbidden_reference_counts_only_when_direct(tmp_path: Path) -> None:
     assert through_services == ()
     assert message(direct) == (
         "The project references do not follow the layers: `Api` references `Repositories` "
-        "(api → repositories is not allowed). Total: 1."
+        "(api → repositories is not allowed) (Api/Api.csproj, line 5). Total: 1."
     )
 
 

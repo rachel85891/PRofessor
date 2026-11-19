@@ -132,7 +132,7 @@ requirements:                 # the list of requirements (may be empty: [])
 
 The fixer always sees the stack's code (`fixer.source_suffixes` in `config.yaml`: `.cs` and `.csproj`), then configuration and data files. `reviewed_files` adds more files after the code: `include` and `exclude` are repo globs (`**/` any folders, `*` within one folder, case ignored); a file `exclude` matches is left out, such as a library. The round uses the `reviewed_files` of every checked assignment. hw01 reviews the `.html`, `.js` and `.css` files under `wwwroot` at any depth, never `*.min.js`, `*.min.css` or a `lib/` folder. Without `reviewed_files`, only the code is shown, as before stage 18.
 
-A shown file is edited only when its suffix has a `comment_style` in `course/course.yaml`; `.csproj` is shown but never edited.
+A shown file is edited only when its suffix has a `comment_style` in `course/course.yaml`; `.csproj` is shown, and gets notes only (an XML comment on a `<ProjectReference>` line) when a layer-reference finding exists.
 
 ## Which commit is checked (`ends_when`)
 
@@ -590,7 +590,7 @@ VS Code validates the files as you type when the YAML extension is installed: th
 | `stack` | The technology: `ASP.NET Core Web API`. |
 | `student_wording` | How every student-facing text is written (plain English, "The assignment asks…", never the lecturer). |
 | `taught_so_far` | What `{taught_so_far}` in a rule becomes when the assignment lists `taught_techniques`; `{techniques}` is the list. Nothing when no technique is listed. |
-| `comment_style` | By file suffix, in the order the prompts and the PR list them: `language` (`C#`, `JavaScript`, `HTML`, `CSS`: how the PR text names the type), `line` (what starts a comment, `//`), `fix_marker` (`//fix:`, starting with `line`) and an optional `end` (for example `-->`). A file the fixer is shown is edited only when its suffix is here, besides a data file's final newline. The plan lists the syntax and marker of every type it shows, and only those. |
+| `comment_style` | By file suffix, in the order the prompts and the PR list them: `language` (`C#`, `JavaScript`, `HTML`, `CSS`: how the PR text names the type), `line` (what starts a comment, `//`), `fix_marker` (`//fix:`, starting with `line`) an optional `end` (for example `-->`), optional `notes_only` (files of the type get notes, never a `fix`) and optional `when_found` (requirement ids: the type is edited, and its syntax shown, only when one of them has a finding). A file the fixer is shown is edited only when its suffix is here, besides a data file's final newline. The plan lists the syntax and marker of every type it shows, and only those. |
 | `pr_format.opening` | How the PR body starts (`Hi! `); added when the writer's opening lacks it. `opening_intro` tells the writer what to put in it. |
 | `pr_format.sections` | The body's sections, in order: each of `fixed`, `for_you`, `names` and `files` exactly once, with its bold `heading`. A heading may use `{languages}` (the languages of the section's edited files, in `comment_style` order, joined with "and": `Names ({languages} conventions)` gives `Names (C# conventions)` or `Names (C# and JavaScript conventions)`) and `{fix_markers}` (their fix markers without repeats: `` `//fix:` `` or `` `//fix:` and `<!--fix: … -->` ``). The writer's three sections also need a `label` (their name in the writer's prompt) and an `intro` (what to write there). |
 | `pr_format.item_rule` | How the writer writes every item. |
