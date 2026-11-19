@@ -186,3 +186,25 @@ def test_the_fixer_and_judge_prompts_show_the_naming_rules_stored_property_note(
         assert "the `PropertyNameCaseInsensitive` tip instead" not in prompt
         # The rule's own example: the rename made safe by the option, never instead of it.
         assert "if you rename them, set PropertyNameCaseInsensitive = true" in prompt
+
+
+CONNECTION_STRING = (
+    "Never ask or tell the student to move the connection string to `appsettings.json`"
+)
+
+
+def test_the_connection_string_rule_reaches_the_fixer_judge_and_writer_prompts(
+    tmp_path: Path,
+) -> None:
+    rule = next(rule for rule in COURSE.rules.rules if rule.id == "connection-string")
+    setup = FixerSetup(tmp_path)
+    workspace = setup.service.prepare(RUN_ID, (ASSIGNMENT,), (), REPO, setup.fetched)
+
+    plan = setup.service.plan_prompt(workspace, ASSIGNMENT, (ASSIGNMENT,), RESULTS, 1)
+
+    assert rule.until is None and rule.replaces is None
+    assert rule.origin.quote == "developer decision 2026-11-19 (HW04 round review)"
+    assert CONNECTION_STRING in plan
+    for role in (ReviewRole.FIXER, ReviewRole.JUDGE, ReviewRole.WRITER):
+        rules = role_policy(COURSE, ASSIGNMENT, (ASSIGNMENT,), role).rules
+        assert any(text.startswith(CONNECTION_STRING) for text in rules)

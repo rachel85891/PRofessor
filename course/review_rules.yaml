@@ -333,6 +333,21 @@ rules:
       quote: "developer decision 2026-11-19 (HW04 round review)"
     status: approved
 
+  - id: connection-string
+    # A published HW03 PR asked where the connection string should be kept and pointed to
+    # appsettings.json; the writer repeated it. Not taught yet: no `until`, the assignment
+    # that teaches it `replaces` this rule.
+    applies_to: [fixer, judge, writer]
+    kind: never_mention
+    text: >-
+      Never ask or tell the student to move the connection string to `appsettings.json`,
+      and never ask where it should be kept: a connection string written in the code is
+      fine, it has not been taught yet.
+    origin:
+      source: developer
+      quote: "developer decision 2026-11-19 (HW04 round review)"
+    status: approved
+
 examples:
   - id: break-and-naming
     # Moved from code in stage 3f.
