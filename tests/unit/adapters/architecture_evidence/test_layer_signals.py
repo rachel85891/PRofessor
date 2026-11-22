@@ -214,3 +214,33 @@ def test_known_limit_an_expression_bodied_constructor_is_not_read(tmp_path: Path
 
     assert of_kind(evidence, ArchitectureSignalKind.CONSTRUCTOR_CANDIDATE) == []
     assert of_kind(evidence, PARAMETER) == []
+
+
+DB_SET = ArchitectureSignalKind.DB_SET_PROPERTY
+
+
+def test_db_set_properties_give_their_entitys_simple_name_and_their_type(
+    tmp_path: Path,
+) -> None:
+    evidence = scan(
+        tmp_path,
+        "public partial class ShopContext : DbContext\n"
+        "{\n"
+        "    public virtual DbSet<Item> Items { get; set; }\n"
+        "    public DbSet<Models.Order>? Orders { get; set; }\n"
+        "    public DbSet< Shop.Models.Customer > Customers => Set<Customer>();\n"
+        "    private readonly DbSet<Item> _cache;\n"
+        "    // public DbSet<Hidden> Hidden { get; set; }\n"
+        "}\n",
+    )
+
+    assert [
+        (signal.line, signal.subject, signal.related_subject)
+        for signal in of_kind(evidence, DB_SET)
+    ] == [(3, "Item", "ShopContext"), (4, "Order", "ShopContext"), (5, "Customer", "ShopContext")]
+
+
+def test_a_db_set_outside_a_type_gives_no_signal(tmp_path: Path) -> None:
+    evidence = scan(tmp_path, "DbSet<Item> Items => context.Items;\n")
+
+    assert of_kind(evidence, DB_SET) == []
