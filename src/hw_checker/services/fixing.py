@@ -944,15 +944,20 @@ def fix_target(
 
 
 def best_attempt(tried: Sequence[FixAttempt]) -> FixAttempt | None:
-    """The attempt a proposal is made of: among those whose recheck passed, the one with the
-    most applied edits, the later one on a tie; None when no recheck passed."""
-    best: FixAttempt | None = None
-    for attempt in tried:
-        if attempt.verification.passed and (
-            best is None or len(attempt.application.applied) >= len(best.application.applied)
-        ):
-            best = attempt
-    return best
+    """The attempt a proposal is made of: among those whose recheck passed, the one that
+    leaves the fewest failing requirements of the reviewed assignment without an edit
+    (`VerifyResult.uncovered`, the set the coverage feedback asks for), then the one with
+    the most applied edits, then the later one; None when no recheck passed."""
+    passed = [attempt for attempt in tried if attempt.verification.passed]
+    return max(passed, key=_rank, default=None)
+
+
+def _rank(attempt: FixAttempt) -> tuple[int, int, int]:
+    return (
+        -len(attempt.verification.uncovered),
+        len(attempt.application.applied),
+        attempt.number,
+    )
 
 
 def attempt_choice(tried: Sequence[FixAttempt], fell_back: bool) -> str:
@@ -968,21 +973,48 @@ def attempt_choice(tried: Sequence[FixAttempt], fell_back: bool) -> str:
     best = best_attempt(tried)
     if best is None:
         return ""
-    others = "; ".join(
+    others = [attempt for attempt in tried if attempt.number != best.number]
+    listed = "; ".join(
         f"attempt {attempt.number}: "
         + (
-            f"recheck passed, {_edits(len(attempt.application.applied))}"
+            f"recheck passed, {_edits(len(attempt.application.applied))}{_left(attempt)}"
             if attempt.verification.passed
             else "recheck failed"
         )
-        for attempt in tried
-        if attempt.number != best.number
+        for attempt in others
     )
+    uncovered = len(best.verification.uncovered)
+    left = f", leaving {_requirements(uncovered)} without an edit" if uncovered else ""
     choice = (
         f"Attempt {best.number} of {total} is used: its recheck passed with "
-        f"{_edits(len(best.application.applied))}"
+        f"{_edits(len(best.application.applied))}{left}"
     )
-    return f"{choice} (the most of the attempts that passed; {others})." if others else f"{choice}."
+    return f"{choice} ({_why(best, others)}; {listed})." if listed else f"{choice}."
+
+
+def _why(best: FixAttempt, others: Sequence[FixAttempt]) -> str:
+    """Why `best` beat the other attempts that passed: fewer failing requirements left
+    without an edit, then more applied edits."""
+    count = len(best.verification.uncovered)
+    passed = [len(other.verification.uncovered) for other in others if other.verification.passed]
+    fewer = any(other > count for other in passed)
+    if fewer and count in passed:
+        return (
+            "the fewest failing requirements left without an edit, then the most applied "
+            "edits, of the attempts that passed"
+        )
+    if fewer:
+        return "the fewest failing requirements left without an edit of the attempts that passed"
+    return "the most of the attempts that passed"
+
+
+def _left(attempt: FixAttempt) -> str:
+    count = len(attempt.verification.uncovered)
+    return f", {_requirements(count)} left without an edit" if count else ""
+
+
+def _requirements(count: int) -> str:
+    return f"{count} failing requirement" + ("" if count == 1 else "s")
 
 
 def joined(items: Iterable[str]) -> str:

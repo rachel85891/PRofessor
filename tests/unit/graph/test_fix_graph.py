@@ -202,8 +202,9 @@ def test_an_attempt_that_passes_the_recheck_beats_an_earlier_one_that_failed(
     report = harness.report_writer.repo_reports[-1]
     assert report.fix is not None and report.fix.edits == 1
     assert report.fix.attempt_choice == (
-        "Attempt 2 of 2 is used: its recheck passed with 1 applied edit "
-        "(the most of the attempts that passed; attempt 1: recheck failed)."
+        "Attempt 2 of 2 is used: its recheck passed with 1 applied edit, leaving 1 failing "
+        "requirement without an edit (the most of the attempts that passed; attempt 1: "
+        "recheck failed)."
     )
 
 
@@ -524,3 +525,47 @@ def test_a_notes_only_requirement_is_covered_by_its_note(tmp_path: Path) -> None
     assert roles(fixer) == ["fixer", "judge", "writer"]
     [proposal] = harness.storage.proposals.list_for_run("run-1")
     assert "Why does the update return 400?" in proposal.diff
+
+
+def test_the_attempt_that_asks_every_failing_requirement_is_kept_over_more_edits(
+    tmp_path: Path,
+) -> None:
+    failing = builders.finding(requirement_id="hw01-http", assignment_id="hw01")
+    covering = FixPlan(edits=(HTTP_NOTE, MODEL_NOTE), files_notes=())
+    fixer = llm(FOUR_EDITS, covering)
+    harness = one_repo(tmp_path, fixer, outcomes={"hw01-http": (failing,)})
+
+    harness.run()
+
+    assert roles(fixer) == ["fixer", "judge", "fixer", "judge", "writer"]
+    [proposal] = harness.storage.proposals.list_for_run("run-1")
+    assert "Why does the update return 400?" in proposal.diff
+    report = harness.report_writer.repo_reports[-1]
+    assert report.fix is not None and report.fix.edits == 2
+    assert report.fix.attempt_choice == (
+        "Attempt 2 of 2 is used: its recheck passed with 2 applied edits (the fewest failing "
+        "requirements left without an edit of the attempts that passed; attempt 1: recheck "
+        "passed, 4 applied edits, 1 failing requirement left without an edit)."
+    )
+
+
+def test_a_note_for_a_notes_only_requirement_counts_as_covered_in_the_choice(
+    tmp_path: Path,
+) -> None:
+    [general, hw01, hw02] = CATALOG
+    build, http = hw01.requirements
+    notes_only = http.model_copy(update={"feedback": Feedback.NOTES_ONLY})
+    catalog = (general, hw01.model_copy(update={"requirements": (build, notes_only)}), hw02)
+    failing = builders.finding(requirement_id="hw01-http", assignment_id="hw01")
+    covering = FixPlan(edits=(HTTP_NOTE, MODEL_NOTE), files_notes=())
+    fixer = llm(FOUR_EDITS, covering)
+    harness = one_repo(tmp_path, fixer, catalog=catalog, outcomes={"hw01-http": (failing,)})
+
+    harness.run()
+
+    [proposal] = harness.storage.proposals.list_for_run("run-1")
+    assert "Why does the update return 400?" in proposal.diff
+    report = harness.report_writer.repo_reports[-1]
+    assert report.fix is not None and report.fix.attempt_choice.startswith(
+        "Attempt 2 of 2 is used: its recheck passed with 2 applied edits (the fewest"
+    )
