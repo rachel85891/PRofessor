@@ -73,6 +73,11 @@ _MODIFIER = re.compile(
 _BASE_TYPE = re.compile(rf"{_TYPE_TEXT}")
 _WHERE = re.compile(r"\bwhere\b")
 _CREATION = re.compile(r"\bnew\s+(?P<type>[A-Za-z_]\w*(?:\s*\.\s*[A-Za-z_]\w*)*)")
+_DB_SET = re.compile(
+    r"\bDbSet\s*<\s*(?P<entity>[A-Za-z_]\w*(?:\s*\.\s*[A-Za-z_]\w*)*)\s*>\s*\??\s+"
+    r"[A-Za-z_]\w*\s*(?:\{|=>)"
+)
+"""A `DbSet<T>` property: its type, its name, then `{` or `=>`."""
 _SPACE = re.compile(r"\s+")
 _LEADING_SPACE = re.compile(r"\s*")
 _MODIFIERS_WINDOW: Final = 200
@@ -226,6 +231,7 @@ def _signals_in_file(
             )
     bodies = _type_signals(masked, file_path, signals, issues)
     _creation_signals(masked, file_path, bodies, signals, issues)
+    _db_set_signals(masked, file_path, bodies, signals)
     return signals, issues
 
 
@@ -389,6 +395,30 @@ def _creation_signals(
                 line=line,
                 subject=type_text,
                 related_subject=max(enclosing)[2] if enclosing else None,
+            )
+        )
+
+
+def _db_set_signals(
+    masked: str,
+    file_path: str,
+    bodies: list[tuple[int, int, str]],
+    signals: list[ArchitectureSignal],
+) -> None:
+    """A `db_set_property` per `DbSet<T>` property of a type (`public virtual
+    DbSet<Models.User> Users { get; set; }` gives `User`); one outside a type gives none."""
+    for match in _DB_SET.finditer(masked):
+        entity = _SPACE.sub("", match["entity"]).split(".")[-1]
+        enclosing = [body for body in bodies if body[0] < match.start() < body[1]]
+        if not enclosing or len(entity) > MAX_IDENTIFIER_CHARS:
+            continue
+        signals.append(
+            ArchitectureSignal(
+                kind=ArchitectureSignalKind.DB_SET_PROPERTY,
+                file_path=file_path,
+                line=masked.count("\n", 0, match.start("entity")) + 1,
+                subject=entity,
+                related_subject=max(enclosing)[2],
             )
         )
 

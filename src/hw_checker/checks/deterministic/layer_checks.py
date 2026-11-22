@@ -147,10 +147,13 @@ class _ClassesLeftOutParams(_RolesParams):
     """`exclude`: class name patterns left out; `exclude_bases`: patterns on the simple
     names in a class's base list (`IdentityDbContext<User>` is `IdentityDbContext`), a
     class with a matching base left out. Both are searched, case-sensitive; empty leaves
-    nothing out. Which classes are not layer classes is the assignment's data."""
+    nothing out. `exclude_db_entities`: the types named as `T` in a `DbSet<T>` property of
+    a class `exclude_bases` leaves out (a `DbContext`'s entities) are left out too. Which
+    classes are not layer classes is the assignment's data."""
 
     exclude: tuple[Regex, ...] = ()
     exclude_bases: tuple[Regex, ...] = ()
+    exclude_db_entities: bool = False
 
 
 class ImplementsInterfaceParams(_ClassesLeftOutParams):
@@ -364,7 +367,8 @@ def code_only_in_layer(check_input: CheckInput, params: CodeOnlyInLayerParams) -
     "Every class in the role's projects (public, or internal: `classes_public` asks for "
     "public) implements an interface declared in the repo (directly or through its base "
     "class); exclude: class name patterns left out; exclude_bases: a class whose base list "
-    "has a matching name is left out.",
+    "has a matching name is left out."
+    " exclude_db_entities: the entities of a left-out DbContext (DbSet<T>) are left out too.",
     reads_architecture=True,
 )
 def implements_interface(check_input: CheckInput, params: ImplementsInterfaceParams) -> CheckResult:
@@ -399,7 +403,8 @@ def implements_interface(check_input: CheckInput, params: ImplementsInterfacePar
     "classes_public",
     ClassesPublicParams,
     "Every class in the role's projects is public; exclude: class name patterns left out; "
-    "exclude_bases: a class whose base list has a matching name is left out.",
+    "exclude_bases: a class whose base list has a matching name is left out."
+    " exclude_db_entities: the entities of a left-out DbContext (DbSet<T>) are left out too.",
     reads_architecture=True,
 )
 def classes_public(check_input: CheckInput, params: ClassesPublicParams) -> CheckResult:
@@ -520,7 +525,8 @@ def interfaces_registered(
     NoConcreteConstructionParams,
     "No class in the `in` roles' projects creates a class of the `of` roles with new "
     "(top-level statements, where registrations are written, are not read); exclude and "
-    "exclude_bases: created classes not counted, by name or by a name in their base list.",
+    "exclude_bases: created classes not counted, by name or by a name in their base list."
+    " exclude_db_entities: the entities of a left-out DbContext (DbSet<T>) are left out too.",
     reads_architecture=True,
 )
 def no_concrete_construction(
@@ -590,6 +596,11 @@ class _Types:
             for signal in _signals(evidence, ArchitectureSignalKind.INTERFACE_DECLARATION)
         )
         self.declarations = _signals(evidence, ArchitectureSignalKind.TYPE_DECLARATION)
+        self.db_sets = tuple(
+            (_subject(signal), signal.related_subject)
+            for signal in _signals(evidence, ArchitectureSignalKind.DB_SET_PROPERTY)
+        )
+        """Each `DbSet<T>` property as (`T`'s simple name, the type that declares it)."""
         self._by_name: dict[str, list[ArchitectureSignal]] = {}
         for declaration in self.declarations:
             self._by_name.setdefault(_subject(declaration), []).append(declaration)
@@ -641,16 +652,29 @@ class _Types:
 
 
 class _LeftOut:
-    """Whether a class is left out by the params' `exclude` and `exclude_bases`."""
+    """Whether a class is left out by the params' `exclude`, `exclude_bases` and
+    `exclude_db_entities`."""
 
     def __init__(self, params: _ClassesLeftOutParams, types: _Types) -> None:
         self._names = [re.compile(pattern) for pattern in params.exclude]
         self._bases = [re.compile(pattern) for pattern in params.exclude_bases]
         self._types = types
+        self._entities = (
+            frozenset(
+                entity
+                for entity, context in types.db_sets
+                if context is not None and self._by_base(context)
+            )
+            if params.exclude_db_entities
+            else frozenset()
+        )
 
     def __call__(self, name: str) -> bool:
         if any(pattern.search(name) for pattern in self._names):
             return True
+        return self._by_base(name) or name in self._entities
+
+    def _by_base(self, name: str) -> bool:
         bases = self._types.bases_of(name) if self._bases else ()
         return any(pattern.search(base) for pattern in self._bases for base in bases)
 

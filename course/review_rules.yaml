@@ -354,6 +354,23 @@ rules:
       quote: "developer decision 2026-11-19 (HW04 round review)"
     status: approved
 
+  - id: no-entity-framework
+    # A HW04 pilot PR asked about EF entities and taught `UseSqlServer`. EF is taught in
+    # HW05: no `until`, the HW05 assignment `replaces` this rule. The last sentence (a build
+    # broken by EF code) is the planner's addition to the developer's decision.
+    applies_to: [fixer, judge, writer]
+    kind: never_mention
+    text: >-
+      Entity Framework is taught in HW05. Never note, ask about or fix EF code: a
+      `DbContext`, `DbSet`, `AddDbContext`, `UseSqlServer` / `OnConfiguring` /
+      `OnModelCreating`, entity classes, their data-annotation attributes, migrations, or
+      the database. If EF code breaks the build, the note only says which line doesn't
+      compile, without teaching how to set up EF.
+    origin:
+      source: developer
+      quote: "developer decision 2026-11-22 (HW04 pilot review)"
+    status: approved
+
 examples:
   - id: break-and-naming
     # Moved from code in stage 3f.

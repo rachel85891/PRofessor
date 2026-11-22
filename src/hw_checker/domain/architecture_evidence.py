@@ -107,6 +107,9 @@ class ArchitectureSignalKind(StrEnum):
     OBJECT_CREATION = "object_creation"
     """`new T(…)` or `new T { … }`: `subject` the type as written, `related_subject` the
     enclosing type (None in top-level statements)."""
+    DB_SET_PROPERTY = "db_set_property"
+    """A `DbSet<T>` property: `subject` the simple name of `T` (`Models.User` is `User`),
+    `related_subject` the type that declares the property."""
 
 
 class ServiceLifetime(StrEnum):
