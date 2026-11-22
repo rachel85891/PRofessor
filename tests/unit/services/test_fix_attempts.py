@@ -1,9 +1,15 @@
-"""Which fixer attempt a proposal is made of (`best_attempt`), and the repo report's
-sentence about it (`attempt_choice`)."""
+"""Which fixer attempt a proposal is made of (`best_attempt`), the repo report's sentence
+about it (`attempt_choice`) and the attempts' rejected edits (`rejected_lines`)."""
 
-from hw_checker.domain import EditApplication, FixAttempt, FixPlan, VerifyResult
-from hw_checker.services.fixing import attempt_choice, best_attempt
-from tests.unit.services.fixer_data import NAMING_NOTE
+from hw_checker.domain import EditApplication, FixAttempt, FixPlan, RejectedEdit, VerifyResult
+from hw_checker.services.fixing import (
+    MAX_REJECTED_REASON_CHARS,
+    FixService,
+    attempt_choice,
+    best_attempt,
+    rejected_lines,
+)
+from tests.unit.services.fixer_data import BREAK_FIX, CONTROLLER, NAMING_NOTE, REPO
 
 HW04_FINDINGS = ("hw04-register-weak", "hw04-update-weak", "hw01-read-back")
 
@@ -107,3 +113,53 @@ def test_without_unasked_requirements_the_sentence_is_unchanged() -> None:
         "Attempt 1 of 2 is used: its recheck passed with 4 applied edits (the most of the "
         "attempts that passed; attempt 2: recheck passed, 1 applied edit)."
     )
+
+
+# ------------------------------------------------- the rejected edits in the repo report
+
+
+def rejecting(number: int, *rejected: RejectedEdit) -> FixAttempt:
+    return attempt(number, edits=1).model_copy(
+        update={"application": EditApplication(applied=(NAMING_NOTE,), rejected=rejected)}
+    )
+
+
+def test_each_attempts_rejected_edits_are_listed_with_their_reasons() -> None:
+    claiming = BREAK_FIX.model_copy(update={"finding_ids": ("hw04-register-weak", "hw01-read")})
+    tried = [
+        rejecting(1, RejectedEdit(edit=claiming, reason="find occurs 0 times in A.cs")),
+        rejecting(2, RejectedEdit(edit=NAMING_NOTE, reason="a note may only add comments")),
+    ]
+
+    assert rejected_lines(tried) == (
+        f"Attempt 1: fix in {CONTROLLER} (claims `hw04-register-weak`, `hw01-read`): "
+        "find occurs 0 times in A.cs",
+        f"Attempt 2: note in {CONTROLLER} (claims nothing): a note may only add comments",
+    )
+
+
+def test_a_rejected_edits_line_holds_no_text_of_the_edit() -> None:
+    [line] = rejected_lines([rejecting(1, RejectedEdit(edit=BREAK_FIX, reason="not safe"))])
+
+    assert BREAK_FIX.find.strip() not in line and "break;" not in line
+
+
+def test_a_long_reason_is_cut_and_its_whitespace_collapsed() -> None:
+    reason = "word  \n " + "x" * 400
+    [line] = rejected_lines([rejecting(1, RejectedEdit(edit=BREAK_FIX, reason=reason))])
+
+    shown = line.split("): ", 1)[1]
+    assert len(shown) == MAX_REJECTED_REASON_CHARS
+    assert shown.startswith("word x") and shown.endswith("…")
+
+
+def test_no_rejected_edits_give_no_lines() -> None:
+    assert rejected_lines([attempt(1, edits=2), attempt(2, edits=1)]) == ()
+
+
+def test_no_proposal_still_reports_the_rejected_edits() -> None:
+    failed = VerifyResult(passed=False, problems=("the project no longer builds",))
+
+    outcome = FixService.give_up(REPO, 2, failed, ("Attempt 1: fix in A.cs (claims nothing): x",))
+
+    assert outcome.rejected_edits == ("Attempt 1: fix in A.cs (claims nothing): x",)

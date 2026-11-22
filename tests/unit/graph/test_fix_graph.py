@@ -569,3 +569,20 @@ def test_a_note_for_a_notes_only_requirement_counts_as_covered_in_the_choice(
     assert report.fix is not None and report.fix.attempt_choice.startswith(
         "Attempt 2 of 2 is used: its recheck passed with 2 applied edits (the fewest"
     )
+
+
+def test_the_repo_report_lists_the_rejected_edits_of_each_attempt(tmp_path: Path) -> None:
+    first = FixPlan(edits=(*FOUR_EDITS.edits, OUTSIDE), files_notes=())
+    fixer = FakeLLMClient(
+        {"fixer": [first, FOUR_EDITS], "judge": [NO_VIOLATIONS], "writer": [FOUR_TEXT]}
+    )
+    harness = one_repo(tmp_path, fixer)
+
+    harness.run()
+
+    report = harness.report_writer.repo_reports[-1]
+    assert report.fix is not None
+    assert report.fix.rejected_edits == (
+        "Attempt 1: fix in users.json (claims nothing): users.json is not a .cs file; only "
+        ".cs files are edited",
+    )
