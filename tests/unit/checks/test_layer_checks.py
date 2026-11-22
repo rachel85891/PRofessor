@@ -435,6 +435,83 @@ def test_a_class_with_an_excluded_base_is_not_read(tmp_path: Path, base: str) ->
     assert "`StoreDBContext` (Repositories/StoreDBContext.cs, line 1)" in message(read)
 
 
+# ------------------------- EF is taught in HW05: its entities are not layer classes (2026-11-22)
+
+SHOP_CONTEXT = (
+    "public partial class ShopContext : DbContext\n"
+    "{\n"
+    "    public virtual DbSet<Item> Items { get; set; }\n"
+    "}\n"
+)
+ENTITY = "public partial class Item\n{\n    public int Id { get; set; }\n}\n"
+EF_FILES = {"Repositories/ShopContext.cs": SHOP_CONTEXT, "Repositories/Models/Item.cs": ENTITY}
+LEAVE_OUT_ENTITIES: dict[str, Any] = {"role": "repositories", "exclude_bases": ["DbContext$"]}
+
+
+def test_a_db_context_entity_is_left_out_with_exclude_db_entities(tmp_path: Path) -> None:
+    root = solution(tmp_path, variant(EF_FILES))
+
+    assert run("implements_interface", root, **LEAVE_OUT_ENTITIES, exclude_db_entities=True) == ()
+
+
+def test_without_exclude_db_entities_the_entity_is_reported_as_today(tmp_path: Path) -> None:
+    root = solution(tmp_path, variant(EF_FILES))
+
+    no_param: dict[str, Any] = {}
+    for params in (no_param, {"exclude_db_entities": False}):
+        outcome = run("implements_interface", root, **LEAVE_OUT_ENTITIES, **params)
+        assert message(outcome) == (
+            "Classes in the repositories layer that implement no interface declared in the "
+            "repository: `Item` (Repositories/Models/Item.cs, line 1). Total: 1."
+        )
+
+
+def test_a_repository_without_an_interface_is_still_reported_with_the_entities_left_out(
+    tmp_path: Path,
+) -> None:
+    store = "public class ItemStore\n{\n    public Item Get(int id) => new Item();\n}\n"
+    root = solution(tmp_path, variant({**EF_FILES, "Repositories/ItemStore.cs": store}))
+
+    outcome = run("implements_interface", root, **LEAVE_OUT_ENTITIES, exclude_db_entities=True)
+
+    assert message(outcome) == (
+        "Classes in the repositories layer that implement no interface declared in the "
+        "repository: `ItemStore` (Repositories/ItemStore.cs, line 1). Total: 1."
+    )
+
+
+def test_a_db_set_in_a_class_that_is_not_left_out_leaves_no_entity_out(tmp_path: Path) -> None:
+    context = SHOP_CONTEXT.replace(" : DbContext", " : IShopContext")
+    interface = "public interface IShopContext { }\n"
+    files = {**EF_FILES, "Repositories/ShopContext.cs": context}
+    root = solution(tmp_path, variant({**files, "Repositories/IShopContext.cs": interface}))
+
+    outcome = run("implements_interface", root, **LEAVE_OUT_ENTITIES, exclude_db_entities=True)
+
+    assert "`Item` (Repositories/Models/Item.cs, line 1)" in message(outcome)
+
+
+@pytest.mark.parametrize("check", ["classes_public", "no_concrete_construction"])
+def test_the_other_checks_leave_the_entities_out_too(tmp_path: Path, check: str) -> None:
+    entity = ENTITY.replace("public partial class", "partial class")
+    creator = (
+        "public class ItemService : IItemService\n{\n"
+        "    public Item Make() => new Item();\n}\n"
+        "public interface IItemService { }\n"
+    )
+    files = {**EF_FILES, "Repositories/Models/Item.cs": entity, "Services/ItemService.cs": creator}
+    root = solution(tmp_path, variant(files))
+    params: dict[str, Any] = (
+        {"role": "repositories"}
+        if check == "classes_public"
+        else {"in": ["services"], "of": ["repositories"]}
+    )
+    params["exclude_bases"] = ["DbContext$"]
+
+    assert run(check, root, **params, exclude_db_entities=True) == ()
+    assert "`Item`" in message(run(check, root, **params))
+
+
 def test_implements_interface_cannot_tell_without_the_signals(tmp_path: Path) -> None:
     outcome = run("implements_interface", tmp_path, unavailable(), role="services")
 

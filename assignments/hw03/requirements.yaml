@@ -69,6 +69,8 @@ requirements:
       # anchors) and used by hw03-repository-interfaces and hw03-no-new-dependencies.
       exclude: &not_layer_classes ['(Result|Response|Request|Dto|DTO)$']
       exclude_bases: &not_layer_bases ['DbContext$']
+      # EF is taught in HW05: its entities are not layer classes (developer decision 2026-11-22)
+      exclude_db_entities: true
 
   # A class without `public` is read by the interface check too, and gets this note.
   # Developer decision 2026-11-19 (HW04 round review): minor, notes only.
@@ -84,6 +86,8 @@ requirements:
       role: services
       exclude: *not_layer_classes
       exclude_bases: *not_layer_bases
+      # EF is taught in HW05: its entities are not layer classes (developer decision 2026-11-22)
+      exclude_db_entities: true
     origin:
       source: developer
       quote: "developer decision 2026-11-19 (HW04 round review)"
@@ -116,6 +120,8 @@ requirements:
       role: repositories
       exclude: *not_layer_classes
       exclude_bases: *not_layer_bases
+      # EF is taught in HW05: its entities are not layer classes (developer decision 2026-11-22)
+      exclude_db_entities: true
 
   # A class without `public` is read by the interface check too, and gets this note.
   # Developer decision 2026-11-19 (HW04 round review): minor, notes only.
@@ -131,6 +137,8 @@ requirements:
       role: repositories
       exclude: *not_layer_classes
       exclude_bases: *not_layer_bases
+      # EF is taught in HW05: its entities are not layer classes (developer decision 2026-11-22)
+      exclude_db_entities: true
     origin:
       source: developer
       quote: "developer decision 2026-11-19 (HW04 round review)"
@@ -179,3 +187,5 @@ requirements:
       of: [services, repositories]
       exclude: *not_layer_classes
       exclude_bases: *not_layer_bases
+      # EF is taught in HW05: its entities are not layer classes (developer decision 2026-11-22)
+      exclude_db_entities: true
