@@ -118,6 +118,13 @@ Nothing to report: every checked requirement passed.
 
 {{ report.fix.attempt_choice }}
 {% endif %}
+{% if report.fix.rejected_edits %}
+
+Rejected edits:
+{% for item in report.fix.rejected_edits %}
+- {{ item }}
+{% endfor %}
+{% endif %}
 {% if report.fix.blocked %}
 
 Claims not held against their fix:

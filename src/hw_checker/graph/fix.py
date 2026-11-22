@@ -43,7 +43,12 @@ from hw_checker.domain import (
 )
 from hw_checker.domain.errors import FixError, LLMOutputError
 from hw_checker.graph.guard import Update, guarded
-from hw_checker.services.fixing import FixService, attempt_choice, best_attempt
+from hw_checker.services.fixing import (
+    FixService,
+    attempt_choice,
+    best_attempt,
+    rejected_lines,
+)
 
 FixGraph = CompiledStateGraph["FixState", None, "FixInput", "FixOutput"]
 DRAWING = "drawing"
@@ -314,7 +319,12 @@ def build_fix_graph(
     def give_up(state: FixState) -> Update:
         return {
             "fix_outcomes": [
-                FixService.give_up(state["repo"], state["attempt"], state["verification"])
+                FixService.give_up(
+                    state["repo"],
+                    state["attempt"],
+                    state["verification"],
+                    rejected_lines(state.get("tried", [])),
+                )
             ]
         }
 
@@ -350,6 +360,7 @@ def build_fix_graph(
                         state["attempt"],
                         attempt_choice(state.get("tried", []), state.get("fell_back", False)),
                         state["verification"].blocked if "verification" in state else (),
+                        rejected_lines(state.get("tried", [])),
                     )
                 ]
             },

@@ -190,6 +190,30 @@ def test_the_repo_report_says_which_attempt_was_used(tmp_path: Path) -> None:
     )
 
 
+def test_the_repo_report_lists_each_attempts_rejected_edits(tmp_path: Path) -> None:
+    fix = FixOutcome(
+        repo_id="noa__webapi",
+        attempts=2,
+        reason="No PR: the recheck failed.",
+        attempt_choice="Attempt 1 of 2 is used: its recheck passed with 4 applied edits.",
+        rejected_edits=(
+            "Attempt 1: note in A.cs (claims `hw04-a`): find occurs 0 times in A.cs",
+            "Attempt 2: fix in B.cs (claims nothing): a fix must change code",
+        ),
+    )
+
+    path = MarkdownReportWriter(tmp_path).write_repo_report(
+        data.clean_report().model_copy(update={"fix": fix})
+    )
+
+    assert path.read_text(encoding="utf-8").endswith(
+        "Attempt 1 of 2 is used: its recheck passed with 4 applied edits.\n\n"
+        "Rejected edits:\n"
+        "- Attempt 1: note in A.cs (claims `hw04-a`): find occurs 0 times in A.cs\n"
+        "- Attempt 2: fix in B.cs (claims nothing): a fix must change code\n"
+    )
+
+
 def test_the_repo_report_lists_the_claims_waiting_on_a_dependency(tmp_path: Path) -> None:
     fix = FixOutcome(
         repo_id="noa__webapi",

@@ -181,6 +181,8 @@ class FixOutcome(DomainModel):
     """Self-review violations that were not acted on, and why."""
     attempt_choice: str = ""
     """Which attempt the proposal is made of, and why."""
+    rejected_edits: tuple[str, ...] = ()
+    """Each attempt's rejected edits, one line each: file, kind, claims and reason."""
     blocked: tuple[str, ...] = ()
     """Claims of the proposal's fixes that cannot pass until a requirement they depend on
     passes."""
