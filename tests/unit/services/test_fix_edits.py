@@ -577,3 +577,109 @@ def test_a_fix_that_makes_a_class_public_is_rejected_for_the_note() -> None:
     result = apply_edits(files(declaration), [fix], SAFE_ONLY_RULES)
 
     assert reasons(result) == [NOT_A_SAFE_FIX]
+
+
+# ------------------------------- a note's find tolerates the model's indentation (2026-11-22)
+
+ODD_INDENT = (
+    "    public class UsersController : ControllerBase\n"
+    "    {\n"
+    "           UserService users = new UserService();\n"
+    "        [HttpPost]\n"
+    "        public User Post([FromBody] User user)\n"
+    "        {\n"
+    "             return users.AddUser(user);\n"
+    "        }\n"
+    "    }\n"
+)
+"""A student file with odd indentation: 11 and 13 spaces."""
+RETURN_LINE = "             return users.AddUser(user);\n"
+QUESTION = "//Where is the password checked?"
+REINDENTED = edit(
+    kind=EditKind.NOTE,
+    find="        {\n              return users.AddUser(user);\n",
+    replace=f"        {{\n              {QUESTION}\n              return users.AddUser(user);\n",
+    finding_ids=("hw04-register-weak",),
+    fallback_note=None,
+    note_section=NoteSection.FOR_YOU,
+)
+"""The model's copy puts the return at 14 spaces, where the file has 13."""
+WITH_QUESTION = ODD_INDENT.replace(RETURN_LINE, f"             {QUESTION}\n{RETURN_LINE}")
+
+
+def test_a_note_whose_find_is_reindented_is_applied_at_the_files_indentation() -> None:
+    data = b"\xef\xbb\xbf" + ODD_INDENT.encode()
+
+    result = apply_edits({CONTROLLER: data}, [REINDENTED], RULES)
+
+    assert result.application.applied == (REINDENTED,)
+    assert result.files[CONTROLLER] == b"\xef\xbb\xbf" + WITH_QUESTION.encode()
+
+
+def test_a_reindented_note_in_a_crlf_file_keeps_crlf() -> None:
+    data = ODD_INDENT.replace("\n", "\r\n").encode()
+
+    result = apply_edits({CONTROLLER: data}, [REINDENTED], RULES)
+
+    assert result.files[CONTROLLER] == WITH_QUESTION.replace("\n", "\r\n").encode()
+
+
+def test_a_note_comment_is_indented_like_the_code_line_before_it_when_none_follows() -> None:
+    note = REINDENTED.model_copy(
+        update={
+            "find": "              return users.AddUser(user);",
+            "replace": f"              return users.AddUser(user);\n  {QUESTION}",
+        }
+    )
+
+    result = apply_edits({CONTROLLER: ODD_INDENT.encode()}, [note], RULES)
+
+    assert result.files[CONTROLLER].decode() == ODD_INDENT.replace(
+        RETURN_LINE, f"{RETURN_LINE}             {QUESTION}\n"
+    )
+
+
+def test_a_reindented_note_that_matches_in_two_places_is_rejected() -> None:
+    twice = ODD_INDENT + ODD_INDENT.replace(RETURN_LINE, RETURN_LINE[1:])
+
+    result = apply_edits({CONTROLLER: twice.encode()}, [REINDENTED], RULES)
+
+    assert result.files == {}
+    assert reasons(result) == [f"find occurs 2 times in {CONTROLLER}; it must occur exactly once"]
+
+
+def test_a_note_whose_find_differs_in_more_than_whitespace_is_rejected() -> None:
+    note = REINDENTED.model_copy(
+        update={"find": REINDENTED.find.replace("AddUser", "Add"), "replace": REINDENTED.replace}
+    )
+
+    result = apply_edits({CONTROLLER: ODD_INDENT.encode()}, [note], RULES)
+
+    assert reasons(result) == [f"find occurs 0 times in {CONTROLLER}; it must occur exactly once"]
+
+
+def test_a_reindented_note_that_changes_a_code_line_is_still_rejected() -> None:
+    note = REINDENTED.model_copy(
+        update={"replace": REINDENTED.replace.replace("AddUser(user)", "AddUser(user!)")}
+    )
+
+    result = apply_edits({CONTROLLER: ODD_INDENT.encode()}, [note], RULES)
+
+    assert reasons(result) == [
+        "a note may only add // comment lines and must leave the code unchanged"
+    ]
+
+
+def test_a_fix_whose_find_is_reindented_is_still_rejected() -> None:
+    fix = REINDENTED.model_copy(
+        update={
+            "kind": EditKind.FIX,
+            "replace": "        {\n              //fix: checks the password\n"
+            "              return users.AddUser(user) ?? null;\n",
+            "note_section": None,
+        }
+    )
+
+    result = apply_edits({CONTROLLER: ODD_INDENT.encode()}, [fix], RULES)
+
+    assert reasons(result) == [f"find occurs 0 times in {CONTROLLER}; it must occur exactly once"]

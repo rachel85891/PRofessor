@@ -39,6 +39,7 @@ PLACEHOLDER_REASONS = frozenset(
 """Longer reasons that still only fill the field (compared lowercased, without a final
 period)."""
 _DRIVE_LETTER = re.compile(r"^[A-Za-z]:")
+BOM = "﻿"
 
 
 @dataclass(frozen=True)
@@ -219,15 +220,16 @@ def _replace(
     crlf = "\r\n" in text
     if crlf and re.search(r"(?<!\r)\n", text):
         return f"{path} mixes line endings"
-    newline = "\r\n" if crlf else "\n"
-    count = text.count(find.replace("\n", newline))
-    if count != 1:
-        return f"find occurs {count} times in {path}; it must occur exactly once"
     style = rules.style(path)
     if style is None:  # Refused by the path check.
         return f"{path} is not edited"
-    edited = text.replace(find.replace("\n", newline), replace.replace("\n", newline), 1)
-    problem = _content_problem(path, find, replace, edit.kind, rules, style)
+    bom = BOM if text.startswith(BOM) else ""
+    body = text[len(bom) :].replace("\r\n", "\n")
+    located = _locate(path, body, find, replace, edit.kind, style)
+    if isinstance(located, str):
+        return located
+    edited = bom + (located.edited.replace("\n", "\r\n") if crlf else located.edited)
+    problem = _content_problem(path, located.find, located.replace, edit.kind, rules, style)
     if problem is None and rules.allowances is not None:
         problem = safe_fix_problem(edit, rules.allowances, edited) or note_problem(
             edit, rules.allowances
@@ -236,6 +238,91 @@ def _replace(
         return problem
     texts[path] = edited
     return None
+
+
+@dataclass(frozen=True)
+class _Located:
+    """Where an edit applies: the file's own text it replaces, the text that replaces it,
+    and the whole edited file (all with `\n` line endings, without the BOM)."""
+
+    find: str
+    replace: str
+    edited: str
+
+
+def _locate(
+    path: str, body: str, find: str, replace: str, kind: EditKind, style: CommentStyle
+) -> _Located | str:
+    """Where `find` occurs exactly once in `body`; for a note that does not occur as it is,
+    where its lines occur once as whole lines up to their whitespace (`_loose_note`).
+    Otherwise the reason the edit is rejected."""
+    count = body.count(find)
+    if count == 1:
+        start = body.index(find)
+        return _Located(find, replace, body[:start] + replace + body[start + len(find) :])
+    if count == 0 and kind is EditKind.NOTE:
+        return _loose_note(path, body, find, replace, style)
+    return _not_once(path, count)
+
+
+def _not_once(path: str, count: int) -> str:
+    return f"find occurs {count} times in {path}; it must occur exactly once"
+
+
+def _loose_note(
+    path: str, body: str, find: str, replace: str, style: CommentStyle
+) -> _Located | str:
+    """A note whose `find` lines match whole lines of the file once each side's leading and
+    trailing whitespace is stripped (the model re-indents what it copies). The file's own
+    lines are written unchanged, and each added comment line is indented like the first
+    code line after it, or the last one before it when none follows."""
+    lines = body.split("\n")
+    wanted = _lines(find)
+    starts = [
+        start
+        for start in range(len(lines) - len(wanted) + 1)
+        if all(lines[start + k].strip() == line.strip() for k, line in enumerate(wanted))
+    ]
+    if len(starts) != 1:
+        return _not_once(path, len(starts))
+    [start] = starts
+    own = lines[start : start + len(wanted)]
+    added = _lines(replace)
+    matcher = difflib.SequenceMatcher(
+        a=[line.strip() for line in wanted], b=[line.strip() for line in added], autojunk=False
+    )
+    new: list[str] = []
+    for tag, i1, i2, j1, j2 in matcher.get_opcodes():
+        if tag == "equal":
+            new += own[i1:i2]
+        elif tag == "insert":
+            indent = _code_indent(own, i1, style)
+            new += [_indented(line, indent, style) for line in added[j1:j2]]
+        else:  # Not a note's shape: `_note_problem` rejects it.
+            new += added[j1:j2]
+    edited = "\n".join([*lines[:start], *new, *lines[start + len(wanted) :]])
+    return _Located("\n".join(own), "\n".join(new), edited)
+
+
+def _lines(text: str) -> list[str]:
+    """The lines of `text`, without the empty one after a final newline."""
+    return text.removesuffix("\n").split("\n")
+
+
+def _code_indent(lines: Sequence[str], index: int, style: CommentStyle) -> str:
+    """The indentation of the first code line of `lines` from `index` on, or of the last
+    one before it when none follows; empty when `lines` has no code line."""
+    code = [i for i, line in enumerate(lines) if line.strip() and not _is_comment(line, style)]
+    after = [i for i in code if i >= index]
+    if not code:
+        return ""
+    line = lines[after[0] if after else code[-1]]
+    return line[: len(line) - len(line.lstrip())]
+
+
+def _indented(line: str, indent: str, style: CommentStyle) -> str:
+    """An added comment line at `indent`; any other added line as it is."""
+    return indent + line.strip() if _is_comment(line, style) else line
 
 
 def safe_fix_problem(edit: PlannedEdit, allowances: Allowances, edited: str) -> str | None:
