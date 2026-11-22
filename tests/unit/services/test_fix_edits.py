@@ -5,7 +5,7 @@ from typing import Any
 import pytest
 
 from hw_checker.domain import Assignment, EditKind, NoteSection, PlannedEdit, ReviewRole
-from hw_checker.services.fix_edits import EditRules, apply_edits, fallback_edit
+from hw_checker.services.fix_edits import MOVES_CODE, EditRules, apply_edits, fallback_edit
 from hw_checker.services.fix_review import Allowances, repo_code
 from hw_checker.services.review_policy import role_policy
 from tests.unit.services.fixer_data import ASSIGNMENT, COURSE
@@ -683,3 +683,34 @@ def test_a_fix_whose_find_is_reindented_is_still_rejected() -> None:
     result = apply_edits({CONTROLLER: ODD_INDENT.encode()}, [fix], RULES)
 
     assert reasons(result) == [f"find occurs 0 times in {CONTROLLER}; it must occur exactly once"]
+
+
+# ----------------------------------------------------- a note never moves code (2026-11-22)
+
+
+def test_a_note_whose_stripped_find_matches_mid_line_is_applied_as_whole_lines() -> None:
+    note = REINDENTED.model_copy(
+        update={
+            "find": "return users.AddUser(user);",
+            "replace": f"{QUESTION}\nreturn users.AddUser(user);",
+        }
+    )
+
+    result = apply_edits({CONTROLLER: ODD_INDENT.encode()}, [note], RULES)
+
+    assert result.application.applied == (note,)
+    assert result.files[CONTROLLER].decode() == WITH_QUESTION
+
+
+def test_a_note_that_would_split_a_code_line_is_rejected() -> None:
+    note = REINDENTED.model_copy(
+        update={
+            "find": "return users.AddUser(",
+            "replace": f"{QUESTION}\nreturn users.AddUser(",
+        }
+    )
+
+    result = apply_edits({CONTROLLER: ODD_INDENT.encode()}, [note], RULES)
+
+    assert result.files == {}
+    assert reasons(result) == [MOVES_CODE]

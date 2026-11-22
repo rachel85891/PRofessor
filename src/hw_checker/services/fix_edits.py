@@ -40,6 +40,7 @@ PLACEHOLDER_REASONS = frozenset(
 period)."""
 _DRIVE_LETTER = re.compile(r"^[A-Za-z]:")
 BOM = "﻿"
+MOVES_CODE = "a note must not change a code line; put the whole line in find"
 
 
 @dataclass(frozen=True)
@@ -255,14 +256,27 @@ def _locate(
 ) -> _Located | str:
     """Where `find` occurs exactly once in `body`; for a note that does not occur as it is,
     where its lines occur once as whole lines up to their whitespace (`_loose_note`).
+    A note never moves code: when its one exact match starts or ends in the middle of a
+    line, it is matched as whole lines too, and rejected when that finds no single place.
     Otherwise the reason the edit is rejected."""
     count = body.count(find)
     if count == 1:
         start = body.index(find)
+        if kind is EditKind.NOTE and not _whole_lines(body, find, start):
+            located = _loose_note(path, body, find, replace, style)
+            return MOVES_CODE if isinstance(located, str) else located
         return _Located(find, replace, body[:start] + replace + body[start + len(find) :])
     if count == 0 and kind is EditKind.NOTE:
         return _loose_note(path, body, find, replace, style)
     return _not_once(path, count)
+
+
+def _whole_lines(body: str, find: str, start: int) -> bool:
+    """Whether `find`, found in `body` at `start`, starts and ends at line boundaries."""
+    end = start + len(find)
+    starts = start == 0 or body[start - 1] == "\n" or find.startswith("\n")
+    ends = end == len(body) or body[end] == "\n" or find.endswith("\n")
+    return starts and ends
 
 
 def _not_once(path: str, count: int) -> str:
