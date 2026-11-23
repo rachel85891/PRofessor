@@ -99,14 +99,8 @@ def test_llm_client_is_built_with_the_api_key() -> None:
 
 
 def test_llm_calls_trust_the_system_certificate_store(monkeypatch: pytest.MonkeyPatch) -> None:
-    real_default_context = ssl.create_default_context
-    system_context = real_default_context()
-
-    def default_context(*args: Any, **kwargs: Any) -> ssl.SSLContext:
-        # Only the no-argument call is the system store; the SDK's own calls pass cafile.
-        return real_default_context(*args, **kwargs) if args or kwargs else system_context
-
-    monkeypatch.setattr(ssl, "create_default_context", default_context)
+    context = ssl.create_default_context()
+    monkeypatch.setattr(bootstrap, "system_tls_context", lambda: context)
     built: list[dict[str, Any]] = []
 
     class RecordingClient(httpx2.Client):
@@ -119,7 +113,9 @@ def test_llm_calls_trust_the_system_certificate_store(monkeypatch: pytest.Monkey
 
     bootstrap.build_openrouter_client(settings)
 
-    assert built == [{"verify": system_context, "timeout": 45}]
+    assert len(built) == 1
+    assert built[0]["verify"] is context
+    assert built[0]["timeout"] == 45
 
 
 def test_github_config_maps_the_account_and_limits() -> None:

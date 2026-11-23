@@ -11,7 +11,6 @@ import json
 import os
 import pkgutil
 import sqlite3
-import ssl
 import threading
 from collections.abc import Iterator, Mapping
 from contextlib import ExitStack, contextmanager
@@ -47,6 +46,7 @@ from hw_checker.adapters.local_files import LocalSourceFiles
 from hw_checker.adapters.roster_excel import ExcelRosterReader, RosterColumns
 from hw_checker.adapters.storage_sqlite import SqlStorage, migrate
 from hw_checker.adapters.system_clock import SystemClock
+from hw_checker.adapters.system_tls import system_tls_context
 from hw_checker.checks.deterministic.builtin import builtin_checks
 from hw_checker.checks.deterministic.checker import DeterministicRequirementChecker
 from hw_checker.checks.registry import CheckRegistry
@@ -549,7 +549,7 @@ def llm_http_client(llm: LlmSettings) -> httpx2.Client:
     proxy whose root certificate is installed in the system store.
     """
     longest = max([llm.timeout_seconds, *llm.role_timeouts.values()])
-    return httpx2.Client(verify=ssl.create_default_context(), timeout=longest)
+    return httpx2.Client(verify=system_tls_context(), timeout=longest)
 
 
 def build_code_host(settings: Settings) -> GitHubCodeHost:

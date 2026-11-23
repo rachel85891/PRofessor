@@ -2,7 +2,6 @@
 
 import json
 import logging
-import ssl
 import time
 import urllib.error
 import urllib.parse
@@ -13,6 +12,7 @@ from typing import Any, Protocol
 
 from pydantic import SecretStr
 
+from hw_checker.adapters.system_tls import system_tls_context
 from hw_checker.domain import BranchHead, ForkRef, PullRequestRef, RepoTarget
 from hw_checker.domain.errors import PublishError
 
@@ -55,9 +55,10 @@ def send_with_urllib(request: urllib.request.Request, timeout: float) -> tuple[i
     Raises:
         OSError: the server cannot be reached (`urllib.error.URLError`, a timeout).
     """
-    context = ssl.create_default_context()
     try:
-        with urllib.request.urlopen(request, timeout=timeout, context=context) as response:
+        with urllib.request.urlopen(
+            request, timeout=timeout, context=system_tls_context()
+        ) as response:
             return int(response.status), response.read()
     except urllib.error.HTTPError as error:
         return error.code, error.read()
