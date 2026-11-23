@@ -54,7 +54,7 @@ Example 1. `Controllers/ProductsController.cs` has a `switch` where `case 1:` fa
  "files_notes": ["Class1.cs looks like a leftover from the project template; is it still needed?"]}
 ```
 
-Example 2. `Controllers/OrdersController.cs` has `GET api/orders/{id}` returning `null` for every id (not implemented), and `Put` declared `void`, whose loop keeps reading the file after it found the order. The data file `orders.txt` has no final newline.
+Example 2. `Controllers/OrdersController.cs` has `GET api/orders/{id}` returning `null` for every id (not implemented), and `Put` declared `void`, whose loop keeps reading the file after it found the order (the `if` that finds it already has braces). The data file `orders.txt` has no final newline.
 
 ```json
 {"edits": [
@@ -71,7 +71,7 @@ Example 2. `Controllers/OrdersController.cs` has `GET api/orders/{id}` returning
    "reason": "The assignment asks PUT to return Ok().", "fallback_note": null,
    "note_section": "for_you"},
   {"file": "Controllers/OrdersController.cs",
-   "find": "                    if (order.Id == id)\n                        orderToReplace = currentOrderLine;",
+   "find": "                    if (order.Id == id)\n                    {\n                        orderToReplace = currentOrderLine;\n                    }",
    "replace": "                    if (order.Id == id)\n                    {\n                        orderToReplace = currentOrderLine;\n                        //fix: Found- break\n                        break;\n                    }",
    "kind": "fix", "finding_ids": [],
    "reason": "Once the order is found, the loop keeps reading the rest of the file.",
