@@ -375,6 +375,22 @@ rules:
       quote: "developer decision 2026-11-22 (HW04 pilot review)"
     status: approved
 
+  - id: no-probe-values
+    # A HW04 round note and PR text quoted the checker's test password, a value the student
+    # never wrote. Last in the list, so the rule numbers the self-review uses stay valid.
+    # No `until`: the checker always sends its own request values.
+    applies_to: [fixer, judge, writer]
+    kind: never_mention
+    text: >-
+      Never quote a value the checker sent in a request: a test password, email, id or
+      request body. Describe the request instead, for example "PUT with a strong password
+      returns 500". A value that is in the task's text or in the student's own code may be
+      quoted.
+    origin:
+      source: developer
+      quote: "developer decision 2026-11-23 (HW04 round review)"
+    status: approved
+
 examples:
   - id: break-and-naming
     # Moved from code in stage 3f.

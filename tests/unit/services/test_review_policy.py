@@ -265,3 +265,26 @@ def test_the_entity_framework_rule_is_in_effect_for_hw04_for_the_fixer_judge_and
     for role in (ReviewRole.FIXER, ReviewRole.JUDGE, ReviewRole.WRITER):
         rules = role_policy(COURSE, hw04, catalog, role).rules
         assert any(text.startswith(NO_ENTITY_FRAMEWORK) for text in rules)
+
+
+NO_PROBE_VALUES = "Never quote a value the checker sent in a request"
+
+
+def test_the_probe_values_rule_is_in_effect_for_hw04_for_the_fixer_judge_and_writer(
+    tmp_path: Path,
+) -> None:
+    rule = next(rule for rule in COURSE.rules.rules if rule.id == "no-probe-values")
+    catalog = SOURCE.load_all()
+    hw04 = next(assignment for assignment in catalog if assignment.id == "hw04")
+    setup = FixerSetup(tmp_path)
+    workspace = setup.service.prepare(RUN_ID, (ASSIGNMENT,), (), REPO, setup.fetched)
+
+    plan = setup.service.plan_prompt(workspace, ASSIGNMENT, (ASSIGNMENT,), RESULTS, 1)
+
+    assert rule.until is None and rule.replaces is None
+    assert rule.origin.quote == "developer decision 2026-11-23 (HW04 round review)"
+    assert NO_PROBE_VALUES in plan
+    assert '"PUT with a strong password returns 500"' in plan
+    for role in (ReviewRole.FIXER, ReviewRole.JUDGE, ReviewRole.WRITER):
+        rules = role_policy(COURSE, hw04, catalog, role).rules
+        assert any(text.startswith(NO_PROBE_VALUES) for text in rules)
