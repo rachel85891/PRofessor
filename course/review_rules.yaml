@@ -88,6 +88,8 @@ rules:
     # Moved from code in stage 3f. The stored-property note and its example: the HW04 round
     # read "use PropertyNameCaseInsensitive instead of renaming"; the option is what makes
     # a rename safe, not an alternative to it.
+    # The example names no data file: the HW04 round copied `products.json` into a repo
+    # whose data file is another one (developer decision 2026-11-23).
     applies_to: [fixer, judge]
     kind: note_only
     files: [.cs]
@@ -101,11 +103,13 @@ rules:
       the current names; that if the student renames them, they set
       `PropertyNameCaseInsensitive = true` in the `JsonSerializerOptions`, so the existing
       file still loads. The option is what makes the rename safe, never an alternative to
-      renaming: write the note in the wording of this rule's example.
+      renaming: write the note in the wording of this rule's example. Name the data file
+      only as the student's code names it; if you aren't sure which file it is, write 'the
+      data file'.
     example:
       file: Models/Product.cs
       find: "    public string name { get; set; }"
-      replace: "    //In C#, properties are written in PascalCase: Name. products.json stores the current names: if you rename them, set PropertyNameCaseInsensitive = true in the JsonSerializerOptions, so the existing file still loads\n    public string name { get; set; }"
+      replace: "    //In C#, properties are written in PascalCase: Name. The data file stores the current names: if you rename them, set PropertyNameCaseInsensitive = true in the JsonSerializerOptions, so the existing file still loads\n    public string name { get; set; }"
     approved_notes:
       - words: PropertyNameCaseInsensitive
         what: a naming note with the PropertyNameCaseInsensitive tip
@@ -369,6 +373,22 @@ rules:
     origin:
       source: developer
       quote: "developer decision 2026-11-22 (HW04 pilot review)"
+    status: approved
+
+  - id: no-probe-values
+    # A HW04 round note and PR text quoted the checker's test password, a value the student
+    # never wrote. Last in the list, so the rule numbers the self-review uses stay valid.
+    # No `until`: the checker always sends its own request values.
+    applies_to: [fixer, judge, writer]
+    kind: never_mention
+    text: >-
+      Never quote a value the checker sent in a request: a test password, email, id or
+      request body. Describe the request instead, for example "PUT with a strong password
+      returns 500". A value that is in the task's text or in the student's own code may be
+      quoted.
+    origin:
+      source: developer
+      quote: "developer decision 2026-11-23 (HW04 round review)"
     status: approved
 
 examples:
