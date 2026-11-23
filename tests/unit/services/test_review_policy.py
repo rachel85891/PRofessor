@@ -190,6 +190,20 @@ def test_the_fixer_and_judge_prompts_show_the_naming_rules_stored_property_note(
         assert "if you rename them, set PropertyNameCaseInsensitive = true" in prompt
 
 
+def test_no_example_in_effect_names_a_data_file() -> None:
+    catalog = SOURCE.load_all()
+    hw04 = next(assignment for assignment in catalog if assignment.id == "hw04")
+    naming = next(rule for rule in COURSE.rules.rules if rule.id == "naming")
+
+    assert "Name the data file only as the student's code names it" in naming.text
+    files = ("Models/Product.cs", "wwwroot/index.html", "wwwroot/app.js", "README.md")
+    for role in (ReviewRole.FIXER, ReviewRole.JUDGE, ReviewRole.WRITER):
+        examples = role_policy(COURSE, hw04, catalog, role, files).examples
+        assert all("products.json" not in example.plan for example in examples)
+    fixer_examples = role_policy(COURSE, hw04, catalog, ReviewRole.FIXER, files).examples
+    assert any("The data file stores the current names" in ex.plan for ex in fixer_examples)
+
+
 CONNECTION_STRING = (
     "Never ask or tell the student to move the connection string to `appsettings.json`"
 )

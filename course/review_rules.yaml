@@ -88,6 +88,8 @@ rules:
     # Moved from code in stage 3f. The stored-property note and its example: the HW04 round
     # read "use PropertyNameCaseInsensitive instead of renaming"; the option is what makes
     # a rename safe, not an alternative to it.
+    # The example names no data file: the HW04 round copied `products.json` into a repo
+    # whose data file is another one (developer decision 2026-11-23).
     applies_to: [fixer, judge]
     kind: note_only
     files: [.cs]
@@ -101,11 +103,13 @@ rules:
       the current names; that if the student renames them, they set
       `PropertyNameCaseInsensitive = true` in the `JsonSerializerOptions`, so the existing
       file still loads. The option is what makes the rename safe, never an alternative to
-      renaming: write the note in the wording of this rule's example.
+      renaming: write the note in the wording of this rule's example. Name the data file
+      only as the student's code names it; if you aren't sure which file it is, write 'the
+      data file'.
     example:
       file: Models/Product.cs
       find: "    public string name { get; set; }"
-      replace: "    //In C#, properties are written in PascalCase: Name. products.json stores the current names: if you rename them, set PropertyNameCaseInsensitive = true in the JsonSerializerOptions, so the existing file still loads\n    public string name { get; set; }"
+      replace: "    //In C#, properties are written in PascalCase: Name. The data file stores the current names: if you rename them, set PropertyNameCaseInsensitive = true in the JsonSerializerOptions, so the existing file still loads\n    public string name { get; set; }"
     approved_notes:
       - words: PropertyNameCaseInsensitive
         what: a naming note with the PropertyNameCaseInsensitive tip
