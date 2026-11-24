@@ -1,6 +1,6 @@
-"""`classes_in_role`, `namespace_matches_project` (HW05-G3) and `constructor_takes_class`
-(G4) on the four-project sample solution and its variants, with made-up requirements: nothing
-of HW05 is in the checks."""
+"""`classes_in_role`, `namespace_matches_project` (HW05-G3), `constructor_takes_class` and
+`no_concrete_construction` with `of_selected` (G4) on the four-project sample solution and its
+variants, with made-up requirements: nothing of HW05 is in the checks."""
 
 import re
 from pathlib import Path
@@ -598,6 +598,177 @@ def test_constructor_evidence_unavailable_is_not_evaluated(tmp_path: Path) -> No
     )
 
     assert result is NotEvaluatedReason.EVIDENCE_UNAVAILABLE
+
+
+# ------------------------------------------------------- no_concrete_construction of_selected
+
+
+def creating(body: str, path: str = "Repositories/UserRepository.cs") -> dict[str, str]:
+    """A `ShopContext` in the repositories project and a class with a method running `body`."""
+    namespace = path.split("/")[0]
+    return {
+        "Repositories/ShopContext.cs": CONTEXT.format(namespace="Repositories"),
+        path: (
+            f"namespace {namespace};\n"
+            "public class UserRepository\n"
+            "{\n"
+            f"    public void Save() {{ {body} }}\n"
+            "}\n"
+        ),
+    }
+
+
+def construction(root: Path, **params: Any) -> CheckResult:
+    params.setdefault("in", ["repositories"])
+    return run("no_concrete_construction", root, **params)
+
+
+def test_new_context_in_a_repository_method_is_a_finding(tmp_path: Path) -> None:
+    root = solution(tmp_path, creating("using var context = new ShopContext();"))
+
+    found = finding(construction(root, of_selected=THE_CONTEXT))
+
+    assert "`UserRepository` creates `ShopContext` (Repositories/UserRepository.cs, line 4)" in (
+        found.message_en
+    )
+    assert "must be received through the constructor" in found.message_en
+    assert "Total: 1." in found.message_en
+    assert HEBREW.search(found.message_he)
+
+
+def test_a_context_in_a_project_of_no_role_is_still_a_created_class(tmp_path: Path) -> None:
+    files = creating("var context = new ShopContext();")
+    files["Data/Data.csproj"] = LIBRARY
+    files["Data/ShopContext.cs"] = CONTEXT.format(namespace="Data")
+    del files["Repositories/ShopContext.cs"]
+
+    found = finding(construction(solution(tmp_path / "unassigned", files), of_selected=THE_CONTEXT))
+    loose = creating("var context = new ShopContext();")
+    loose["Repositories/ShopContext.cs"] = CONTEXT.format(namespace="Repositories").replace(
+        "ShopContext", "Elsewhere"
+    )
+    loose["Loose/ShopContext.cs"] = CONTEXT.format(namespace="Loose")
+
+    assert "`UserRepository` creates `ShopContext`" in found.message_en
+    outcome = construction(solution(tmp_path / "loose", loose), of_selected=THE_CONTEXT)
+    assert "`UserRepository` creates `ShopContext`" in finding(outcome).message_en
+
+
+def test_new_entity_is_not_a_finding_when_only_the_context_is_selected(tmp_path: Path) -> None:
+    root = solution(tmp_path, creating('var user = new User { Name = "" };'))
+
+    assert construction(root, of_selected=THE_CONTEXT) == ()
+
+
+def test_a_creation_outside_the_in_roles_is_not_a_finding(tmp_path: Path) -> None:
+    root = solution(
+        tmp_path,
+        creating("using var context = new ShopContext();", "Services/UserService.cs"),
+    )
+
+    assert construction(root, of_selected=THE_CONTEXT) == ()
+    assert (
+        "creates `ShopContext`"
+        in finding(construction(root, of_selected=THE_CONTEXT, **{"in": ["services"]})).message_en
+    )
+
+
+def test_of_and_of_selected_together_are_a_union(tmp_path: Path) -> None:
+    root = solution(
+        tmp_path,
+        creating("var context = new ShopContext(); var user = new User(); var s = new Other();"),
+    )
+
+    by_role = finding(construction(root, of=["entities"]))
+    both = finding(construction(root, of=["entities"], of_selected=THE_CONTEXT))
+
+    assert "Total: 1." in by_role.message_en
+    assert "Total: 2." in both.message_en
+    assert "`ShopContext`" in both.message_en
+    assert "`User`" in both.message_en
+
+
+def test_the_exclusions_do_not_apply_to_of_selected(tmp_path: Path) -> None:
+    root = solution(tmp_path, creating("var context = new ShopContext();"))
+
+    outcome = construction(
+        root, of_selected=THE_CONTEXT, exclude=["Context$"], exclude_bases=["^DbContext$"]
+    )
+
+    assert "creates `ShopContext`" in finding(outcome).message_en
+
+
+def test_existing_message_is_unchanged_without_of_selected(tmp_path: Path) -> None:
+    root = solution(tmp_path, creating("var user = new User();"))
+
+    found = finding(construction(root, of=["entities"]))
+
+    assert found.message_en.startswith(
+        "Classes create a entities class with new instead of receiving its interface"
+    )
+
+
+def test_no_creatable_class_is_not_evaluated(tmp_path: Path) -> None:
+    root = solution(tmp_path, creating("var x = 1;"))
+
+    outcome = construction(root, of_selected={"names": ["^Missing$"]})
+
+    assert outcome is NotEvaluatedReason.DEPENDENCY_FAILED
+
+
+def test_a_created_name_declared_twice_is_left_out_and_said(tmp_path: Path) -> None:
+    files = two_audits(creating("var a = new Audit(); var c = new ShopContext();"))
+
+    found = finding(
+        construction(solution(tmp_path, files), of_selected={"names": ["^Audit$", "^ShopC"]})
+    )
+
+    assert "creates `ShopContext`" in found.message_en
+    assert "creates `Audit`" not in found.message_en
+    assert "the name is declared more than once: `Audit`" in found.message_en
+
+
+def test_the_creation_examples_are_capped_with_the_total(tmp_path: Path) -> None:
+    body = " ".join(f"var c{i} = new ShopContext();" for i in range(7))
+    root = solution(tmp_path, creating(body))
+
+    found = finding(construction(root, of_selected=THE_CONTEXT))
+
+    assert found.message_en.count(" creates ") == 5
+    assert "Total: 7." in found.message_en
+
+
+def test_creation_evidence_unavailable_is_not_evaluated(tmp_path: Path) -> None:
+    root = solution(tmp_path, creating("var c = new ShopContext();"))
+
+    outcome = run(
+        "no_concrete_construction", root, unavailable(), of_selected=THE_CONTEXT, **{"in": ["api"]}
+    )
+
+    assert outcome is NotEvaluatedReason.EVIDENCE_UNAVAILABLE
+
+
+@pytest.mark.parametrize(
+    "params",
+    [
+        {"in": ["services"]},
+        {"in": ["services"], "of": []},
+        {"in": ["services"], "of_selected": {}},
+        {"in": ["services"], "of_selected": THE_CONTEXT, "of": ["missing"]},
+        {"of_selected": THE_CONTEXT},
+    ],
+)
+def test_no_concrete_construction_params_are_validated(params: dict[str, Any]) -> None:
+    with pytest.raises(ValidationError):
+        REGISTRY.get("no_concrete_construction").spec.params_model.model_validate(
+            {"roles": ROLES, **params}
+        )
+
+
+def test_of_alone_and_of_selected_alone_are_valid() -> None:
+    model = REGISTRY.get("no_concrete_construction").spec.params_model
+    model.model_validate({"roles": ROLES, "in": ["services"], "of": ["repositories"]})
+    model.model_validate({"roles": ROLES, "in": ["services"], "of_selected": THE_CONTEXT})
 
 
 # ---------------------------------------------------------------- params and catalog

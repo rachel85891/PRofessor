@@ -494,6 +494,18 @@ CONCRETE_CONSTRUCTION = MessageTemplate(
     ),
 )
 
+CONCRETE_CONSTRUCTION_OF_SELECTED = MessageTemplate(
+    name="CONCRETE_CONSTRUCTION_OF_SELECTED",
+    he=(
+        "מחלקות יוצרות עם new מחלקה שאסור ליצור כך, אלא לקבל אותה בבנאי: "
+        "{examples}. סך הכול: {count}.{ambiguous}"
+    ),
+    en=(
+        "Classes create with new a class that must be received through the constructor "
+        "instead: {examples}. Total: {count}.{ambiguous}"
+    ),
+)
+
 CREATION_EXAMPLE = MessageTemplate(
     name="CREATION_EXAMPLE",
     he="{creator} יוצר {created}",
@@ -690,6 +702,7 @@ ALL_TEMPLATES: tuple[MessageTemplate, ...] = (
     UNREGISTERED_EXAMPLE,
     UNTYPED_REGISTRATIONS,
     CONCRETE_CONSTRUCTION,
+    CONCRETE_CONSTRUCTION_OF_SELECTED,
     CREATION_EXAMPLE,
     AMBIGUOUS_NAMES,
     PATTERN_FOUND,
