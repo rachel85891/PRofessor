@@ -1,5 +1,6 @@
-"""`classes_in_role` and `namespace_matches_project` (HW05-G3) on the four-project sample
-solution and its variants, with made-up requirements: nothing of HW05 is in the checks."""
+"""`classes_in_role`, `namespace_matches_project` (HW05-G3) and `constructor_takes_class`
+(G4) on the four-project sample solution and its variants, with made-up requirements: nothing
+of HW05 is in the checks."""
 
 import re
 from pathlib import Path
@@ -463,6 +464,142 @@ def test_namespace_evidence_unavailable_is_not_evaluated(tmp_path: Path) -> None
     assert result is NotEvaluatedReason.EVIDENCE_UNAVAILABLE
 
 
+# ---------------------------------------------------------------- constructor_takes_class
+
+
+def repository(constructor: str) -> dict[str, str]:
+    """`UserRepository` with the given constructor text, next to a `ShopContext`."""
+    return {
+        "Repositories/ShopContext.cs": CONTEXT.format(namespace="Repositories"),
+        "Repositories/UserRepository.cs": (
+            "namespace Repositories;\n"
+            "public class UserRepository : IUserRepository\n"
+            "{\n"
+            f"    {constructor}\n"
+            "}\n"
+        ),
+    }
+
+
+def two_audits(files: dict[str, str]) -> dict[str, str]:
+    return {
+        **files,
+        "Entities/Audit.cs": "namespace Entities;\npublic class Audit { }\n",
+        "Services/Audit.cs": "namespace Services;\npublic class Audit { }\n",
+    }
+
+
+def takes(root: Path, consumer: str = "repositories", **params: Any) -> CheckResult:
+    select = params.pop("select", THE_CONTEXT)
+    return run("constructor_takes_class", root, consumer=consumer, select=select, **params)
+
+
+@pytest.mark.parametrize(
+    "constructor",
+    [
+        "public UserRepository(ShopContext context) { }",
+        "public UserRepository(ShopContext? context) { }",
+        "public UserRepository(IClock clock, ShopContext context, int size) { }",
+        "public UserRepository(Repositories.ShopContext context) { }",
+    ],
+)
+def test_a_repository_taking_the_context_passes(tmp_path: Path, constructor: str) -> None:
+    root = solution(tmp_path, repository(constructor))
+
+    assert takes(root) == ()
+
+
+def test_a_primary_constructor_taking_the_context_passes(tmp_path: Path) -> None:
+    files = repository("")
+    files["Repositories/UserRepository.cs"] = (
+        "namespace Repositories;\n"
+        "public class UserRepository(ShopContext context) : IUserRepository { }\n"
+    )
+
+    assert takes(solution(tmp_path, files)) == ()
+
+
+def test_no_repository_taking_the_context_is_a_finding_without_a_location(
+    tmp_path: Path,
+) -> None:
+    root = solution(tmp_path, repository("public UserRepository(IClock clock) { }"))
+
+    found = finding(takes(root))
+
+    assert "No class in the repositories layer's projects takes any of these classes" in (
+        found.message_en
+    )
+    assert "`ShopContext`" in found.message_en
+    assert "Total: 1." in found.message_en
+    assert HEBREW.search(found.message_he)
+    assert found.evidence is None
+
+
+def test_a_class_of_another_role_taking_the_context_does_not_count(tmp_path: Path) -> None:
+    files = repository("public UserRepository(IClock clock) { }")
+    files["Api/Controllers/DataController.cs"] = (
+        "namespace Api.Controllers;\n"
+        "public class DataController\n{\n    public DataController(ShopContext context) { }\n}\n"
+    )
+
+    found = finding(takes(solution(tmp_path / "repo", files)))
+
+    assert "takes any of these classes" in found.message_en
+    assert takes(solution(tmp_path / "api", files), consumer="api") == ()
+
+
+def test_a_generic_wrapper_of_the_context_does_not_count(tmp_path: Path) -> None:
+    root = solution(tmp_path, repository("public UserRepository(IOptions<ShopContext> o) { }"))
+
+    assert isinstance(takes(root), tuple)
+
+
+def test_the_finding_lists_five_selected_classes_and_the_total(tmp_path: Path) -> None:
+    classes = "".join(f"public class Item{i} {{ }}\n" for i in range(7))
+    root = solution(tmp_path, {"Entities/Items.cs": f"namespace Entities;\n{classes}"})
+
+    found = finding(takes(root, select={"names": ["^Item"]}))
+
+    assert found.message_en.count("`Item") == 5
+    assert "Total: 7." in found.message_en
+
+
+def test_no_selected_class_or_no_consumer_project_is_not_evaluated(tmp_path: Path) -> None:
+    root = solution(tmp_path, repository("public UserRepository(ShopContext c) { }"))
+
+    assert takes(root, select={"names": ["^Missing$"]}) is NotEvaluatedReason.DEPENDENCY_FAILED
+    ghost = takes(root, roles={**ROLES, "ghost": {"name": "ghost"}}, consumer="ghost")
+    assert ghost is NotEvaluatedReason.DEPENDENCY_FAILED
+
+
+def test_a_selected_name_declared_twice_is_left_out_and_said(tmp_path: Path) -> None:
+    files = two_audits(repository("public UserRepository(IClock clock) { }"))
+
+    found = finding(takes(solution(tmp_path, files), select={"names": ["^Audit$", "^ShopC"]}))
+
+    assert "`ShopContext`" in found.message_en
+    assert "the name is declared more than once: `Audit`" in found.message_en
+    assert "Total: 1." in found.message_en
+
+
+def test_taking_a_class_declared_twice_is_not_a_pass(tmp_path: Path) -> None:
+    files = two_audits(repository("public UserRepository(Audit audit) { }"))
+
+    outcome = takes(solution(tmp_path, files), select={"names": ["^Audit$"]})
+
+    assert outcome is NotEvaluatedReason.DEPENDENCY_FAILED
+
+
+def test_constructor_evidence_unavailable_is_not_evaluated(tmp_path: Path) -> None:
+    root = solution(tmp_path, repository("public UserRepository(ShopContext c) { }"))
+
+    result = run(
+        "constructor_takes_class", root, unavailable(), consumer="repositories", select=THE_CONTEXT
+    )
+
+    assert result is NotEvaluatedReason.EVIDENCE_UNAVAILABLE
+
+
 # ---------------------------------------------------------------- params and catalog
 
 
@@ -476,6 +613,12 @@ def test_namespace_evidence_unavailable_is_not_evaluated(tmp_path: Path) -> None
         ("classes_in_role", {"role": "Entities", "select": THE_USER}),
         ("classes_in_role", {"role": "entities", "select": {"names": ["("]}}),
         ("classes_in_role", {"role": "entities", "select": THE_USER, "extra": 1}),
+        ("constructor_takes_class", {"consumer": "repositories"}),
+        ("constructor_takes_class", {"consumer": "repositories", "select": {}}),
+        ("constructor_takes_class", {"consumer": "missing", "select": THE_CONTEXT}),
+        ("constructor_takes_class", {"consumer": "Repositories", "select": THE_CONTEXT}),
+        ("constructor_takes_class", {"select": THE_CONTEXT}),
+        ("constructor_takes_class", {"consumer": "api", "select": THE_CONTEXT, "extra": 1}),
         ("namespace_matches_project", {}),
         ("namespace_matches_project", {"select": {}}),
         ("namespace_matches_project", {"select": THE_USER, "role": "missing"}),
@@ -488,7 +631,7 @@ def test_bad_params_are_refused(check: str, params: dict[str, Any]) -> None:
 
 
 def test_both_checks_are_registered_with_their_params_schema() -> None:
-    for name in ("classes_in_role", "namespace_matches_project"):
+    for name in ("classes_in_role", "namespace_matches_project", "constructor_takes_class"):
         spec = REGISTRY.get(name).spec
         schema = spec.params_model.model_json_schema()
         assert spec.reads_architecture

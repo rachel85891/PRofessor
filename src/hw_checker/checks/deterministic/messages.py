@@ -552,6 +552,18 @@ CLASSES_NOT_IN_ROLE = MessageTemplate(
     ),
 )
 
+CONSTRUCTOR_TAKES_NONE_OF = MessageTemplate(
+    name="CONSTRUCTOR_TAKES_NONE_OF",
+    he=(
+        "אף מחלקה בפרויקטים של שכבת {consumer} לא מקבלת בבנאי אחת מהמחלקות הנדרשות: "
+        "{examples}. סך הכול: {count}.{ambiguous}"
+    ),
+    en=(
+        "No class in the {consumer} layer's projects takes any of these classes in its "
+        "constructor: {examples}. Total: {count}.{ambiguous}"
+    ),
+)
+
 CLASS_IN_OTHER_ROLE = MessageTemplate(
     name="CLASS_IN_OTHER_ROLE",
     he="{name} נמצאת בפרויקט {project} (שכבת {found_role})",
@@ -685,6 +697,7 @@ ALL_TEMPLATES: tuple[MessageTemplate, ...] = (
     PATTERN_SCOPE_FILES,
     PATTERN_SCOPE_ROLES,
     CLASSES_NOT_IN_ROLE,
+    CONSTRUCTOR_TAKES_NONE_OF,
     CLASS_IN_OTHER_ROLE,
     CLASS_IN_UNASSIGNED_PROJECT,
     CLASS_IN_NO_PROJECT,
