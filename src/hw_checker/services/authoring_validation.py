@@ -19,6 +19,7 @@ from hw_checker.domain import (
     NotEvaluatedReason,
     OriginSource,
     RequirementKind,
+    assignments_in_effect,
     new_run_id,
 )
 from hw_checker.domain.authoring import (
@@ -109,7 +110,7 @@ class DraftValidator:
         selected: tuple[Assignment, ...] = ()
         if loaded is not None:
             target = next(a for a in loaded[1] if a.id == intake.id)
-            selected = tuple(a for a in loaded[1] if a.order <= target.order)
+            selected = assignments_in_effect(loaded[1], target)
             problems += check_problems((target,), self._catalog)
         coverage = _coverage(intake, reply)
         if problems or loaded is None or target is None:
@@ -221,7 +222,8 @@ def rule_changes(
     course: Course, assignments: Sequence[Assignment], target: Assignment
 ) -> RuleChanges:
     """The review rules and examples in effect for `target`, against those in effect for
-    the assignment before it (by order): new, replacing an earlier one, and ended."""
+    the assignment before it (by order): new, replacing an earlier one, and ended; and the
+    requirements and lenient notes that ended (`until`)."""
     earlier = [a for a in assignments if a.order < target.order]
     if not earlier:
         return RuleChanges()
@@ -231,6 +233,10 @@ def rule_changes(
     replaced = [item for item in now if item.replaces in before and item.id not in before]
     taken = {item.replaces for item in replaced}
     return RuleChanges(
+        ended_requirements=_ended(
+            _requirement_ids(assignments, previous), _requirement_ids(assignments, target)
+        ),
+        ended_notes=_ended(_notes(assignments, previous), _notes(assignments, target)),
         new=tuple(item.id for item in now if item.id not in before and item.replaces not in before),
         replaced=tuple(f"{item.id} (replaces {item.replaces})" for item in replaced),
         ended=tuple(
@@ -239,6 +245,18 @@ def rule_changes(
             if item_id not in {item.id for item in now} and item_id not in taken
         ),
     )
+
+
+def _requirement_ids(assignments: Sequence[Assignment], checked: Assignment) -> list[str]:
+    return [r.id for a in assignments_in_effect(assignments, checked) for r in a.requirements]
+
+
+def _notes(assignments: Sequence[Assignment], checked: Assignment) -> list[str]:
+    return [n for a in assignments_in_effect(assignments, checked) for n in a.lenient_notes]
+
+
+def _ended(before: Sequence[str], now: Sequence[str]) -> tuple[str, ...]:
+    return tuple(item for item in before if item not in now)
 
 
 def _in_effect(

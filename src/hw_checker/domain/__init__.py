@@ -25,6 +25,7 @@ from hw_checker.domain.assignment import (
     Feedback,
     HttpMethod,
     HttpProbe,
+    LenientNote,
     ParamValue,
     ProbeCapture,
     Requirement,
@@ -32,6 +33,7 @@ from hw_checker.domain.assignment import (
     ReviewedFiles,
     Severity,
     TaskEnd,
+    assignments_in_effect,
 )
 from hw_checker.domain.checks import (
     CheckDescription,
@@ -225,6 +227,7 @@ __all__ = [
     "HttpProbe",
     "ItemStatus",
     "JudgedFinding",
+    "LenientNote",
     "LlmUsage",
     "MemberFact",
     "NotEvaluated",
@@ -299,6 +302,7 @@ __all__ = [
     "VerifyResult",
     "WebProjectChoice",
     "WebProjectChoiceReason",
+    "assignments_in_effect",
     "new_run_id",
     "parse_github_url",
 ]

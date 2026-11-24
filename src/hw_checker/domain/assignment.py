@@ -1,7 +1,7 @@
 """Assignment models: assignments, requirements, HTTP probes, severity and kinds."""
 
 import re
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping, Sequence
 from enum import StrEnum
 from types import MappingProxyType
 from typing import Annotated, Self
@@ -224,6 +224,17 @@ class CodeScope(DomainModel):
         return self
 
 
+class LenientNote(DomainModel):
+    """A lenient note that ends: `text` and the last assignment (`until`) it applies to.
+
+    A file or the author's reply writes a note as a plain string, or as an object with
+    these two fields when it ends.
+    """
+
+    text: NonBlankStr
+    until: Identifier | None = None
+
+
 CODE_FIELDS = ("reviewer_guidance", "lenient_notes", "concerns")
 """The fields only a `code` requirement has: what the code reviewer (stage 8b) reads."""
 
@@ -264,6 +275,9 @@ class Requirement(DomainModel):
     concerns: CodeScope | None = None
     """For a `code` requirement: the files or roles it concerns; without it, the reviewer
     chooses the files."""
+    until: Identifier | None = None
+    """The last assignment this requirement applies to; a round of a later assignment does
+    not see it (like a review rule's `until`)."""
 
     @model_validator(mode="after")
     def _does_not_depend_on_itself(self) -> Self:
@@ -428,6 +442,9 @@ class Assignment(DomainModel):
     requirements: tuple[Requirement, ...]
     taught_techniques: tuple[NonBlankStr, ...] = ()
     lenient_notes: tuple[NonBlankStr, ...] = ()
+    lenient_note_ends: tuple[LenientNote, ...] = ()
+    """The notes of `lenient_notes` that end at an assignment (each by its `text`): a round
+    of a later assignment does not see them."""
     review_rules: ReviewRuleSet = ReviewRuleSet()
     """The assignment's own review rules (its `review_rules.yaml`, ADR 0023)."""
     reviewed_files: ReviewedFiles | None = None
@@ -477,6 +494,13 @@ class Assignment(DomainModel):
         return self
 
     @model_validator(mode="after")
+    def _ending_notes_are_notes(self) -> Self:
+        unknown = [n.text for n in self.lenient_note_ends if n.text not in self.lenient_notes]
+        if unknown or any(n.until is None for n in self.lenient_note_ends):
+            raise ValueError("lenient_note_ends: each entry is one of lenient_notes, with an until")
+        return self
+
+    @model_validator(mode="after")
     def _requirement_ids_are_unique(self) -> Self:
         ids = [requirement.id for requirement in self.requirements]
         duplicates = sorted({item for item in ids if ids.count(item) > 1})
@@ -501,3 +525,39 @@ class Assignment(DomainModel):
             if requirement.status is ItemStatus.DRAFT
         )
         return requirements + self.review_rules.drafts
+
+
+def assignments_in_effect(
+    assignments: Sequence[Assignment], checked: Assignment
+) -> tuple[Assignment, ...]:
+    """`_general` and the assignments up to `checked`, by `order`, as a round of `checked`
+    sees them: a requirement or lenient note whose `until` assignment comes before `checked`
+    has ended and is left out. The checked assignment keeps its own items (a valid `until`
+    is never earlier than the item's own assignment).
+
+    This is the one place that selects the assignments of a round and applies `until`;
+    everything that reads a round's requirements gets them from here.
+    """
+    orders = {assignment.id: assignment.order for assignment in assignments}
+
+    def ended(until: str | None) -> bool:
+        return until is not None and orders.get(until, checked.order) < checked.order
+
+    return tuple(
+        _without_ended(assignment, ended)
+        for assignment in sorted(assignments, key=lambda a: a.order)
+        if assignment.order <= checked.order
+    )
+
+
+def _without_ended(assignment: Assignment, ended: Callable[[str | None], bool]) -> Assignment:
+    gone = {n.text for n in assignment.lenient_note_ends if ended(n.until)}
+    return assignment.model_copy(
+        update={
+            "requirements": tuple(r for r in assignment.requirements if not ended(r.until)),
+            "lenient_notes": tuple(n for n in assignment.lenient_notes if n not in gone),
+            "lenient_note_ends": tuple(
+                n for n in assignment.lenient_note_ends if not ended(n.until)
+            ),
+        }
+    )

@@ -55,6 +55,7 @@ class RequirementEntry(_FileModel):
     reviewer_guidance: str = ""
     lenient_notes: list[str] = []
     concerns: dict[str, Any] | None = None
+    until: str | None = None
 
 
 class CheckConditionEntry(_FileModel):
@@ -72,6 +73,13 @@ class ReviewedFilesEntry(_FileModel):
     exclude: list[str] = []
 
 
+class LenientNoteEntry(_FileModel):
+    """A lenient note written as an object: its `text`, and the assignment it ends at."""
+
+    text: str
+    until: str | None = None
+
+
 class AssignmentFile(_FileModel):
     """The whole requirements.yaml file of one assignment.
 
@@ -83,7 +91,7 @@ class AssignmentFile(_FileModel):
     order: int
     title: str
     taught_techniques: list[str] = []
-    lenient_notes: list[str] = []
+    lenient_notes: list[str | LenientNoteEntry] = []
     reviewed_files: ReviewedFilesEntry | None = None
     ends_when: CheckConditionEntry | None = None
     applies_when: CheckConditionEntry | None = None
