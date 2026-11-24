@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from hw_checker.adapters.docker_runner.engine import EngineError
+from hw_checker.adapters.docker_runner.engine import ContainerSpec, EngineError
 from hw_checker.adapters.docker_runner.runner import DockerCodeRunner
 from hw_checker.adapters.docker_runner.sql_server import SqlServerProvisioner
 from hw_checker.domain import ExecutionRequest
@@ -127,8 +127,8 @@ def test_each_run_creates_its_own_database_on_its_network_and_drops_it(
 
     code_runner.execute(request(repo, tmp_path))
 
-    assert sql_statements(engine)[-2:][0] == "CREATE DATABASE [hw_dana_api_run_1]"
-    assert "DROP DATABASE [hw_dana_api_run_1]" in sql_statements(engine)[-1]
+    assert sql_statements(engine)[-4] == "CREATE DATABASE [hw_dana_api_run_1]"
+    assert "DROP DATABASE [hw_dana_api_run_1]" in sql_statements(engine)[-2]
     (attachment,) = attached_during_the_run
     assert list(attachment.values()) == [("sqlserver",)]
     assert engine.connections and all(not v for v in engine.connections.values())
@@ -145,7 +145,7 @@ def test_the_database_exists_before_the_app_starts(repo: Path, tmp_path: Path) -
 
     started_app = engine.calls.index("start app")
     assert any(call.startswith("connect_network") for call in engine.calls[:started_app])
-    assert not any("DROP" in statement for statement in sql_statements(engine)[:-1])
+    assert not any("DROP" in statement for statement in sql_statements(engine)[:-2])
 
 
 def test_the_server_is_not_given_to_the_app_yet(repo: Path, tmp_path: Path) -> None:
@@ -226,7 +226,7 @@ def test_the_database_is_dropped_after_an_engine_failure_in_the_run(
 
     code_runner.execute(request(repo, tmp_path))
 
-    assert "DROP DATABASE [hw_dana_api_run_1]" in sql_statements(engine)[-1]
+    assert "DROP DATABASE [hw_dana_api_run_1]" in sql_statements(engine)[-2]
     assert only_the_server_is_left(engine)
 
 
@@ -295,6 +295,42 @@ def test_the_sweep_removes_a_server_still_attached_to_a_repo_network(
 
     assert removed == 3
     assert engine.leftovers == 0
+
+
+def test_the_database_sweep_removes_only_the_sql_servers_own_resources() -> None:
+    engine = FakeEngine()
+    runner(engine).start_round()
+    engine.networks["repo-net"] = ({PREFIX: "1", f"{PREFIX}.kind": "network"}, True)
+    engine.volumes["work"] = {PREFIX: "1", f"{PREFIX}.kind": "work"}
+    other = ContainerSpec(
+        name="other-app",
+        image="x",
+        command=(),
+        labels={PREFIX: "1", f"{PREFIX}.kind": "app"},
+        user="1",
+        memory_mb=1,
+        cpus=1,
+        pids=1,
+    )
+    engine.create_container(other)
+
+    removed = runner(engine).sweep_database_leftovers()
+
+    assert removed == 2  # the server container and its network
+    assert [c.kind for c in engine.containers.values()] == ["app"]
+    assert list(engine.networks) == ["repo-net"]
+    assert list(engine.volumes) == ["work"]
+
+
+def test_the_database_sweep_with_nothing_to_remove_removes_nothing() -> None:
+    assert runner(FakeEngine()).sweep_database_leftovers() == 0
+
+
+def test_the_database_sweep_reports_an_unreachable_docker() -> None:
+    engine = FakeEngine(fail_on={"list_labelled": EngineError("pipe gone")})
+
+    with pytest.raises(ExecutionEnvironmentError, match="cannot list leftovers"):
+        runner(engine).sweep_database_leftovers()
 
 
 def test_no_log_or_exception_holds_the_password_or_connection_string(

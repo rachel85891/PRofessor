@@ -15,6 +15,7 @@ from tests.unit.adapters.docker_runner.test_engine_and_config import sql_server_
 
 PREFIX = "hw-checker-test"
 PASSWORD = "Aa1_secret-password-for-tests"  # pragma: allowlist secret
+LOGIN_PASSWORD = "Aa1_login-password-for-tests"  # pragma: allowlist secret
 NETWORK = "repo-net-1"
 
 
@@ -27,6 +28,7 @@ def provisioner(engine: FakeEngine, **overrides: object) -> SqlServerProvisioner
         clock=clock,
         sleep=clock.sleep,
         password_factory=lambda: PASSWORD,
+        login_password_factory=lambda: LOGIN_PASSWORD,
     )
 
 
@@ -163,19 +165,91 @@ def test_a_failed_start_can_be_tried_again() -> None:
 # ---------------------------------------------------------------------- databases
 
 
-def test_create_database_runs_sqlcmd_without_the_password_in_the_command() -> None:
+def test_create_database_runs_sqlcmd_without_any_password_in_the_command() -> None:
     server, engine = started()
     engine.sql_commands.clear()
 
     server.create_database("hw_dana_run1", NETWORK)
 
-    ((shell, flag, script, sqlcmd, login, sql),) = engine.sql_commands
+    (create, _login) = engine.sql_commands
+    (shell, flag, script, sqlcmd, user, sql) = create
     assert (shell, flag) == ("sh", "-c")
     assert sqlcmd == "/opt/mssql-tools18/bin/sqlcmd"
-    assert login == "sa"
+    assert user == "sa"
     assert sql == "CREATE DATABASE [hw_dana_run1]"
     assert "$MSSQL_SA_PASSWORD" in script
-    assert all(PASSWORD not in part for part in engine.sql_commands[0])
+    for command in engine.sql_commands:
+        assert all(PASSWORD not in part and LOGIN_PASSWORD not in part for part in command)
+
+
+def test_the_login_is_created_with_its_own_password_through_the_environment() -> None:
+    server, engine = started()
+    engine.sql_commands.clear()
+    engine.sql_environments.clear()
+
+    server.create_database("hw_a", NETWORK)
+
+    assert engine.sql_environments == [{}, {"HW_LOGIN_PASSWORD": LOGIN_PASSWORD}]
+    sql = engine.sql_commands[1][-1]
+    assert "CREATE LOGIN [hw_a] WITH PASSWORD = N'$(HW_LOGIN_PASSWORD)'" in sql
+    assert "DEFAULT_DATABASE = [hw_a]" in sql
+    assert "CHECK_POLICY = OFF, CHECK_EXPIRATION = OFF" in sql
+    assert "USE [hw_a]; CREATE USER [hw_a] FOR LOGIN [hw_a]" in sql
+    assert "ALTER ROLE db_owner ADD MEMBER [hw_a]" in sql
+    assert sql.endswith("USE master; DENY VIEW ANY DATABASE TO [hw_a];")
+    assert "sysadmin" not in sql and "sp_addsrvrolemember" not in sql
+
+
+def test_a_failed_login_drops_the_database_and_the_login_without_leaking() -> None:
+    engine = FakeEngine(sql_results={"CREATE LOGIN": (1, f"Msg 15118 {LOGIN_PASSWORD}")})
+    server, _ = started(engine)
+    engine.sql_commands.clear()
+
+    with pytest.raises(
+        ExecutionEnvironmentError, match="could not create the database's login"
+    ) as raised:
+        server.create_database("hw_a", NETWORK)
+
+    statements = [command[-1] for command in engine.sql_commands]
+    assert "DROP DATABASE [hw_a]" in statements[-2]
+    assert "DROP LOGIN [hw_a]" in statements[-1]
+    assert LOGIN_PASSWORD not in str(raised.value)
+    assert PASSWORD not in str(raised.value)
+
+
+def test_a_failed_login_still_raises_when_the_undo_fails_too() -> None:
+    engine = FakeEngine(
+        sql_results={
+            "CREATE LOGIN": (1, "Msg 15118 refused"),
+            "DROP DATABASE": (1, "Msg 3702 busy"),
+        }
+    )
+    server, _ = started(engine)
+
+    with pytest.raises(ExecutionEnvironmentError, match="create the database's login"):
+        server.create_database("hw_a", NETWORK)
+
+    statements = [command[-1] for command in engine.sql_commands]
+    assert "DROP LOGIN [hw_a]" in statements[-1]  # the login is still tried
+
+
+def test_two_databases_get_two_different_passwords() -> None:
+    engine = FakeEngine()
+    server = SqlServerProvisioner(
+        sql_server_config(), engine, PREFIX, password_factory=lambda: PASSWORD
+    )
+    server.start()
+    engine.networks[NETWORK] = ({}, True)
+    engine.sql_environments.clear()
+
+    first = server.create_database("hw_a", NETWORK)
+    second = server.create_database("hw_b", NETWORK)
+
+    passwords = [env["HW_LOGIN_PASSWORD"] for env in engine.sql_environments if env]
+    assert len(passwords) == 2 and passwords[0] != passwords[1]
+    assert passwords[0].startswith("Aa1_") and len(passwords[0]) >= 20
+    assert f"Password={passwords[0]};" in first
+    assert f"Password={passwords[1]};" in second
 
 
 def test_create_database_attaches_the_server_to_the_repo_network_under_its_alias() -> None:
@@ -187,15 +261,17 @@ def test_create_database_attaches_the_server_to_the_repo_network_under_its_alias
     assert engine.connections[NETWORK] == {container: ("sqlserver",)}
 
 
-def test_create_database_returns_the_apps_connection_string() -> None:
+def test_create_database_returns_the_logins_connection_string_not_sas() -> None:
     server, _ = started()
 
     connection = server.create_database("hw_a", NETWORK)
 
     assert connection == (
-        f"Server=sqlserver;Database=hw_a;User Id=sa;Password={PASSWORD};"
+        f"Server=sqlserver;Database=hw_a;User Id=hw_a;Password={LOGIN_PASSWORD};"
         "Encrypt=True;TrustServerCertificate=True"
     )
+    assert PASSWORD not in connection
+    assert "User Id=sa" not in connection
 
 
 def test_create_database_refuses_an_unsafe_name_before_any_exec() -> None:
@@ -223,7 +299,7 @@ def test_create_database_before_start_is_an_environment_error() -> None:
 
 
 def test_create_database_reports_a_refusal_without_the_password() -> None:
-    engine = FakeEngine(sql_results={"CREATE": (1, f"Msg 1801 already exists {PASSWORD}")})
+    engine = FakeEngine(sql_results={"CREATE DATABASE": (1, f"Msg 1801 already exists {PASSWORD}")})
     server, _ = started(engine)
 
     with pytest.raises(ExecutionEnvironmentError, match="could not create the database") as raised:
@@ -241,16 +317,19 @@ def test_create_database_reports_an_engine_error_on_attach() -> None:
         server.create_database("hw_a", NETWORK)
 
 
-def test_drop_database_drops_it_and_detaches_the_server() -> None:
+def test_drop_database_drops_it_then_its_login_and_detaches_the_server() -> None:
     server, engine = started()
     server.create_database("hw_a", NETWORK)
     engine.sql_commands.clear()
 
     server.drop_database("hw_a", NETWORK)
 
-    ((*_, sql),) = engine.sql_commands
-    assert sql.startswith("IF DB_ID(N'hw_a') IS NOT NULL BEGIN")
-    assert "DROP DATABASE [hw_a]" in sql
+    (drop_db, drop_login) = [command[-1] for command in engine.sql_commands]
+    assert drop_db.startswith("IF DB_ID(N'hw_a') IS NOT NULL BEGIN")
+    assert "SET SINGLE_USER WITH ROLLBACK IMMEDIATE; DROP DATABASE [hw_a]" in drop_db
+    assert "KILL " in drop_login and "login_name = N'hw_a'" in drop_login
+    assert "IF EXISTS (SELECT 1 FROM sys.server_principals WHERE name = N'hw_a')" in drop_login
+    assert drop_login.endswith("DROP LOGIN [hw_a];")
     assert engine.connections[NETWORK] == {}
 
 
@@ -270,6 +349,53 @@ def test_drop_refuses_an_unsafe_name_before_any_exec() -> None:
         server.drop_database("x'; --", NETWORK)
 
     assert engine.sql_commands == []
+
+
+def test_the_login_is_still_dropped_when_the_database_drop_fails() -> None:
+    engine = FakeEngine(sql_results={"DROP DATABASE": (1, "Msg 3702 cannot drop")})
+    server, _ = started(engine)
+    server.create_database("hw_a", NETWORK)
+    engine.sql_commands.clear()
+
+    with pytest.raises(ExecutionEnvironmentError, match="could not drop the database"):
+        server.drop_database("hw_a", NETWORK)
+
+    assert "DROP LOGIN [hw_a]" in engine.sql_commands[-1][-1]
+    assert engine.connections[NETWORK] == {}
+
+
+def test_when_both_drops_fail_the_first_error_is_raised_and_both_are_tried(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    engine = FakeEngine(
+        sql_results={
+            "DROP DATABASE": (1, "Msg 3702 cannot drop"),
+            "DROP LOGIN": (1, "Msg 15434 logged in"),
+        }
+    )
+    server, _ = started(engine)
+    server.create_database("hw_a", NETWORK)
+    engine.sql_commands.clear()
+
+    with pytest.raises(ExecutionEnvironmentError, match="could not drop the database: ") as raised:
+        server.drop_database("hw_a", NETWORK)
+
+    assert "Msg 3702" in str(raised.value)
+    assert len(engine.sql_commands) == 2
+    assert "DROP LOGIN [hw_a]" in engine.sql_commands[-1][-1]
+    assert engine.connections[NETWORK] == {}
+    assert "Also failed" in caplog.text
+
+
+def test_the_server_is_detached_when_the_login_drop_fails() -> None:
+    engine = FakeEngine(sql_results={"DROP LOGIN": (1, "Msg 15434 logged in")})
+    server, _ = started(engine)
+    server.create_database("hw_a", NETWORK)
+
+    with pytest.raises(ExecutionEnvironmentError, match="could not drop the database's login"):
+        server.drop_database("hw_a", NETWORK)
+
+    assert engine.connections[NETWORK] == {}
 
 
 def test_the_server_is_detached_even_when_the_drop_fails() -> None:
@@ -325,20 +451,36 @@ def test_stop_forgets_the_password() -> None:
 # ---------------------------------------------------------------------- secrets
 
 
-def test_nothing_logged_holds_the_password_or_connection_string(
+def test_nothing_logged_holds_a_password_or_connection_string(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    engine = FakeEngine(sql_results={"DROP": (1, f"failed {PASSWORD}")})
+    engine = FakeEngine(sql_results={"DROP DATABASE": (1, f"failed {PASSWORD} {LOGIN_PASSWORD}")})
     with caplog.at_level(logging.DEBUG):
         server, _ = started(engine)
         connection = server.create_database("hw_a", NETWORK)
-        with pytest.raises(ExecutionEnvironmentError):
+        with pytest.raises(ExecutionEnvironmentError) as raised:
             server.drop_database("hw_a", NETWORK)
         server.stop()
 
     text = "\n".join(record.getMessage() for record in caplog.records)
-    assert PASSWORD not in text
-    assert connection not in text
+    for secret in (PASSWORD, LOGIN_PASSWORD, connection):
+        assert secret not in text
+    assert PASSWORD not in str(raised.value)
+    assert LOGIN_PASSWORD not in str(raised.value)
+
+
+def test_nothing_logged_holds_the_login_password_when_its_creation_fails(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    engine = FakeEngine(sql_results={"CREATE LOGIN": (1, f"Msg 15118 {LOGIN_PASSWORD}")})
+    with caplog.at_level(logging.DEBUG):
+        server, _ = started(engine)
+        with pytest.raises(ExecutionEnvironmentError):
+            server.create_database("hw_a", NETWORK)
+
+    text = "\n".join(record.getMessage() for record in caplog.records)
+    assert LOGIN_PASSWORD not in text
+    assert "Msg 15118" in text
 
 
 # ---------------------------------------------------------------------- names

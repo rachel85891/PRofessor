@@ -7,8 +7,12 @@ server is detached again at the end. Databases are created and dropped with `sql
 inside the server container, so the host needs no SQL client and no new dependency.
 
 The SA password is generated per round and lives only in this object's memory and in the
-container's environment. The commands passed to the engine and every message raised or
-logged here never contain it: `sqlcmd` reads it from the container's own environment.
+container's environment. It is used only by this class's own `sqlcmd` calls: an app is given
+a login of its own that owns its one database and nothing else (see `create_database`), with
+a password generated per database and kept in memory only. No command passed to the engine
+and no message raised or logged here holds a secret; `sqlcmd` reads the SA secret
+from the container's own environment and a login's secret from the environment of the
+one `exec` that creates the login (a `sqlcmd` scripting variable, `LOGIN_PASSWORD_ENV`).
 """
 
 import hashlib
@@ -18,7 +22,7 @@ import secrets
 import threading
 import time
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 
 from hw_checker.adapters.docker_runner.engine import (
     ContainerSpec,
@@ -38,9 +42,16 @@ HASH_LENGTH = 8
 PASSWORD_PREFIX = "Aa1_"  # pragma: allowlist secret
 """Keeps the generated password within SQL Server's complexity rule (upper, lower, digit)."""
 PASSWORD_ENV = "MSSQL_SA_PASSWORD"  # pragma: allowlist secret
+LOGIN_PASSWORD_ENV = "HW_LOGIN_PASSWORD"  # pragma: allowlist secret
 SQLCMD_SCRIPT = f'exec "$0" -C -S localhost -U "$1" -P "${PASSWORD_ENV}" -b -Q "$2"'
 """Run by `sh -c`: the password is read from the container's environment, never passed in."""
 READY_QUERY = "SELECT 1"
+KILL_LOGIN_SESSIONS = (
+    "DECLARE @kill nvarchar(max) = N''; "
+    "SELECT @kill += N'KILL ' + CAST(session_id AS nvarchar(10)) + N'; ' "
+    "FROM sys.dm_exec_sessions WHERE login_name = N'{login}'; EXEC(@kill); "
+)
+"""A login cannot be dropped while it has a session, in any database (it may sit in master)."""
 MAX_ERROR_CHARS = 300
 _NAME_PATTERN = re.compile(r"^[A-Za-z0-9_]+$")
 _UNSAFE_NAME_CHARACTERS = re.compile(r"[^A-Za-z0-9_]")
@@ -90,6 +101,7 @@ class SqlServerProvisioner:
         clock: Clock = time.monotonic,
         sleep: Sleep = time.sleep,
         password_factory: Callable[[], str] = _generate_password,
+        login_password_factory: Callable[[], str] = _generate_password,
     ) -> None:
         self._config = config
         self._engine = engine
@@ -97,8 +109,10 @@ class SqlServerProvisioner:
         self._clock = clock
         self._sleep = sleep
         self._password_factory = password_factory
+        self._login_password_factory = login_password_factory
         self._lock = threading.Lock()
         self._password: str | None = None
+        self._login_passwords: dict[str, str] = {}
         self._container: str | None = None
         self._home_network: str | None = None
 
@@ -135,12 +149,19 @@ class SqlServerProvisioner:
             self._teardown()
 
     def create_database(self, database_name: str, network: str) -> str:
-        """Attach the server to `network`, create an empty database and return the app's
-        connection string (secret: the caller never logs it).
+        """Attach the server to `network`, create an empty database and a login that owns
+        only that database, and return the app's connection string for the login (secret:
+        the caller never logs it, and it never holds the SA password).
+
+        The login has the database's name and is `db_owner` of that database and nothing
+        else: it has no server role, the database is its default, and `DENY VIEW ANY
+        DATABASE` hides every other database from it. Another database's `guest` user is
+        disabled by default, so it cannot enter one even by name.
 
         Raises:
             ValueError: the name is unsafe to put into SQL.
             ExecutionEnvironmentError: the server is not running, or it refused the request.
+                When the login cannot be created the database is dropped again.
         """
         validate_database_name(database_name, self._config.max_database_name_length)
         container = self._require_container()
@@ -151,11 +172,22 @@ class SqlServerProvisioner:
                 f"cannot attach the SQL Server to the repo's network: {self._scrub(str(error))}"
             ) from error
         self._run_sql(f"CREATE DATABASE [{database_name}]", "create the database")
-        return self._connection_string(database_name)
+        password = self._login_password_factory()
+        self._login_passwords[database_name] = password
+        try:
+            self._run_sql(
+                self._create_login_sql(database_name),
+                "create the database's login",
+                {LOGIN_PASSWORD_ENV: password},
+            )
+        except ExecutionEnvironmentError:
+            self._undo_creation(database_name)
+            raise
+        return self._connection_string(database_name, password)
 
     def drop_database(self, database_name: str, network: str) -> None:
-        """Drop the database (a missing one is fine) and detach the server from `network`,
-        even when the drop fails.
+        """Drop the database (sessions killed first) and then its login (a missing one is
+        fine), and detach the server from `network`, even when a step fails.
 
         Raises:
             ValueError: the name is unsafe to put into SQL.
@@ -166,12 +198,7 @@ class SqlServerProvisioner:
         if container is None:
             return
         try:
-            self._run_sql(
-                f"IF DB_ID(N'{database_name}') IS NOT NULL BEGIN "
-                f"ALTER DATABASE [{database_name}] SET SINGLE_USER WITH ROLLBACK IMMEDIATE; "
-                f"DROP DATABASE [{database_name}]; END",
-                "drop the database",
-            )
+            self._drop_pair(database_name)
         finally:
             self._detach(container, network)
 
@@ -247,10 +274,60 @@ class SqlServerProvisioner:
 
     # ------------------------------------------------------------------ commands
 
-    def _run_sql(self, sql: str, purpose: str) -> None:
+    def _create_login_sql(self, name: str) -> str:
+        return (
+            f"CREATE LOGIN [{name}] WITH PASSWORD = N'$({LOGIN_PASSWORD_ENV})', "
+            f"DEFAULT_DATABASE = [{name}], CHECK_POLICY = OFF, CHECK_EXPIRATION = OFF; "
+            f"USE [{name}]; CREATE USER [{name}] FOR LOGIN [{name}]; "
+            f"ALTER ROLE db_owner ADD MEMBER [{name}]; "
+            f"USE master; DENY VIEW ANY DATABASE TO [{name}];"
+        )
+
+    def _drop_pair(self, name: str) -> None:
+        """Drop the database, then the login, even when the first step fails.
+
+        When both steps fail the first error is the one raised; the second is logged.
+        """
+        first_error: ExecutionEnvironmentError | None = None
+        steps = (
+            (
+                f"IF DB_ID(N'{name}') IS NOT NULL BEGIN "
+                f"ALTER DATABASE [{name}] SET SINGLE_USER WITH ROLLBACK IMMEDIATE; "
+                f"DROP DATABASE [{name}]; END",
+                "drop the database",
+            ),
+            (
+                KILL_LOGIN_SESSIONS.format(login=name)
+                + f"IF EXISTS (SELECT 1 FROM sys.server_principals WHERE name = N'{name}') "
+                f"DROP LOGIN [{name}];",
+                "drop the database's login",
+            ),
+        )
+        for sql, purpose in steps:
+            try:
+                self._run_sql(sql, purpose)
+            except ExecutionEnvironmentError as error:
+                if first_error is None:
+                    first_error = error
+                else:
+                    logger.warning("Also failed: %s", error)
+        self._login_passwords.pop(name, None)
+        if first_error is not None:
+            raise first_error
+
+    def _undo_creation(self, name: str) -> None:
+        """Remove a half-created database and login; a failure here is logged only."""
+        try:
+            self._drop_pair(name)
+        except ExecutionEnvironmentError as error:
+            logger.warning("Could not undo a half-created database: %s", error)
+
+    def _run_sql(
+        self, sql: str, purpose: str, environment: Mapping[str, str] | None = None
+    ) -> None:
         container = self._require_container()
         try:
-            result = self._engine.exec(container, self._sqlcmd(sql))
+            result = self._engine.exec(container, self._sqlcmd(sql), environment)
         except EngineError as error:
             raise ExecutionEnvironmentError(
                 f"cannot {purpose}: {self._scrub(str(error))}"
@@ -274,11 +351,10 @@ class SqlServerProvisioner:
 
     # ------------------------------------------------------------------ helpers
 
-    def _connection_string(self, database: str) -> str:
-        config = self._config
+    def _connection_string(self, database: str, password: str) -> str:
         return (
-            f"Server={config.alias};Database={database};User Id={config.user};"
-            f"Password={self._secret()};Encrypt=True;TrustServerCertificate=True"
+            f"Server={self._config.alias};Database={database};User Id={database};"
+            f"Password={password};Encrypt=True;TrustServerCertificate=True"
         )
 
     def _secret(self) -> str:
@@ -292,8 +368,13 @@ class SqlServerProvisioner:
         return self._container
 
     def _scrub(self, text: str) -> str:
-        """`text` without the password, wherever it appears."""
-        return text if self._password is None else text.replace(self._password, "***")
+        """`text` without any password (the SA's or a login's), wherever it appears."""
+        secrets_in_use = [*self._login_passwords.values()]
+        if self._password is not None:
+            secrets_in_use.append(self._password)
+        for secret in secrets_in_use:
+            text = text.replace(secret, "***")
+        return text
 
     def _labels(self, kind: str) -> dict[str, str]:
         return {self._label_prefix: "1", f"{self._label_prefix}.kind": kind}
@@ -306,6 +387,7 @@ class SqlServerProvisioner:
         self._container = None
         self._home_network = None
         self._password = None
+        self._login_passwords.clear()
 
     @staticmethod
     def _remove(remove: Callable[[str], None], name: str) -> None:

@@ -100,7 +100,12 @@ class DockerEngine(Protocol):
     def start(self, container: str) -> None: ...
     def state(self, container: str) -> ContainerState: ...
     def logs(self, container: str) -> str: ...
-    def exec(self, container: str, command: tuple[str, ...]) -> ExecResult: ...
+    def exec(
+        self,
+        container: str,
+        command: tuple[str, ...],
+        environment: Mapping[str, str] | None = None,
+    ) -> ExecResult: ...
     def remove_container(self, container: str) -> None: ...
     def list_labelled(self, label: str) -> tuple[Resource, ...]: ...
 
@@ -255,9 +260,16 @@ class SdkDockerEngine:
             raw = self._client.containers.get(container).logs(stdout=True, stderr=True)
             return bytes(raw).decode("utf-8", errors="replace")
 
-    def exec(self, container: str, command: tuple[str, ...]) -> ExecResult:
+    def exec(
+        self,
+        container: str,
+        command: tuple[str, ...],
+        environment: Mapping[str, str] | None = None,
+    ) -> ExecResult:
         with _engine_errors(f"cannot run a command in {container}"):
-            result = self._client.containers.get(container).exec_run(list(command))
+            result = self._client.containers.get(container).exec_run(
+                list(command), environment=dict(environment) if environment else None
+            )
             raw = result.output or b""
             # Without stream=True the output is bytes; the stubs also allow an iterator.
             data = raw if isinstance(raw, bytes) else b"".join(raw)

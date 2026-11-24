@@ -72,7 +72,11 @@ from hw_checker.adapters.docker_runner.runner_config import (
     DockerRunnerConfig,
     FrameworkImages,
 )
-from hw_checker.adapters.docker_runner.sql_server import database_name
+from hw_checker.adapters.docker_runner.sql_server import (
+    NETWORK_KIND,
+    SERVER_KIND,
+    database_name,
+)
 from hw_checker.adapters.docker_runner.web_choice import choose_web_project
 from hw_checker.adapters.docker_runner.windows_paths import windows_paths_in_log
 from hw_checker.config.logging_setup import log_context
@@ -219,6 +223,19 @@ class DockerCodeRunner:
         Raises:
             ExecutionEnvironmentError: Docker cannot be reached.
         """
+        return self._sweep(lambda kind: kind != CACHE_KIND)
+
+    def sweep_database_leftovers(self) -> int:
+        """Remove only the SQL Server's own containers and networks (kinds `database-server`
+        and `database-network`), and nothing else: another process's round is left alone.
+
+        Raises:
+            ExecutionEnvironmentError: Docker cannot be reached.
+        """
+        return self._sweep(lambda kind: kind in (SERVER_KIND, NETWORK_KIND))
+
+    def _sweep(self, wanted: Callable[[str | None], bool]) -> int:
+        """Remove the labelled resources whose `kind` label `wanted` accepts."""
         prefix = self._config.label_prefix
         try:
             resources = self._engine.list_labelled(prefix)
@@ -226,7 +243,7 @@ class DockerCodeRunner:
             raise ExecutionEnvironmentError(f"cannot list leftovers in Docker: {error}") from error
         order = {"container": 0, "network": 1, "volume": 2}
         leftovers = sorted(
-            (item for item in resources if item.labels.get(f"{prefix}.kind") != CACHE_KIND),
+            (item for item in resources if wanted(item.labels.get(f"{prefix}.kind"))),
             key=lambda item: order[item.kind],
         )
         removed = sum(1 for item in leftovers if self._remove_leftover(item))
