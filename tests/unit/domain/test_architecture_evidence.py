@@ -36,3 +36,24 @@ def test_other_signals_need_a_subject_and_no_registration_fields() -> None:
             subject="IClock",
             lifetime=ServiceLifetime.SCOPED,
         )
+
+
+def test_only_a_db_set_property_has_a_name() -> None:
+    named = ArchitectureSignal(
+        kind=ArchitectureSignalKind.DB_SET_PROPERTY,
+        file_path="Data/Context.cs",
+        line=3,
+        subject="User",
+        related_subject="ShopContext",
+        name="Users",
+    )
+    assert named.name == "Users"
+
+    with pytest.raises(ValidationError, match="only a db_set_property signal has a name"):
+        ArchitectureSignal(
+            kind=ArchitectureSignalKind.TYPE_DECLARATION,
+            file_path="Users.cs",
+            line=1,
+            subject="User",
+            name="Users",
+        )
