@@ -106,7 +106,7 @@ def test_the_rules_are_read_by_number() -> None:
         ),
         (
             fix(
-                "    if (item.Id == id)\n        found = line;",
+                "    if (item.Id == id)\n    {\n        found = line;\n    }",
                 "    if (item.Id == id)\n    {\n        found = line;\n"
                 "        //fix: Found- break\n        break;\n    }",
             ),
