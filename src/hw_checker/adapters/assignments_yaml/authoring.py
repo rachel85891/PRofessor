@@ -19,7 +19,7 @@ from hw_checker.adapters.assignments_yaml.rules import (
     read_mapping,
 )
 from hw_checker.adapters.assignments_yaml.source import YamlAssignmentSource
-from hw_checker.domain import Assignment, Course, FixExample, ReviewRule
+from hw_checker.domain import Assignment, Course, FixExample, LenientNote, ReviewRule
 from hw_checker.domain.authoring import (
     AssignmentIntake,
     AuthorReply,
@@ -161,7 +161,7 @@ class YamlAuthoringFiles:
             "order": intake.order,
             "title": intake.title,
             "taught_techniques": list(intake.taught),
-            "lenient_notes": list(reply.lenient_notes),
+            "lenient_notes": [_note_entry(note) for note in reply.lenient_notes],
             "ends_when": ends_when.model_dump(mode="json") if ends_when else None,
             "requirements": [_fields(item, RequirementSpec) for item in reply.requirements],
         }
@@ -284,6 +284,13 @@ class YamlAuthoringFiles:
             )
             return None
         return intake
+
+
+def _note_entry(note: str | LenientNote) -> str | dict[str, str]:
+    """A note as the file writes it: a plain string, or `text` and `until` when it ends."""
+    if isinstance(note, str) or note.until is None:
+        return note if isinstance(note, str) else note.text
+    return {"text": note.text, "until": note.until}
 
 
 def _fields(item: BaseModel, model: type[BaseModel]) -> dict[str, Any]:

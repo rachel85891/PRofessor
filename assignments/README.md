@@ -111,6 +111,8 @@ taught_techniques:            # optional; what has been taught up to this assign
   - routing attributes
 lenient_notes:                # optional; things the checker must not be strict about
   - Do not require async/await at this stage
+  - text: Storing data in a text file is expected   # or an object: it ends
+    until: hw04                                    #   after the assignment named
 ends_when:                    # optional; when the student has started the next task
   check: project_count
   params:
@@ -195,6 +197,15 @@ skip_when:                    # hw02: not this assignment once DI has started
 | `lenient_notes` | `code` only | What the reviewer and the judge must not be strict about for this requirement, besides the assignment's own `lenient_notes`. |
 | `concerns` | `code` only | The files (`files`: repo globs) or the projects' roles (`roles`) the requirement is about, so the reviewer reads only those. |
 | `feedback` | no | `fixes_allowed` (the default) or `notes_only`: the fixer may only leave notes about this requirement's findings (architecture feedback). This is enforced in code: a `fix` that claims the requirement (or one of its findings) is rejected with "<id> allows notes only", and so is a `fix` that claims nothing in a file only notes-only findings point to; notes and `final_newline` edits are not affected. The rejection goes back to the fixer like any other, and the course rule `notes-only-requirements` names the failing notes-only requirements in the fixer's prompt. |
+| `until` | no | An assignment id: the last assignment this requirement applies to; later rounds do not see it (see below). |
+
+**`until` on a requirement or a lenient note.** Checking assignment N uses `_general` and assignments 1..N, so a requirement or a note applies to every later assignment too. `until: <assignment id>` (a requirement's field, or an assignment's note written as `{text: ..., until: ...}` instead of a plain string) names the last assignment it applies to: a round of a later assignment does not see it (it is not run, not in any report, not in the totals). `_general` items can end too. The assignment itself keeps its own items, so `until: hw04` is still in an HW04 round. Loading refuses:
+
+| Message | What to do |
+| --- | --- |
+| `requirement 'x', field 'until': unknown assignment 'y'` (or `lenient note 1 ("..."), field 'until'`) | `until` names an assignment folder's id. |
+| `field 'until': 'y' comes before hw04, so this would never apply` | `until` is the item's own assignment or a later one. |
+| `field 'depends_on': 'a' ends at hw02, but this requirement has no until and stays` | A requirement may not outlive one it depends on: give it an `until` no later than the dependency's, or remove the dependency. |
 
 Unknown fields are rejected, so a typo such as `chek` is reported instead of being silently ignored.
 

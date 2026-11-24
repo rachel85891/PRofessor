@@ -104,7 +104,7 @@ Not in this preview{% if not preview.with_execution %} (they need the app built 
 ## Review rules against the previous assignment
 
 {% set changes = report.changes %}
-{% if changes.new or changes.replaced or changes.ended %}
+{% if changes.new or changes.replaced or changes.ended or changes.ended_requirements or changes.ended_notes %}
 {% if changes.new %}
 - New: {% for id in changes.new %}`{{ id }}`{{ ", " if not loop.last }}{% endfor %}
 
@@ -115,6 +115,13 @@ Not in this preview{% if not preview.with_execution %} (they need the app built 
 {% if changes.ended %}
 - Ended: {% for id in changes.ended %}`{{ id }}`{{ ", " if not loop.last }}{% endfor %}
 
+{% endif %}
+{% if changes.ended_requirements %}
+- Requirements ended: {% for id in changes.ended_requirements %}`{{ id }}`{{ ", " if not loop.last }}{% endfor %}
+
+{% endif %}
+{% if changes.ended_notes %}
+- Lenient notes ended: {{ changes.ended_notes | join("; ") }}
 {% endif %}
 {% else %}
 No change.
