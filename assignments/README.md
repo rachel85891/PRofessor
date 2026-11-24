@@ -538,6 +538,7 @@ roles:
 | `code_patterns` | `patterns`: C# regexes (`{dbset}` stands for the repo's `DbSet<T>` property names); `where`: `code` (default), `strings`, `both`; `must`: `absent` (default) or `present`; `roles` + `in`: search only those roles' projects; `suffixes`, `exclude_paths` | `absent`: a pattern matches (file, line, total). `present`: no match anywhere in the files searched (no location). Described below the table. |
 | `classes_in_role` | `role`: the role whose project(s) must hold the classes; `select`: a class selector (below) | A selected class is in a project of another role, in an unassigned project, or in no project. The finding lists each with its file, line and where it is ("`User` is in the project `Api` (api layer)"); a class in a project of `role` passes. No class selected: not evaluated (`dependency_failed`: the requirement that says the thing must exist reports that). |
 | `namespace_matches_project` | `select`: a class selector; `role` (optional): only the selected classes in that role's projects | A selected class's namespace is not exactly its project's namespace: `<RootNamespace>` when the project file has one, else the project file's name without `.csproj`, with each character a namespace cannot hold (a space, `-`) replaced by `_` (.NET's default). A subfolder is fine when the namespace stays the project's (`Entities/Models/User.cs` with `namespace Entities;`); an extra or different segment, before (`MyApi.Entities`) or after (`Entities.Models`), or no namespace, is a finding with the class, its namespace and the expected one. A class in an unassigned project is judged by that project's namespace; a class in no project is not judged. No class in scope: not evaluated. |
+| `methods_async` | `in`: roles; `exclude`, `exclude_bases`, `exclude_db_entities`: as for `implements_interface`, the classes left out; `exclude_methods`: method-name patterns left out; `exclude_modifiers`: methods with one of these modifiers left out (`override`, `static`, ...); `require`: `returns_task`, `async_modifier` (default both) | A **public** method of a class, record, struct or interface in an `in` project breaks a required rule: `returns_task` = the return type is `Task`, `Task<T>`, `ValueTask` or `ValueTask<T>` (namespace-qualified too); `async_modifier` = a class method is marked `async`. An interface member, and an `abstract` or `extern` method (no body), are only asked for the return type. Only public methods are read: an interface member without a modifier is public, a class member without one is private. One finding lists each with its class, name, file and line and what it lacks (up to five and the total). Whether an `async` method contains `await` is not checked. No class or interface in the `in` roles' projects: not evaluated (`dependency_failed`). |
 
 **The class selector (`select`).** A params model shared by the class checks (a later constructor check uses it too): which classes a rule is about is the requirement's data. At least one field is required; the selection is the **union** of what is given. Patterns are regular expressions, searched and case-sensitive; a bad one is refused when the file is read.
 
@@ -573,6 +574,20 @@ params:
 ```
 
 Results are as for the layer checks: up to five examples and the total, the first located one is the finding's evidence, and `evidence_unavailable` when the evidence cannot be read, `dependency_failed` when a role the check names has no project or no class is selected.
+
+Example for `methods_async` (the repositories, services and API methods are async, leaving out a `DbContext`'s members):
+
+```yaml
+check: methods_async
+params:
+  roles: {api: {sdk: Microsoft.NET.Sdk.Web}, services: {name: servic}, repositories: {name: repositor|data}}
+  in: [repositories, services, api]
+  exclude_bases: ['DbContext$']
+  exclude_db_entities: true
+  exclude_methods: ['^Main$', '^Dispose$', '^ToString$']
+  exclude_modifiers: [override, static]
+  require: [returns_task, async_modifier]
+```
 
 **`code_patterns`: a pattern that must appear nowhere, or at least once.** One generic check; which patterns, roles and wording a requirement uses is its params (nothing of any assignment is in the code).
 
