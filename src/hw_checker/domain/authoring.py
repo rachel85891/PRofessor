@@ -17,6 +17,7 @@ from hw_checker.domain.assignment import (
     ExpectedJson,
     Feedback,
     HttpMethod,
+    LenientNote,
     ParamValue,
     ProbePath,
     RequirementKind,
@@ -175,6 +176,8 @@ class RequirementSpec(DomainModel):
     """For `code`: what the reviewer and the judge must not be strict about here."""
     concerns: CodeScope | None = None
     """For `code`: the files (repo globs) or the projects' roles it concerns."""
+    until: Identifier | None = None
+    """The last assignment this requirement applies to; later rounds do not see it."""
     origin: Origin
     status: ItemStatus
 
@@ -215,7 +218,8 @@ class AuthorReply(DomainModel):
     requirements: tuple[DraftedRequirement, ...]
     rules: tuple[DraftedRule, ...] = ()
     examples: tuple[DraftedExample, ...] = ()
-    lenient_notes: tuple[NonBlankStr, ...] = ()
+    lenient_notes: tuple[NonBlankStr | LenientNote, ...] = ()
+    """A plain string, or `{text, until}` for a note that ends at an assignment."""
     frame_suggestions: tuple[FrameSuggestion, ...] = ()
 
     @property
@@ -240,7 +244,7 @@ class EditedDraft(DomainModel):
     title: NonBlankStr
     taught_techniques: tuple[NonBlankStr, ...] = ()
     ends_when: TaskEnd | None = None
-    lenient_notes: tuple[NonBlankStr, ...] = ()
+    lenient_notes: tuple[NonBlankStr | LenientNote, ...] = ()
     requirements: tuple[RequirementSpec, ...] = ()
     rules: tuple[ReviewRule, ...] = ()
     examples: tuple[FixExample, ...] = ()
@@ -334,6 +338,10 @@ class RuleChanges(DomainModel):
     new: tuple[str, ...] = ()
     replaced: tuple[str, ...] = ()
     ended: tuple[str, ...] = ()
+    ended_requirements: tuple[str, ...] = ()
+    """The requirements (by id) in effect for the previous assignment that ended (`until`)."""
+    ended_notes: tuple[str, ...] = ()
+    """The lenient notes (by text) in effect for the previous assignment that ended."""
 
 
 class Coverage(DomainModel):
