@@ -8,7 +8,9 @@ lenient_notes:
   - Do not judge names, letter case or language of identifiers
   - Separation into layers (services, repositories) is not required yet
   - async/await is not required yet
-  - Storing data in a text file is expected at this stage
+  - text: Storing data in a text file is expected at this stage
+    # until hw04: HW05 stores data in a database, so the text-file items end (developer decision 2026-11-24).
+    until: hw04
   - Leftover template code (for example WeatherForecastController) is not a problem
 requirements:
   - id: gen-build
