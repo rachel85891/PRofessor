@@ -540,6 +540,60 @@ PATTERN_WHERE = {
 }
 """What a pattern check searched, by its `where` param, for the two messages above."""
 
+CLASSES_NOT_IN_ROLE = MessageTemplate(
+    name="CLASSES_NOT_IN_ROLE",
+    he=(
+        "מחלקות שאמורות להיות בפרויקט של שכבת {role} אבל נמצאות במקום אחר: {examples}. "
+        "סך הכול: {count}.{ambiguous}"
+    ),
+    en=(
+        "Classes that belong in the {role} layer's project but are somewhere else: "
+        "{examples}. Total: {count}.{ambiguous}"
+    ),
+)
+
+CLASS_IN_OTHER_ROLE = MessageTemplate(
+    name="CLASS_IN_OTHER_ROLE",
+    he="{name} נמצאת בפרויקט {project} (שכבת {found_role})",
+    en="{name} is in the project {project} ({found_role} layer)",
+)
+
+CLASS_IN_UNASSIGNED_PROJECT = MessageTemplate(
+    name="CLASS_IN_UNASSIGNED_PROJECT",
+    he="{name} נמצאת בפרויקט {project}, שלא שייך לאף שכבה",
+    en="{name} is in the project {project}, which is in no layer",
+)
+
+CLASS_IN_NO_PROJECT = MessageTemplate(
+    name="CLASS_IN_NO_PROJECT",
+    he="{name} לא נמצאת באף פרויקט",
+    en="{name} is in no project",
+)
+
+NAMESPACE_NOT_PROJECT = MessageTemplate(
+    name="NAMESPACE_NOT_PROJECT",
+    he=(
+        "מחלקות שה-namespace שלהן שונה מה-namespace של הפרויקט שלהן: {examples}. "
+        "סך הכול: {count}.{ambiguous}"
+    ),
+    en=(
+        "Classes whose namespace is not their project's namespace: {examples}. "
+        "Total: {count}.{ambiguous}"
+    ),
+)
+
+CLASS_NAMESPACE_EXAMPLE = MessageTemplate(
+    name="CLASS_NAMESPACE_EXAMPLE",
+    he="{name} ב-namespace {found}, והפרויקט {project} צריך {expected}",
+    en="{name} is in namespace {found}, but the project {project} expects {expected}",
+)
+
+CLASS_GLOBAL_NAMESPACE_EXAMPLE = MessageTemplate(
+    name="CLASS_GLOBAL_NAMESPACE_EXAMPLE",
+    he="{name} ללא namespace, והפרויקט {project} צריך {expected}",
+    en="{name} has no namespace, but the project {project} expects {expected}",
+)
+
 # ---------------------------------------------------------------- not-evaluated details
 # Why an `environment_issue` (or a `body_mismatch`) happened, for the reviewer's report
 # (English only, like the report); the report template words the sentence around the detail.
@@ -630,4 +684,11 @@ ALL_TEMPLATES: tuple[MessageTemplate, ...] = (
     PATTERN_MISSING,
     PATTERN_SCOPE_FILES,
     PATTERN_SCOPE_ROLES,
+    CLASSES_NOT_IN_ROLE,
+    CLASS_IN_OTHER_ROLE,
+    CLASS_IN_UNASSIGNED_PROJECT,
+    CLASS_IN_NO_PROJECT,
+    NAMESPACE_NOT_PROJECT,
+    CLASS_NAMESPACE_EXAMPLE,
+    CLASS_GLOBAL_NAMESPACE_EXAMPLE,
 )

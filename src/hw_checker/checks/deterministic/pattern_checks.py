@@ -14,14 +14,14 @@ from typing import Annotated, Literal, Self
 from pydantic import AfterValidator, BaseModel, ConfigDict, Field, model_validator
 
 from hw_checker.checks.deterministic.findings import deterministic_finding
-from hw_checker.checks.deterministic.layer_checks import (
+from hw_checker.checks.deterministic.layer_support import (
+    Problem,
     Role,
-    _evidence,
-    _finding,
-    _joined,
-    _line_evidence,
-    _Problem,
-    _signals,
+    joined,
+    line_evidence,
+    make_finding,
+    read_evidence,
+    signals_of,
 )
 from hw_checker.checks.deterministic.layers import Layers, Roles, layers
 from hw_checker.checks.deterministic.messages import (
@@ -130,7 +130,7 @@ def code_patterns(check_input: CheckInput, params: CodePatternsParams) -> CheckR
     patterns, found_layers = prepared
     excluded = [glob_pattern(glob) for glob in params.exclude_paths]
     suffixes = tuple(suffix.lower() for suffix in params.suffixes)
-    problems: list[_Problem] = []
+    problems: list[Problem] = []
     for path in checked_files(check_input):
         if not path.lower().endswith(suffixes) or any(g.fullmatch(path) for g in excluded):
             continue
@@ -146,8 +146,8 @@ def code_patterns(check_input: CheckInput, params: CodePatternsParams) -> CheckR
         message = PATTERN_MISSING.render(**fields)
         return (deterministic_finding(check_input, message, [message.en, *params.patterns]),)
     located = problems[0] if problems else None
-    quoted = _line_evidence(check_input, located) if located else None
-    return _finding(check_input, PATTERN_FOUND, problems, quoted, **fields)
+    quoted = line_evidence(check_input, located) if located else None
+    return make_finding(check_input, PATTERN_FOUND, problems, quoted, **fields)
 
 
 def _prepare(
@@ -157,7 +157,7 @@ def _prepare(
     property) and the projects by role, or why the check is not evaluated."""
     evidence: ArchitectureEvidence | None = None
     if params.in_ or params.uses_db_sets:
-        evidence = _evidence(check_input, signals=params.uses_db_sets)
+        evidence = read_evidence(check_input, signals=params.uses_db_sets)
         if evidence is None:
             return NotEvaluatedReason.EVIDENCE_UNAVAILABLE
     found_layers = None
@@ -170,7 +170,7 @@ def _prepare(
 
 
 def _db_set_names(evidence: ArchitectureEvidence) -> tuple[str, ...]:
-    signals = _signals(evidence, ArchitectureSignalKind.DB_SET_PROPERTY)
+    signals = signals_of(evidence, ArchitectureSignalKind.DB_SET_PROPERTY)
     return tuple(sorted({signal.name for signal in signals if signal.name}))
 
 
@@ -185,14 +185,14 @@ def _compiled(patterns: tuple[str, ...], names: tuple[str, ...]) -> list[re.Patt
 
 def _file_problems(
     path: str, scan: SourceScan, patterns: list[re.Pattern[str]], where: str
-) -> list[_Problem]:
+) -> list[Problem]:
     found: list[tuple[int, str]] = []
     if where in ("code", "both"):
         found += _matches(scan.masked, 0, patterns)
     if where in ("strings", "both"):
         found += _string_matches(scan, patterns)
     return [
-        _Problem(_example(matched), path, scan.line_of(offset)) for offset, matched in sorted(found)
+        Problem(_example(matched), path, scan.line_of(offset)) for offset, matched in sorted(found)
     ]
 
 
@@ -232,4 +232,4 @@ def _example(matched: str) -> Localized:
 def _scope(params: CodePatternsParams) -> Localized:
     if not params.in_:
         return PATTERN_SCOPE_FILES.render()
-    return PATTERN_SCOPE_ROLES.render(roles=_joined(params.in_))
+    return PATTERN_SCOPE_ROLES.render(roles=joined(params.in_))

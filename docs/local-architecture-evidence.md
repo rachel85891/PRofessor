@@ -55,8 +55,12 @@ another. The second reads constructors and registrations:
 - a class or record (not a struct or interface) gives `type_declaration`: `subject` is its
   name, `related_subjects` the names in its base list as written (without generic
   constraints or a base call's arguments, so `record P(int X) : Shape(X), IShape` gives
-  `Shape` and `IShape`), and `keywords` its modifiers and `class` or `record`. A base list
-  that cannot be read gives no declaration and an `ambiguous_syntax` issue;
+  `Shape` and `IShape`), `keywords` its modifiers and `class` or `record`, and `namespace`
+  the namespace that holds it (`namespace X.Y;` or `namespace X.Y { }`, nested block
+  namespaces joined by `.`; none for the global namespace). A base list or a file's
+  namespaces that cannot be read give no declaration and an `ambiguous_syntax` issue;
+  a project's literal `<RootNamespace>` is `root_namespace` on its project evidence (an
+  MSBuild expression gives none and an `unsupported_project` issue);
 - every constructor parameter gives `constructor_parameter` (`subject` = its type as
   written, `related_subject` = the constructor's type), whatever its type; the
   `constructor_interface_parameter` signals above are unchanged;

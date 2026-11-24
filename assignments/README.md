@@ -536,6 +536,43 @@ roles:
 | `interfaces_registered` | `consumers`: roles | An interface declared in the repo that a constructor in a consumer project takes has no registration (`AddScoped`, `AddTransient`, `AddSingleton`, either form) with it as the service type. A registration whose types are not written literally (a factory, a key) names no type; the finding then says how many there are, to check by hand. |
 | `no_concrete_construction` | `in`, `of`: roles; `exclude`, `exclude_bases`, `exclude_db_entities`: as for `implements_interface`, the created classes not counted | A class in an `in` project creates a class of an `of` role with `new`. Creating entities, DTOs and lists is fine, and so is `new` in top-level statements (`Program.cs`, where a factory registration may create a class). hw03 leaves out result and transfer objects (`…Result`, `…Dto`) and EF database contexts (a base ending in `DbContext`) here and in its two interface requirements, and with `exclude_db_entities: true` the contexts' entities too (EF is taught in HW05: developer decision 2026-11-22). |
 | `code_patterns` | `patterns`: C# regexes (`{dbset}` stands for the repo's `DbSet<T>` property names); `where`: `code` (default), `strings`, `both`; `must`: `absent` (default) or `present`; `roles` + `in`: search only those roles' projects; `suffixes`, `exclude_paths` | `absent`: a pattern matches (file, line, total). `present`: no match anywhere in the files searched (no location). Described below the table. |
+| `classes_in_role` | `role`: the role whose project(s) must hold the classes; `select`: a class selector (below) | A selected class is in a project of another role, in an unassigned project, or in no project. The finding lists each with its file, line and where it is ("`User` is in the project `Api` (api layer)"); a class in a project of `role` passes. No class selected: not evaluated (`dependency_failed`: the requirement that says the thing must exist reports that). |
+| `namespace_matches_project` | `select`: a class selector; `role` (optional): only the selected classes in that role's projects | A selected class's namespace is not exactly its project's namespace: `<RootNamespace>` when the project file has one, else the project file's name without `.csproj`, with each character a namespace cannot hold (a space, `-`) replaced by `_` (.NET's default). A subfolder is fine when the namespace stays the project's (`Entities/Models/User.cs` with `namespace Entities;`); an extra or different segment, before (`MyApi.Entities`) or after (`Entities.Models`), or no namespace, is a finding with the class, its namespace and the expected one. A class in an unassigned project is judged by that project's namespace; a class in no project is not judged. No class in scope: not evaluated. |
+
+**The class selector (`select`).** A params model shared by the class checks (a later constructor check uses it too): which classes a rule is about is the requirement's data. At least one field is required; the selection is the **union** of what is given. Patterns are regular expressions, searched and case-sensitive; a bad one is refused when the file is read.
+
+| Field | Selects |
+| --- | --- |
+| `names` | The classes whose name matches. |
+| `bases` | The classes with a matching simple name in their base list (`IdentityDbContext<User>` is `IdentityDbContext`). |
+| `entities_of_bases` | The types named as `T` in a `DbSet<T>` property of a class with a matching base (a `DbContext`'s entities). |
+
+Only classes are selected (not records, structs or interfaces), in every project. A name declared more than once is never guessed: it is left out and the finding says so, as the layer checks do. A selected class's namespace is read from `namespace X.Y;` or `namespace X.Y { }` (nested block namespaces are joined by `.`); a file whose namespaces cannot be read reliably (two file-scoped namespaces, a file-scoped one beside a block one, an unclosed block) gives an `ambiguous_syntax` coverage issue and none of its classes, so no namespace is ever guessed.
+
+Examples (as `params` of a requirement with `check: classes_in_role` or `namespace_matches_project`; `roles` as for the layer checks, abbreviated here):
+
+```yaml
+# 1. The entities (the types of the DbContext's DbSet<T> properties) are in the entities project
+params:
+  roles: {entities: {name: entit|model}, repositories: {name: repositor|data}}
+  role: entities
+  select: {entities_of_bases: ['DbContext$']}
+
+# 2. The DbContext is in the repositories project
+params:
+  roles: {entities: {name: entit|model}, repositories: {name: repositor|data}}
+  role: repositories
+  select: {bases: ['DbContext$']}
+
+# 3. The entities' namespace is exactly their project's namespace
+check: namespace_matches_project
+params:
+  roles: {entities: {name: entit|model}, repositories: {name: repositor|data}}
+  role: entities
+  select: {entities_of_bases: ['DbContext$']}
+```
+
+Results are as for the layer checks: up to five examples and the total, the first located one is the finding's evidence, and `evidence_unavailable` when the evidence cannot be read, `dependency_failed` when a role the check names has no project or no class is selected.
 
 **`code_patterns`: a pattern that must appear nowhere, or at least once.** One generic check; which patterns, roles and wording a requirement uses is its params (nothing of any assignment is in the code).
 
