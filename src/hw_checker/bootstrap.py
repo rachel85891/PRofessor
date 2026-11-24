@@ -34,6 +34,7 @@ from hw_checker.adapters.docker_runner.runner import DockerCodeRunner
 from hw_checker.adapters.docker_runner.runner_config import (
     ContainerLimits,
     DockerRunnerConfig,
+    SqlServerConfig,
 )
 from hw_checker.adapters.docker_runner.runner_config import (
     FrameworkImages as RunnerImages,
@@ -53,6 +54,7 @@ from hw_checker.checks.registry import CheckRegistry
 from hw_checker.config.errors import ConfigurationError
 from hw_checker.config.logging_setup import configure_logging
 from hw_checker.config.settings import (
+    DatabaseSettings,
     FixerSettings,
     GitHubSettings,
     LlmSettings,
@@ -654,6 +656,27 @@ def runner_config(runner: RunnerSettings) -> DockerRunnerConfig:
         max_archive_bytes=runner.max_archive_mb * BYTES_PER_MB,
         max_file_bytes=runner.max_file_mb * BYTES_PER_MB,
         max_response_bytes=runner.max_response_kb * BYTES_PER_KB,
+        database=_sql_server_config(runner.database) if runner.database.enabled else None,
+    )
+
+
+def _sql_server_config(database: DatabaseSettings) -> SqlServerConfig:
+    return SqlServerConfig(
+        image=database.image,
+        edition=database.edition,
+        accept_eula=database.accept_eula,
+        memory_mb=database.memory_mb,
+        mssql_memory_limit_mb=database.mssql_memory_limit_mb,
+        cpus=database.cpus,
+        pids=database.pids,
+        startup_timeout_seconds=database.startup_timeout_seconds,
+        readiness_poll_seconds=database.readiness_poll_seconds,
+        alias=database.alias,
+        user=database.login,
+        container_user=database.container_user,
+        sqlcmd_path=database.sqlcmd_path,
+        max_database_name_length=database.max_database_name_length,
+        added_capabilities=database.added_capabilities,
     )
 
 

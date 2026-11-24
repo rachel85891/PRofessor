@@ -18,6 +18,7 @@ from hw_checker.config.errors import ConfigurationError
 from hw_checker.config.settings import (
     REPO_ROOT,
     CopilotSettings,
+    DatabaseSettings,
     FixerSettings,
     GitHubSettings,
     LlmSettings,
@@ -441,6 +442,25 @@ def test_runner_config_maps_sizes_and_images() -> None:
     assert config.max_response_bytes == settings.max_response_kb * 1024
     assert config.run_limits.memory_mb == settings.run_limits.memory_mb
     assert config.label_prefix == settings.label_prefix
+
+
+def test_runner_config_has_no_database_when_they_are_off() -> None:
+    config = bootstrap.runner_config(RunnerSettings())
+
+    assert config.database is None
+    assert not any("mssql" in image for image in config.images)
+
+
+def test_runner_config_maps_the_sql_server_when_databases_are_on() -> None:
+    settings = RunnerSettings(database=DatabaseSettings(enabled=True))
+
+    config = bootstrap.runner_config(settings)
+
+    assert config.database is not None
+    assert config.database.image == settings.database.image
+    assert config.database.user == settings.database.login
+    assert config.database.mssql_memory_limit_mb < config.database.memory_mb
+    assert config.images[-1] == settings.database.image
 
 
 def rich_repo_run() -> RepoRunResult:
