@@ -19,6 +19,7 @@ from hw_checker.domain import (
     NotEvaluatedReason,
     OriginSource,
     RequirementKind,
+    assignments_in_effect,
     new_run_id,
 )
 from hw_checker.domain.authoring import (
@@ -109,7 +110,7 @@ class DraftValidator:
         selected: tuple[Assignment, ...] = ()
         if loaded is not None:
             target = next(a for a in loaded[1] if a.id == intake.id)
-            selected = tuple(a for a in loaded[1] if a.order <= target.order)
+            selected = assignments_in_effect(loaded[1], target)
             problems += check_problems((target,), self._catalog)
         coverage = _coverage(intake, reply)
         if problems or loaded is None or target is None:

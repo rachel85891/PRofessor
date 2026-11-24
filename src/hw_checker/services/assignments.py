@@ -2,7 +2,7 @@
 
 from collections.abc import Sequence
 
-from hw_checker.domain import Assignment
+from hw_checker.domain import Assignment, assignments_in_effect
 from hw_checker.domain.errors import InvalidAssignmentError, NotFoundError
 from hw_checker.ports import AssignmentSource, CheckCatalog
 
@@ -28,7 +28,8 @@ class AssignmentCatalogService:
         return self._source.load_all()
 
     def select_for_round(self, assignment_id: str) -> tuple[Assignment, ...]:
-        """Return `_general` and every assignment up to `assignment_id`, sorted by `order`.
+        """Return `_general` and every assignment up to `assignment_id`, sorted by `order`,
+        without the requirements and lenient notes that ended before it (`until`).
 
         Only the selected assignments are checked against the check catalog and for drafts,
         so a draft of a later assignment cannot block the round.
@@ -48,9 +49,7 @@ class AssignmentCatalogService:
                 f"Unknown assignment '{assignment_id}'. "
                 f"Assignments that can be checked: {selectable or 'none'}."
             )
-        selected = tuple(
-            sorted((a for a in assignments if a.order <= target.order), key=lambda a: a.order)
-        )
+        selected = assignments_in_effect(assignments, target)
         problems = self._check_problems(selected)
         if problems:
             count = f"{len(problems)} problem{'' if len(problems) == 1 else 's'}"
