@@ -122,6 +122,40 @@ class StepLimits(BaseModel):
     pids: int = Field(ge=1)
 
 
+class DatabaseSettings(BaseModel):
+    """The shared SQL Server of a round (ADR 0004): off until the app is given a connection."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    enabled: bool = False
+    image: PinnedImage = (
+        "mcr.microsoft.com/mssql/server:2022-latest"
+        "@sha256:4525e3efac9f3e241cb003bb2ff2a82818b502f37e12049d788b1a9fa7e13b7f"
+    )
+    edition: NonBlankText = "Developer"
+    """`MSSQL_PID`. Developer is free but not for production: this is a local grading tool."""
+    accept_eula: Literal["Y"] = "Y"
+    """`ACCEPT_EULA`. Y accepts the image's licence terms on this machine."""
+    memory_mb: int = Field(default=2048, ge=1)
+    mssql_memory_limit_mb: int = Field(default=1536, ge=1)
+    cpus: float = Field(default=2, gt=0)
+    pids: int = Field(default=1024, ge=1)
+    startup_timeout_seconds: float = Field(default=120, gt=0)
+    readiness_poll_seconds: float = Field(default=1, gt=0)
+    alias: str = Field(default="sqlserver", pattern=r"^[a-z][a-z0-9-]*$")
+    login: NonBlankText = "sa"
+    container_user: NonBlankText = "mssql"
+    sqlcmd_path: NonBlankText = "/opt/mssql-tools18/bin/sqlcmd"
+    max_database_name_length: int = Field(default=128, ge=16, le=128)
+    added_capabilities: tuple[str, ...] = ("NET_BIND_SERVICE",)
+
+    @model_validator(mode="after")
+    def _sql_server_limit_is_below_the_container_limit(self) -> Self:
+        if self.mssql_memory_limit_mb >= self.memory_mb:
+            raise ValueError("mssql_memory_limit_mb must be below memory_mb")
+        return self
+
+
 class RunnerSettings(BaseModel):
     """How student projects are built and run in Docker (ADR 0015)."""
 
@@ -176,6 +210,7 @@ class RunnerSettings(BaseModel):
     logs_root: Path = Path("logs")
     """Folder for full build and run logs inside each run's folder:
     `<workspace_dir>/runs/<run_id>/<logs_root>/<repo_id>`."""
+    database: DatabaseSettings = DatabaseSettings()
 
     @model_validator(mode="after")
     def _course_framework_has_images(self) -> Self:

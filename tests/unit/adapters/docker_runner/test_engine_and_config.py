@@ -8,6 +8,7 @@ from hw_checker.adapters.docker_runner.runner_config import (
     ContainerLimits,
     DockerRunnerConfig,
     FrameworkImages,
+    SqlServerConfig,
 )
 
 DIGEST = "sha256:" + "a" * 64
@@ -107,3 +108,39 @@ def test_limits_must_be_positive(field: str) -> None:
 
     with pytest.raises(ValueError, match="must be positive"):
         ContainerLimits(**values)
+
+
+def sql_server_config(**overrides: Any) -> SqlServerConfig:
+    values: dict[str, Any] = {
+        "image": f"mcr.microsoft.com/mssql/server:2022-latest@{DIGEST}",
+        "edition": "Developer",
+        "accept_eula": "Y",
+        "memory_mb": 2048,
+        "mssql_memory_limit_mb": 1536,
+        "cpus": 2,
+        "pids": 512,
+        "startup_timeout_seconds": 10,
+        "readiness_poll_seconds": 1,
+        "alias": "sqlserver",
+        "user": "sa",
+        "container_user": "mssql",
+        "sqlcmd_path": "/opt/mssql-tools18/bin/sqlcmd",
+        "max_database_name_length": 128,
+        "added_capabilities": ("NET_BIND_SERVICE",),
+    }
+    return SqlServerConfig(**(values | overrides))
+
+
+def test_config_lists_the_sql_server_image_only_when_databases_are_on() -> None:
+    assert config().images[-1] == f"curlimages/curl:8.10.1@{DIGEST}"
+    assert config(database=sql_server_config()).images[-1].startswith("mcr.microsoft.com/mssql")
+
+
+def test_sql_server_memory_cap_must_be_below_the_container_limit() -> None:
+    with pytest.raises(ValueError, match="below the container limit"):
+        sql_server_config(mssql_memory_limit_mb=2048)
+
+
+def test_sql_server_durations_must_be_positive() -> None:
+    with pytest.raises(ValueError, match="must be positive"):
+        sql_server_config(startup_timeout_seconds=0)

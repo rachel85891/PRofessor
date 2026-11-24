@@ -13,7 +13,7 @@ class FakeCodeRunner:
 
     `results` maps a repo id to its result (default: build and run succeeded). `errors`
     maps a repo id to the error its execution raises. `environment_error` makes
-    `check_environment` fail.
+    `check_environment` fail, `round_error` the same for `start_round`.
     """
 
     def __init__(
@@ -22,11 +22,13 @@ class FakeCodeRunner:
         errors: Mapping[str, Exception] | None = None,
         environment_error: ExecutionEnvironmentError | None = None,
         leftovers: int = 0,
+        round_error: ExecutionEnvironmentError | None = None,
     ) -> None:
         self._results = dict(results or {})
         self._errors = dict(errors or {})
         self._environment_error = environment_error
         self._leftovers = leftovers
+        self._round_error = round_error
         self.requests: list[ExecutionRequest] = []
         self.calls: list[str] = []
 
@@ -42,6 +44,14 @@ class FakeCodeRunner:
         if error is not None:
             raise error
         return self._results.get(request.repo_id, SUCCEEDED)
+
+    def start_round(self) -> None:
+        self.calls.append("start_round")
+        if self._round_error is not None:
+            raise self._round_error
+
+    def finish_round(self) -> None:
+        self.calls.append("finish_round")
 
     def sweep_leftovers(self) -> int:
         self.calls.append("sweep_leftovers")

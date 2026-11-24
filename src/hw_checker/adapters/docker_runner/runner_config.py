@@ -3,6 +3,9 @@
 from collections.abc import Mapping
 from dataclasses import dataclass
 
+MIN_DATABASE_NAME_LENGTH = 16
+"""Room for the `hw_` prefix and a hash when a database name is shortened."""
+
 
 @dataclass(frozen=True)
 class ContainerLimits:
@@ -23,6 +26,48 @@ class FrameworkImages:
 
     sdk: str
     runtime: str
+
+
+@dataclass(frozen=True)
+class SqlServerConfig:
+    """The shared SQL Server container of a round (ADR 0004): image, licence, limits, names.
+
+    Everything here is policy data from `config.yaml`; the adapter holds no literal of it.
+    """
+
+    image: str
+    edition: str
+    """The SQL Server edition (`MSSQL_PID`), for example `Developer`."""
+    accept_eula: str
+    """The value of `ACCEPT_EULA`; `Y` accepts the licence terms of the image."""
+    memory_mb: int
+    """The container's memory limit."""
+    mssql_memory_limit_mb: int
+    """SQL Server's own memory cap (`MSSQL_MEMORY_LIMIT_MB`), kept below the container's."""
+    cpus: float
+    pids: int
+    startup_timeout_seconds: float
+    readiness_poll_seconds: float
+    alias: str
+    """The server's DNS name on every repo's network."""
+    user: str
+    """The SQL login the apps connect with."""
+    container_user: str
+    """The operating-system account the container runs as."""
+    sqlcmd_path: str
+    max_database_name_length: int
+    added_capabilities: tuple[str, ...]
+    """Capabilities given back after all are dropped (the server binary needs one)."""
+
+    def __post_init__(self) -> None:
+        if self.memory_mb < 1 or self.cpus <= 0 or self.pids < 1:
+            raise ValueError(f"SQL Server limits must be positive: {self.memory_mb} MB")
+        if not 0 < self.mssql_memory_limit_mb < self.memory_mb:
+            raise ValueError("MSSQL_MEMORY_LIMIT_MB must be positive and below the container limit")
+        if self.startup_timeout_seconds <= 0 or self.readiness_poll_seconds <= 0:
+            raise ValueError("SQL Server timeouts and poll intervals must be positive")
+        if self.max_database_name_length < MIN_DATABASE_NAME_LENGTH:
+            raise ValueError("the database name length limit is too small")
 
 
 @dataclass(frozen=True)
@@ -54,6 +99,8 @@ class DockerRunnerConfig:
     resolve_grace_seconds: float = 5.0
     """How long the sidecar may fail to resolve the app's name before it is an environment
     failure instead of a slow start."""
+    database: SqlServerConfig | None = None
+    """The shared SQL Server of a round; None when databases are off."""
     max_response_bytes: int = 65_536
     """The most of a probe response (headers and body) read from the sidecar."""
     """How long the sidecar may fail to resolve the app's name before it is an environment
@@ -92,4 +139,5 @@ class DockerRunnerConfig:
         found: list[str] = []
         for pair in self.framework_images.values():
             found += [image for image in (pair.sdk, pair.runtime) if image not in found]
-        return (*found, self.probe_image)
+        server = () if self.database is None else (self.database.image,)
+        return (*found, self.probe_image, *server)

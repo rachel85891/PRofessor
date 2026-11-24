@@ -190,6 +190,33 @@ def test_an_unknown_repo_id_stops_the_round_before_it_starts(tmp_path: Path) -> 
     assert harness.storage.runs.list_runs() == ()
 
 
+def test_the_round_starts_its_shared_resources_first_and_removes_them_at_the_end(
+    tmp_path: Path,
+) -> None:
+    harness = Harness(tmp_path)
+
+    harness.run()
+
+    assert harness.runner is not None
+    calls = harness.runner.calls
+    assert calls[:3] == ["sweep_leftovers", "check_environment", "start_round"]
+    assert calls[-1] == "finish_round"
+    assert calls.count("finish_round") == 1
+
+
+def test_a_round_whose_database_server_cannot_start_stops_before_it_starts(
+    tmp_path: Path,
+) -> None:
+    runner = FakeCodeRunner(round_error=ExecutionEnvironmentError("not enough memory"))
+    harness = Harness(tmp_path, runner=runner)
+
+    with pytest.raises(ExecutionEnvironmentError, match="not enough memory"):
+        harness.run()
+
+    assert harness.storage.runs.list_runs() == ()
+    assert "execute" not in runner.calls
+
+
 def test_an_unready_environment_stops_the_round_before_it_starts(tmp_path: Path) -> None:
     runner = FakeCodeRunner(environment_error=ExecutionEnvironmentError("image missing"))
     harness = Harness(tmp_path, runner=runner)
