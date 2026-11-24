@@ -26,6 +26,7 @@ from hw_checker.adapters.assignments_yaml.rules import (
 from hw_checker.adapters.assignments_yaml.schema import (
     AssignmentFile,
     CheckConditionEntry,
+    LenientNoteEntry,
     ProbeEntry,
     RequirementEntry,
 )
@@ -273,7 +274,12 @@ def _build_assignment(
                 "title": parsed.title,
                 "requirements": requirements,
                 "taught_techniques": parsed.taught_techniques,
-                "lenient_notes": parsed.lenient_notes,
+                "lenient_notes": [_note_text(note) for note in parsed.lenient_notes],
+                "lenient_note_ends": [
+                    note.model_dump()
+                    for note in parsed.lenient_notes
+                    if not isinstance(note, str) and note.until is not None
+                ],
                 "reviewed_files": None
                 if parsed.reviewed_files is None
                 else parsed.reviewed_files.model_dump(),
@@ -286,6 +292,10 @@ def _build_assignment(
     except ValidationError as error:
         problems.extend(f"{label}{_describe(item)}" for item in error.errors())
         return None
+
+
+def _note_text(note: str | LenientNoteEntry) -> str:
+    return note if isinstance(note, str) else note.text
 
 
 def _condition_data(entry: CheckConditionEntry | None) -> dict[str, Any] | None:
@@ -310,6 +320,7 @@ def _requirement_data(entry: RequirementEntry, assignment_id: str) -> dict[str, 
         "reviewer_guidance": entry.reviewer_guidance,
         "lenient_notes": entry.lenient_notes,
         "concerns": entry.concerns,
+        "until": entry.until,
     }
 
 
@@ -369,7 +380,84 @@ def _cross_file_problems(loaded: list[_LoadedFile]) -> list[str]:
             "requirement ids must be unique across all assignments."
         )
     problems.extend(_dependency_problems(loaded))
+    problems.extend(_until_problems(loaded))
     return problems
+
+
+NOTE_EXCERPT_CHARS = 40
+"""How much of a lenient note's text names it in a problem message."""
+
+
+def _until_problems(loaded: list[_LoadedFile]) -> list[str]:
+    """An `until` on a requirement or a lenient note names an assignment that exists and is
+    not before the item's own; a requirement does not outlive what it depends on."""
+    orders = {item.assignment.id: item.assignment.order for item in loaded}
+    problems: list[str] = []
+    ends: dict[str, str | None] = {}
+    for item in loaded:
+        assignment = item.assignment
+        named = [(f"requirement '{r.id}'", r.until) for r in assignment.requirements]
+        named += [
+            (f"lenient note {number} ({_excerpt(text)})", _end_of(assignment, text))
+            for number, text in enumerate(assignment.lenient_notes, start=1)
+        ]
+        for name, until in named:
+            if until is not None:
+                problems += _until_problem(item, name, until, orders)
+        ends.update({r.id: r.until for r in assignment.requirements})
+    problems += _outliving_problems(loaded, ends, orders)
+    return problems
+
+
+def _end_of(assignment: Assignment, text: str) -> str | None:
+    return next((n.until for n in assignment.lenient_note_ends if n.text == text), None)
+
+
+def _until_problem(item: _LoadedFile, name: str, until: str, orders: dict[str, int]) -> list[str]:
+    where = f"{item.label}: {name}, field 'until'"
+    if until not in orders:
+        return [f"{where}: unknown assignment '{until}'; check the spelling."]
+    if orders[until] < item.assignment.order:
+        return [
+            f"{where}: '{until}' comes before {item.assignment.id}, so this would never "
+            f"apply; use {item.assignment.id} or a later assignment."
+        ]
+    return []
+
+
+def _outliving_problems(
+    loaded: list[_LoadedFile], ends: dict[str, str | None], orders: dict[str, int]
+) -> list[str]:
+    """A requirement may not stay in effect after a requirement it `depends_on` has ended:
+    the dependency would vanish while the dependent stays."""
+    problems: list[str] = []
+    for item in loaded:
+        for requirement in item.assignment.requirements:
+            if requirement.until is not None and requirement.until not in orders:
+                continue  # Reported as an unknown assignment.
+            own_end = None if requirement.until is None else orders[requirement.until]
+            for dependency in requirement.depends_on:
+                dependency_end = ends.get(dependency)
+                if dependency_end is None or dependency_end not in orders:
+                    continue  # It does not end, or its end is reported as unknown.
+                if own_end is None or own_end > orders[dependency_end]:
+                    stays = (
+                        "has no until and stays"
+                        if requirement.until is None
+                        else f"stays until {requirement.until}"
+                    )
+                    problems.append(
+                        f"{item.label}: requirement '{requirement.id}', field 'depends_on': "
+                        f"'{dependency}' ends at {dependency_end}, but this requirement "
+                        f"{stays}; give it an until no later than {dependency_end}, or remove "
+                        "the dependency."
+                    )
+    return problems
+
+
+def _excerpt(text: str) -> str:
+    shortened = text if len(text) <= NOTE_EXCERPT_CHARS else text[:NOTE_EXCERPT_CHARS] + "..."
+    return f'"{shortened}"'
 
 
 def _dependency_problems(loaded: list[_LoadedFile]) -> list[str]:
