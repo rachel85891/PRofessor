@@ -137,6 +137,7 @@ def test_builtin_checks_are_registered() -> None:
         "no_concrete_construction",
         "classes_in_role",
         "namespace_matches_project",
+        "methods_async",
     }
 
 

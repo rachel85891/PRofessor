@@ -146,7 +146,8 @@ class ArchitectureSignal(DomainModel):
     For a registration, `subject` is the service type and `related_subject` the
     implementation type, both as written; `subject` is None when the call does not name
     them literally (a factory lambda, an instance, an extension method's argument). Only a
-    type declaration has `related_subjects` (its base list) and `keywords`.
+    type declaration has `related_subjects` (its base list); a type or method declaration
+    has `keywords`.
     """
 
     kind: ArchitectureSignalKind
