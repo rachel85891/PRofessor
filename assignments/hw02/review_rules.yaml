@@ -62,6 +62,8 @@ rules:
     status: approved
 
   - id: file-access-note
+    # until hw04: HW05 stores data in a database, so the text-file items end (developer decision 2026-11-24).
+    until: hw04
     applies_to: [fixer, judge]
     kind: note_only
     when_found: [hw02-file-access-in-repositories]
