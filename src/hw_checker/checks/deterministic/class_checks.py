@@ -21,9 +21,12 @@ from hw_checker.checks.deterministic.layer_support import (
     RolesParams,
     Types,
     ambiguous_note,
+    code_text,
     line_evidence,
     make_finding,
     read_layers,
+    signals_of,
+    simple_name,
     subject,
 )
 from hw_checker.checks.deterministic.layers import Layers, project_name
@@ -34,6 +37,7 @@ from hw_checker.checks.deterministic.messages import (
     CLASS_IN_UNASSIGNED_PROJECT,
     CLASS_NAMESPACE_EXAMPLE,
     CLASSES_NOT_IN_ROLE,
+    CONSTRUCTOR_TAKES_NONE_OF,
     NAMESPACE_NOT_PROJECT,
 )
 from hw_checker.checks.deterministic.repository import code
@@ -41,6 +45,7 @@ from hw_checker.checks.registry import CheckResult, check
 from hw_checker.domain import (
     ArchitectureEvidence,
     ArchitectureSignal,
+    ArchitectureSignalKind,
     CheckInput,
     Evidence,
     NotEvaluatedReason,
@@ -70,6 +75,17 @@ class NamespaceMatchesProjectParams(RolesParams):
 
     def named_roles(self) -> tuple[str, ...]:
         return () if self.role is None else (self.role,)
+
+
+class ConstructorTakesClassParams(RolesParams):
+    """`consumer`: the role whose classes' constructors are read; `select`: the classes
+    one of them must take."""
+
+    consumer: Role
+    select: ClassSelector
+
+    def named_roles(self) -> tuple[str, ...]:
+        return (self.consumer,)
 
 
 @check(
@@ -148,7 +164,46 @@ def namespace_matches_project(
     )
 
 
-CLASS_CHECKS = (classes_in_role, namespace_matches_project)
+@check(
+    "constructor_takes_class",
+    ConstructorTakesClassParams,
+    "At least one class in the consumer role's projects takes a class chosen by select "
+    "(names, bases, entities_of_bases) as a constructor parameter, normal or primary "
+    "(generic wrappers such as IOptions<T> do not count). Otherwise one finding naming the "
+    "selected classes. No class selected: not evaluated.",
+    reads_architecture=True,
+)
+def constructor_takes_class(
+    check_input: CheckInput, params: ConstructorTakesClassParams
+) -> CheckResult:
+    """Passes when some constructor of the consumer role takes a selected class; otherwise one
+    finding with no location (there is nothing to point at) naming the selected classes."""
+    found = read_layers(check_input, params, signals=True)
+    if not isinstance(found, tuple):
+        return found
+    evidence, roles = found
+    selection = select_classes(Types(evidence), params.select)
+    if not selection.classes:
+        return NotEvaluatedReason.DEPENDENCY_FAILED
+    wanted = {subject(declaration) for declaration in selection.classes}
+    taken = any(
+        roles.role_of(parameter.file_path) == params.consumer
+        and simple_name(subject(parameter)) in wanted
+        for parameter in signals_of(evidence, ArchitectureSignalKind.CONSTRUCTOR_PARAMETER)
+    )
+    if taken:
+        return ()
+    problems = [Problem(code_text(name)) for name in sorted(wanted)]
+    return make_finding(
+        check_input,
+        CONSTRUCTOR_TAKES_NONE_OF,
+        problems,
+        consumer=params.consumer,
+        ambiguous=ambiguous_note(list(selection.ambiguous)),
+    )
+
+
+CLASS_CHECKS = (classes_in_role, namespace_matches_project, constructor_takes_class)
 
 
 def project_namespace(project: str, root_namespace: str | None) -> str:
