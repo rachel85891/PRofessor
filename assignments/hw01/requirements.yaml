@@ -204,6 +204,8 @@ requirements:
     title: The data file the code reads is in the repo
     severity: minor
     feedback: notes_only
+    # until hw04: HW05 stores data in a database, so the text-file items end (developer decision 2026-11-24).
+    until: hw04
     check: data_files_in_repo
 
   # Stage 17, approved by the developer on 2026-11-05: the client files in wwwroot.

@@ -57,6 +57,8 @@ requirements:
       repositories project, not in controllers or services.
     severity: major
     feedback: notes_only
+    # until hw04: HW05 stores data in a database, so the text-file items end (developer decision 2026-11-24).
+    until: hw04
     depends_on: [hw02-layer-projects]
     check: code_only_in_layer
     params:

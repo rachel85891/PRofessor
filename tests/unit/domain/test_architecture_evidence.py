@@ -1,7 +1,12 @@
 import pytest
 from pydantic import ValidationError
 
-from hw_checker.domain import ArchitectureSignal, ArchitectureSignalKind, ServiceLifetime
+from hw_checker.domain import (
+    ArchitectureSignal,
+    ArchitectureSignalKind,
+    ProjectEvidence,
+    ServiceLifetime,
+)
 
 
 def test_registration_may_omit_its_types_but_not_its_method() -> None:
@@ -35,4 +40,50 @@ def test_other_signals_need_a_subject_and_no_registration_fields() -> None:
             line=1,
             subject="IClock",
             lifetime=ServiceLifetime.SCOPED,
+        )
+
+
+def test_only_a_type_declaration_has_a_namespace() -> None:
+    declared = ArchitectureSignal(
+        kind=ArchitectureSignalKind.TYPE_DECLARATION,
+        file_path="Entities/User.cs",
+        line=3,
+        subject="User",
+        namespace="Shop.Entities",
+    )
+    assert declared.namespace == "Shop.Entities"
+
+    with pytest.raises(ValidationError, match="only a type declaration has a namespace"):
+        ArchitectureSignal(
+            kind=ArchitectureSignalKind.DB_SET_PROPERTY,
+            file_path="Data/Context.cs",
+            line=3,
+            subject="User",
+            name="Users",
+            namespace="Shop",
+        )
+
+
+def test_a_project_has_no_root_namespace_by_default() -> None:
+    assert ProjectEvidence(file_path="A/A.csproj").root_namespace is None
+
+
+def test_only_a_db_set_property_has_a_name() -> None:
+    named = ArchitectureSignal(
+        kind=ArchitectureSignalKind.DB_SET_PROPERTY,
+        file_path="Data/Context.cs",
+        line=3,
+        subject="User",
+        related_subject="ShopContext",
+        name="Users",
+    )
+    assert named.name == "Users"
+
+    with pytest.raises(ValidationError, match="only a db_set_property signal has a name"):
+        ArchitectureSignal(
+            kind=ArchitectureSignalKind.TYPE_DECLARATION,
+            file_path="Users.cs",
+            line=1,
+            subject="User",
+            name="Users",
         )

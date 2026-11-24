@@ -112,6 +112,7 @@ def test_builtin_checks_are_registered() -> None:
         "file_exists",
         "folder_exists",
         "project_count",
+        "code_patterns",
         "pascal_case_types",
         "pascal_case_properties",
         "pascal_case_methods",
@@ -134,6 +135,8 @@ def test_builtin_checks_are_registered() -> None:
         "constructor_takes_interface",
         "interfaces_registered",
         "no_concrete_construction",
+        "classes_in_role",
+        "namespace_matches_project",
     }
 
 

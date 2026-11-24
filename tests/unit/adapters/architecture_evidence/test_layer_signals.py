@@ -235,9 +235,27 @@ def test_db_set_properties_give_their_entitys_simple_name_and_their_type(
     )
 
     assert [
-        (signal.line, signal.subject, signal.related_subject)
+        (signal.line, signal.subject, signal.related_subject, signal.name)
         for signal in of_kind(evidence, DB_SET)
-    ] == [(3, "Item", "ShopContext"), (4, "Order", "ShopContext"), (5, "Customer", "ShopContext")]
+    ] == [
+        (3, "Item", "ShopContext", "Items"),
+        (4, "Order", "ShopContext", "Orders"),
+        (5, "Customer", "ShopContext", "Customers"),
+    ]
+
+
+def test_only_db_set_properties_carry_a_name(tmp_path: Path) -> None:
+    evidence = scan(
+        tmp_path,
+        "public class ShopContext : DbContext\n"
+        "{\n"
+        "    public DbSet<Item> Items { get; set; }\n"
+        "    public ShopContext(IClock clock) { }\n"
+        "}\n",
+    )
+
+    named = [signal.kind for signal in evidence.signals if signal.name is not None]
+    assert named == [DB_SET]
 
 
 def test_a_db_set_outside_a_type_gives_no_signal(tmp_path: Path) -> None:

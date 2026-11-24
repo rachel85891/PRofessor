@@ -7,6 +7,8 @@
 rules:
   - id: no-file-exists
     # Moved from code in stage 3f.
+    # until hw04: HW05 stores data in a database, so the text-file items end (developer decision 2026-11-24).
+    until: hw04
     applies_to: [fixer, judge]
     kind: never_do
     text: >-
@@ -171,6 +173,8 @@ rules:
 examples:
   - id: get-by-id-put-break-newline
     # Moved from code in stage 3f.
+    # until hw04: HW05 stores data in a database, so the text-file items end (developer decision 2026-11-24).
+    until: hw04
     applies_to: [fixer, judge]
     situation: >-
       `Controllers/OrdersController.cs` has `GET api/orders/{id}` returning `null` for every
