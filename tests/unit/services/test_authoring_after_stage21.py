@@ -38,6 +38,16 @@ def test_the_catalog_offers_stage_21s_checks(tmp_path: Path) -> None:
         assert f"- `{name}`" in prompt
 
 
+def test_the_catalog_offers_the_pattern_check_with_its_params_schema(tmp_path: Path) -> None:
+    service = _hw04(tmp_path)
+
+    prompt = service.author_prompt(service.load_intake("hw04"))
+
+    assert "- `code_patterns`" in prompt
+    assert '"must"' in prompt
+    assert "{dbset}" in prompt
+
+
 def test_the_author_sees_every_earlier_assignments_files(tmp_path: Path) -> None:
     service = _hw04(tmp_path)
 
