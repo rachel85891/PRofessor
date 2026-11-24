@@ -226,16 +226,17 @@ def build_code_runner(runner: RunnerSettings) -> DockerCodeRunner:
 
 
 def remove_round_leftovers(settings: Settings) -> None:
-    """Remove what a stopped or crashed round left in Docker, when databases are on.
+    """Remove the SQL Server a stopped or crashed round left in Docker, when databases are on.
 
     Only the shared SQL Server is started once per round, so this is the safety net behind
-    the round's own cleanup. Nothing happens with databases off. Failures are logged, not
+    the round's own cleanup. It removes the SQL Server's own container and network only, never
+    another process's round. Nothing happens with databases off. Failures are logged, not
     raised: the next round's start sweeps again.
     """
     if not settings.runner.database.enabled:
         return
     try:
-        build_code_runner(settings.runner).sweep_leftovers()
+        build_code_runner(settings.runner).sweep_database_leftovers()
     except ExecutionEnvironmentError as error:
         logging.getLogger(__name__).warning("Could not remove the round's leftovers: %s", error)
 
