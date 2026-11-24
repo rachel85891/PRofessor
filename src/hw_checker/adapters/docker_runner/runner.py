@@ -72,6 +72,7 @@ from hw_checker.adapters.docker_runner.runner_config import (
     DockerRunnerConfig,
     FrameworkImages,
 )
+from hw_checker.adapters.docker_runner.sql_server import database_name
 from hw_checker.adapters.docker_runner.web_choice import choose_web_project
 from hw_checker.adapters.docker_runner.windows_paths import windows_paths_in_log
 from hw_checker.config.logging_setup import log_context
@@ -92,6 +93,7 @@ from hw_checker.domain import (
 )
 from hw_checker.domain.errors import ExecutionEnvironmentError
 from hw_checker.domain.execution import MAX_PROBE_ERROR_CHARS
+from hw_checker.ports import DatabaseProvisioner
 
 logger = logging.getLogger(__name__)
 
@@ -129,6 +131,10 @@ class DockerCodeRunner:
 
     One instance is shared by every repo of a round, and `execute` may be called from
     several threads at once. Only the restore step is serialized (see `_restore_lock`).
+
+    With a `database` provisioner (and `config.database`), the round shares one SQL Server
+    (`start_round`, `finish_round`) and each repo's run gets an empty database of its own,
+    dropped with the repo's containers. Without one, no database is touched.
     """
 
     def __init__(
@@ -137,9 +143,13 @@ class DockerCodeRunner:
         engine: DockerEngine,
         clock: Clock = time.monotonic,
         sleep: Sleep = time.sleep,
+        database: DatabaseProvisioner | None = None,
     ) -> None:
+        if database is not None and config.database is None:
+            raise ValueError("a database provisioner needs the SQL Server settings")
         self._config = config
         self._engine = engine
+        self._database = database
         self._clock = clock
         self._sleep = sleep
         # NuGet's file locks protect the shared package cache between processes on one
@@ -162,6 +172,7 @@ class DockerCodeRunner:
                 self._clock,
                 self._sleep,
                 self._restore_lock,
+                self._database,
             )
             return execution.run()
 
@@ -187,6 +198,20 @@ class DockerCodeRunner:
                 f"cannot prepare the package cache volume {self._config.nuget_cache_volume}: "
                 f"{error}"
             ) from error
+
+    def start_round(self) -> None:
+        """Start the round's shared SQL Server when databases are on; else do nothing.
+
+        Raises:
+            ExecutionEnvironmentError: the server cannot start (memory, image, timeout).
+        """
+        if self._database is not None:
+            self._database.start()
+
+    def finish_round(self) -> None:
+        """Remove the round's SQL Server; never raises."""
+        if self._database is not None:
+            self._database.stop()
 
     def sweep_leftovers(self) -> int:
         """Remove every labelled container, network and volume except the package cache.
@@ -285,6 +310,10 @@ class _Execution:
     sleep: Sleep
     restore_lock: threading.Lock
     """Held around the restore step only; shared by every execution of the runner."""
+    database: DatabaseProvisioner | None = None
+    """The round's database server; None when databases are off."""
+    databases: list[tuple[str, str]] = field(default_factory=list)
+    """(database, network) of every database this execution created or tried to create."""
     containers: list[str] = field(default_factory=list)
     networks: list[str] = field(default_factory=list)
     volumes: list[str] = field(default_factory=list)
@@ -513,6 +542,7 @@ class _Execution:
         try:
             self.engine.create_network(network, self._labels("network"), internal=True)
             self.networks.append(network)
+            self._create_database(network)
             app = self._create(
                 self._app_spec(app_name, network, work_volume, data_volume, discovery)
             )
@@ -862,10 +892,33 @@ class _Execution:
             extra={"step": step.value, "outcome": "ok" if kind is None else kind.value},
         )
 
+    def _create_database(self, network: str) -> None:
+        """Give this run an empty database on its network (the app is not given it yet)."""
+        if self.database is None or self.config.database is None:
+            return
+        name = database_name(
+            self.request.repo_id, self.request.run_id, self.config.database.max_database_name_length
+        )
+        # Recorded first: a failure inside `create_database` still has to be undone.
+        self.databases.append((name, network))
+        self.database.create_database(name, network)
+        logger.info("Created an empty database for this run")
+
+    def _drop_databases(self) -> None:
+        if self.database is None:
+            return
+        for name, network in reversed(self.databases):
+            try:
+                self.database.drop_database(name, network)
+            except ExecutionEnvironmentError as error:
+                logger.warning("Cleanup could not drop the run's database: %s", error)
+        self.databases.clear()
+
     def _cleanup(self) -> None:
         """Remove everything this execution created; never raise."""
         for container in reversed(self.containers):
             self._quietly("container", self.engine.remove_container, container)
+        self._drop_databases()
         for network in reversed(self.networks):
             self._quietly("network", self.engine.remove_network, network)
         for volume in reversed(self.volumes):

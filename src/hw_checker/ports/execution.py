@@ -31,6 +31,18 @@ class CodeRunner(Protocol):
         """
         ...
 
+    def start_round(self) -> None:
+        """Start what the whole round shares (the database server, when databases are on).
+
+        Raises:
+            ExecutionEnvironmentError: it cannot start; nothing is left running.
+        """
+        ...
+
+    def finish_round(self) -> None:
+        """Remove what `start_round` started; never raises and is safe to call twice."""
+        ...
+
     def sweep_leftovers(self) -> int:
         """Remove resources left by crashed runs (found by label); return how many.
 

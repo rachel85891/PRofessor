@@ -68,6 +68,8 @@ class FakeEngine:
     connections: dict[str, dict[str, tuple[str, ...]]] = field(default_factory=dict)
     """Network name to {container id: aliases} for every attachment made after creation."""
     sql_commands: list[tuple[str, ...]] = field(default_factory=list)
+    network_internal: dict[str, bool] = field(default_factory=dict)
+    """Whether each network ever created was internal."""
     resolve_failures: int = 0
     fail_on: dict[str, BaseException] = field(default_factory=dict)
     containers: dict[str, FakeContainer] = field(default_factory=dict)
@@ -122,6 +124,7 @@ class FakeEngine:
         self._fail("create_network")
         self._record("create_network", name)
         self.networks[name] = (dict(labels), internal)
+        self.network_internal[name] = internal
 
     def remove_network(self, name: str) -> None:
         self._fail("remove_network")

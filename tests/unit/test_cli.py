@@ -25,9 +25,15 @@ from hw_checker.domain import (
     RunSummary,
     UnknownCondition,
 )
-from hw_checker.domain.errors import LLMError, PublishError, RepoUnavailableError
+from hw_checker.domain.errors import (
+    ExecutionEnvironmentError,
+    LLMError,
+    PublishError,
+    RepoUnavailableError,
+)
 from hw_checker.graph import RoundGraph, build_round_graph
 from tests.fakes.code_host import FakeCodeHost
+from tests.fakes.execution import FakeCodeRunner
 from tests.fakes.llm import FakeLLMClient
 from tests.unit.graph.harness import CATALOG, REPO_IDS, Harness, url
 
@@ -170,6 +176,31 @@ def test_main_runs_a_round_and_prints_its_summary(
         saved = checkpointer.get_tuple({"configurable": {"thread_id": run_id.group(1)}})
     assert saved is not None
     assert fake_round.storage.runs.get(run_id.group(1)).status is RunStatus.COMPLETED
+
+
+def test_main_removes_the_rounds_leftovers_after_the_round(
+    fake_round: Harness, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cleaned: list[Settings] = []
+    monkeypatch.setattr(cli, "remove_round_leftovers", cleaned.append)
+
+    cli.main(["round", "--assignment", "hw01", "--roster", "r.xlsx", "--limit", "1"])
+
+    assert len(cleaned) == 1
+
+
+def test_main_removes_the_rounds_leftovers_even_when_the_round_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    runner = FakeCodeRunner(round_error=ExecutionEnvironmentError("not enough memory"))
+    install(Harness(tmp_path, runner=runner), tmp_path, monkeypatch)
+    cleaned: list[Settings] = []
+    monkeypatch.setattr(cli, "remove_round_leftovers", cleaned.append)
+
+    code = cli.main(["round", "--assignment", "hw01", "--roster", "r.xlsx"])
+
+    assert code != cli.EXIT_OK
+    assert len(cleaned) == 1
 
 
 def test_main_returns_failed_when_no_repo_could_be_checked(

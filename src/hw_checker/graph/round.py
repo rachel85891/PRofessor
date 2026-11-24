@@ -77,6 +77,7 @@ def build_round_graph(
         return sends
 
     def finish_round(state: RoundState) -> Update:
+        services.execution.finish()
         with log_context(run_id=state["run_id"]):
             run = services.run_records.finish(state["run_id"])
         report_paths = {

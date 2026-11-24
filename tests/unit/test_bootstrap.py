@@ -41,10 +41,11 @@ from hw_checker.domain import (
     Severity,
     StepStatus,
 )
-from hw_checker.domain.errors import LLMError
+from hw_checker.domain.errors import ExecutionEnvironmentError, LLMError
 from hw_checker.ports import LLMClient
 from hw_checker.ports.llm import TokenUsage
 from tests.fakes.llm import FakeLLMClient
+from tests.unit.adapters.docker_runner.fake_engine import FakeEngine
 from tests.unit.domain import builders
 
 FAKE_KEY = "not-a-real-key"  # pragma: allowlist secret
@@ -461,6 +462,74 @@ def test_runner_config_maps_the_sql_server_when_databases_are_on() -> None:
     assert config.database.user == settings.database.login
     assert config.database.mssql_memory_limit_mb < config.database.memory_mb
     assert config.images[-1] == settings.database.image
+
+
+def test_remove_round_leftovers_does_nothing_with_databases_off(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def refuse(runner: RunnerSettings) -> object:
+        raise AssertionError("Docker must not be touched with databases off")
+
+    monkeypatch.setattr(bootstrap, "build_code_runner", refuse)
+
+    bootstrap.remove_round_leftovers(Settings())
+
+
+def test_remove_round_leftovers_sweeps_when_databases_are_on(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    swept: list[str] = []
+
+    class Runner:
+        def sweep_leftovers(self) -> int:
+            swept.append("swept")
+            return 0
+
+    monkeypatch.setattr(bootstrap, "build_code_runner", lambda runner: Runner())
+    settings = Settings(runner=RunnerSettings(database=DatabaseSettings(enabled=True)))
+
+    bootstrap.remove_round_leftovers(settings)
+
+    assert swept == ["swept"]
+
+
+def test_remove_round_leftovers_logs_when_docker_cannot_be_reached(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    def unreachable(runner: RunnerSettings) -> object:
+        raise ExecutionEnvironmentError("no Docker")
+
+    monkeypatch.setattr(bootstrap, "build_code_runner", unreachable)
+    settings = Settings(runner=RunnerSettings(database=DatabaseSettings(enabled=True)))
+
+    bootstrap.remove_round_leftovers(settings)
+
+    assert "Could not remove the round's leftovers" in caplog.text
+
+
+def test_build_code_runner_has_no_database_when_they_are_off(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(bootstrap, "_connect_docker", lambda runner: FakeEngine())
+
+    runner = bootstrap.build_code_runner(RunnerSettings())
+
+    runner.start_round()
+    assert runner._database is None
+
+
+def test_build_code_runner_starts_the_sql_server_when_databases_are_on(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    engine = FakeEngine()
+    monkeypatch.setattr(bootstrap, "_connect_docker", lambda runner: engine)
+    runner = bootstrap.build_code_runner(RunnerSettings(database=DatabaseSettings(enabled=True)))
+
+    runner.start_round()
+    try:
+        assert engine.started_kinds() == ["database-server"]
+    finally:
+        runner.finish_round()
 
 
 def rich_repo_run() -> RepoRunResult:

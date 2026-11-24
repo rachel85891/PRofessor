@@ -42,12 +42,18 @@ class ExecutionService:
         """Remove what crashed runs left behind, then check the engine and the images.
 
         Raises:
-            ExecutionEnvironmentError: the engine doesn't answer or an image is missing.
+            ExecutionEnvironmentError: the engine doesn't answer, an image is missing, or the
+                round's database server cannot start.
         """
         removed = self._runner.sweep_leftovers()
         if removed:
             logger.info("Removed %d resources left by earlier runs", removed)
         self._runner.check_environment()
+        self._runner.start_round()
+
+    def finish(self) -> None:
+        """Remove what the round shares (its database server); never raises."""
+        self._runner.finish_round()
 
     def execute(
         self,
