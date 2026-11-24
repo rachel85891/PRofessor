@@ -25,6 +25,7 @@ from hw_checker.bootstrap import (
     open_checkpointer,
     open_fixer_llm,
     open_llm_client,
+    remove_round_leftovers,
     require_tracing_off,
 )
 from hw_checker.config.logging_setup import configure_logging
@@ -203,7 +204,12 @@ def run_round(settings: Settings, args: argparse.Namespace, out: TextIO) -> int:
         round_input["limit"] = args.limit
     with open_checkpointer(settings) as checkpointer, open_fixer_llm(settings) as fixer_llm:
         graph = build_round_graph_from_settings(settings, checkpointer, fixer_llm)
-        output: dict[str, Any] = graph.invoke(round_input, {"configurable": {"thread_id": run_id}})
+        try:
+            output: dict[str, Any] = graph.invoke(
+                round_input, {"configurable": {"thread_id": run_id}}
+            )
+        finally:
+            remove_round_leftovers(settings)
     summary: RunSummary = output["summary"]
     print_summary(summary, output["roster_warnings"], output.get("round_errors", []), out)
     print_gate(run_id, output.get(INTERRUPT_KEY, ()), out)

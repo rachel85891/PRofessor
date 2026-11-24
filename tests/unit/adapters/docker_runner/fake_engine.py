@@ -60,6 +60,16 @@ class FakeEngine:
     cache_volume: str = "hw-checker-test-nuget"
     reachable: bool = True
     oom_kinds: set[str] = field(default_factory=set)
+    sql_failures_before_ready: int = 0
+    """The first N sqlcmd readiness probes fail, as a starting SQL Server does."""
+    sql_results: dict[str, tuple[int, str]] = field(default_factory=dict)
+    """(exit code, output) of a sqlcmd call whose SQL contains the key."""
+    server_stopped: bool = False
+    connections: dict[str, dict[str, tuple[str, ...]]] = field(default_factory=dict)
+    """Network name to {container id: aliases} for every attachment made after creation."""
+    sql_commands: list[tuple[str, ...]] = field(default_factory=list)
+    network_internal: dict[str, bool] = field(default_factory=dict)
+    """Whether each network ever created was internal."""
     resolve_failures: int = 0
     fail_on: dict[str, BaseException] = field(default_factory=dict)
     containers: dict[str, FakeContainer] = field(default_factory=dict)
@@ -114,9 +124,12 @@ class FakeEngine:
         self._fail("create_network")
         self._record("create_network", name)
         self.networks[name] = (dict(labels), internal)
+        self.network_internal[name] = internal
 
     def remove_network(self, name: str) -> None:
         self._fail("remove_network")
+        if self.connections.get(name):
+            raise EngineError(f"network {name} has active endpoints")
         self._record("remove_network", name)
         self.networks.pop(name, None)
         self.removed.append(name)
@@ -130,6 +143,18 @@ class FakeEngine:
         self.created.append(container)
         self._record("create_container", kind)
         return container.id
+
+    def connect_network(self, container: str, network: str, aliases: tuple[str, ...]) -> None:
+        self._fail("connect_network")
+        if network not in self.networks:
+            raise EngineError(f"network {network} not found")
+        self._record("connect_network", network)
+        self.connections.setdefault(network, {})[container] = aliases
+
+    def disconnect_network(self, container: str, network: str) -> None:
+        self._fail("disconnect_network")
+        self._record("disconnect_network", network)
+        self.connections.get(network, {}).pop(container, None)
 
     def put_archive(self, container: str, path: str, data: bytes) -> None:
         self._fail("put_archive")
@@ -150,6 +175,12 @@ class FakeEngine:
             if self.app == "crash":
                 return ContainerState(running=False, exit_code=139, oom_killed=oom)
             return ContainerState(running=True, exit_code=None, oom_killed=oom)
+        if item.kind == "database-server":
+            if self.server_stopped:
+                return ContainerState(
+                    running=False, exit_code=1, oom_killed=item.kind in self.oom_kinds
+                )
+            return ContainerState(running=True, exit_code=None, oom_killed=False)
         if item.kind == "probe":
             return ContainerState(running=True, exit_code=None, oom_killed=False)
         exit_code = self.exit_codes.get(item.kind, 0)
@@ -164,6 +195,8 @@ class FakeEngine:
 
     def exec(self, container: str, command: tuple[str, ...]) -> ExecResult:
         self._fail("exec")
+        if command[0] == "sh" and command[3].endswith("sqlcmd"):
+            return self._exec_sql(command)
         self.exec_commands.append(command)
         if len(self.exec_commands) <= self.resolve_failures:
             return ExecResult(6, "000")
@@ -178,11 +211,25 @@ class FakeEngine:
         header_lines = "".join(f"{name}: {value}\r\n" for name, value in headers.items())
         return ExecResult(0, f"HTTP/1.1 {status} Status\r\n{header_lines}\r\n{body}")
 
+    def _exec_sql(self, command: tuple[str, ...]) -> ExecResult:
+        self._fail("exec_sql")
+        self.sql_commands.append(command)
+        sql = command[-1]
+        if sql == "SELECT 1" and self.sql_failures_before_ready > 0:
+            self.sql_failures_before_ready -= 1
+            return ExecResult(1, "Sqlcmd: Error: login timeout")
+        for fragment, result in self.sql_results.items():
+            if fragment in sql:
+                return ExecResult(*result)
+        return ExecResult(0, "")
+
     def remove_container(self, container: str) -> None:
         item = self.containers.get(container)
         self._fail("remove_container", item.kind if item else None)
         self._record("remove_container", item.kind if item else container)
         self.containers.pop(container, None)
+        for attached in self.connections.values():
+            attached.pop(container, None)
         self.removed.append(container)
 
     def list_labelled(self, label: str) -> tuple[Resource, ...]:
@@ -209,6 +256,10 @@ class FakeEngine:
     def specs(self, kind: str) -> list[ContainerSpec]:
         """Specs of every container of `kind` ever created, removed or not."""
         return [item.spec for item in self.created if item.kind == kind]
+
+    def started_kinds(self) -> list[str]:
+        """The kinds of every container ever started, in order."""
+        return [item.kind for item in self.created if item.started]
 
     @property
     def leftovers(self) -> int:

@@ -127,6 +127,36 @@ runner:
   # Folder for full build and run logs inside each run's folder:
   # <workspace_dir>/runs/<run_id>/<logs_root>/<repo_id>.
   logs_root: logs
+  # The shared SQL Server of a round: one container, one empty database per repo, removed at
+  # the end (ADR 0004). Off until the app is given its connection string (stage HW05-DB-2).
+  # Pinned 2026-11-24: mssql/server 2022-latest, SQL Server 16.0.4325.4. Update with:
+  # docker pull <image>, then docker image inspect <image> --format "{{index .RepoDigests 0}}".
+  database:
+    enabled: false
+    image: mcr.microsoft.com/mssql/server:2022-latest@sha256:4525e3efac9f3e241cb003bb2ff2a82818b502f37e12049d788b1a9fa7e13b7f
+    # Developer edition: free, not licensed for production. This tool only grades locally.
+    edition: Developer
+    # ACCEPT_EULA=Y accepts Microsoft's licence terms for the image: the developer confirms
+    # this by turning databases on.
+    accept_eula: "Y"
+    # SQL Server's documented minimum is 2 GB. Measured idle use: about 0.6 GB.
+    memory_mb: 2048
+    mssql_memory_limit_mb: 1536
+    cpus: 2
+    pids: 1024
+    # A fresh container took 35 s to accept connections the first time, 14-25 s later.
+    startup_timeout_seconds: 120
+    readiness_poll_seconds: 1
+    # The server's DNS name on each repo's own network.
+    alias: sqlserver
+    login: sa
+    container_user: mssql
+    sqlcmd_path: /opt/mssql-tools18/bin/sqlcmd
+    # SQL Server's limit on a database name.
+    max_database_name_length: 128
+    # sqlservr carries the file capability cap_net_bind_service: without it the binary
+    # cannot start, even as a normal user with every other capability dropped.
+    added_capabilities: [NET_BIND_SERVICE]
 
 storage:
   # SQLAlchemy database URL. SQLite now; PostgreSQL later by changing only this (ADR 0007).

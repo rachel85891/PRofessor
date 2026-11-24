@@ -8,6 +8,7 @@ import functools
 import hashlib
 import importlib
 import json
+import logging
 import os
 import pkgutil
 import sqlite3
@@ -33,10 +34,12 @@ from hw_checker.adapters.docker_runner.runner import DockerCodeRunner
 from hw_checker.adapters.docker_runner.runner_config import (
     ContainerLimits,
     DockerRunnerConfig,
+    SqlServerConfig,
 )
 from hw_checker.adapters.docker_runner.runner_config import (
     FrameworkImages as RunnerImages,
 )
+from hw_checker.adapters.docker_runner.sql_server import SqlServerProvisioner
 from hw_checker.adapters.git_local import LocalGitClient
 from hw_checker.adapters.github_api import GitHubCodeHost, GitHubConfig
 from hw_checker.adapters.jinja_templates import JinjaTextTemplates
@@ -53,6 +56,7 @@ from hw_checker.checks.registry import CheckRegistry
 from hw_checker.config.errors import ConfigurationError
 from hw_checker.config.logging_setup import configure_logging
 from hw_checker.config.settings import (
+    DatabaseSettings,
     FixerSettings,
     GitHubSettings,
     LlmSettings,
@@ -197,12 +201,43 @@ def build_execution(settings: Settings) -> ExecutionService:
         ExecutionEnvironmentError: Docker cannot be reached.
     """
     return ExecutionService(
-        DockerCodeRunner(runner_config(settings.runner), _connect_docker(settings.runner)),
+        build_code_runner(settings.runner),
         settings.workspace_dir.resolve() / RUNS_FOLDER,
         settings.runner.logs_root,
         build_git_client(settings),
         settings.runner.web_project_commits,
     )
+
+
+def build_code_runner(runner: RunnerSettings) -> DockerCodeRunner:
+    """The Docker code runner, with the shared SQL Server when databases are on.
+
+    Raises:
+        ExecutionEnvironmentError: Docker cannot be reached.
+    """
+    config = runner_config(runner)
+    engine = _connect_docker(runner)
+    database = (
+        SqlServerProvisioner(config.database, engine, config.label_prefix)
+        if config.database is not None
+        else None
+    )
+    return DockerCodeRunner(config, engine, database=database)
+
+
+def remove_round_leftovers(settings: Settings) -> None:
+    """Remove what a stopped or crashed round left in Docker, when databases are on.
+
+    Only the shared SQL Server is started once per round, so this is the safety net behind
+    the round's own cleanup. Nothing happens with databases off. Failures are logged, not
+    raised: the next round's start sweeps again.
+    """
+    if not settings.runner.database.enabled:
+        return
+    try:
+        build_code_runner(settings.runner).sweep_leftovers()
+    except ExecutionEnvironmentError as error:
+        logging.getLogger(__name__).warning("Could not remove the round's leftovers: %s", error)
 
 
 def build_authoring_service(settings: Settings, author_llm: LLMClient) -> AuthoringService:
@@ -654,6 +689,27 @@ def runner_config(runner: RunnerSettings) -> DockerRunnerConfig:
         max_archive_bytes=runner.max_archive_mb * BYTES_PER_MB,
         max_file_bytes=runner.max_file_mb * BYTES_PER_MB,
         max_response_bytes=runner.max_response_kb * BYTES_PER_KB,
+        database=_sql_server_config(runner.database) if runner.database.enabled else None,
+    )
+
+
+def _sql_server_config(database: DatabaseSettings) -> SqlServerConfig:
+    return SqlServerConfig(
+        image=database.image,
+        edition=database.edition,
+        accept_eula=database.accept_eula,
+        memory_mb=database.memory_mb,
+        mssql_memory_limit_mb=database.mssql_memory_limit_mb,
+        cpus=database.cpus,
+        pids=database.pids,
+        startup_timeout_seconds=database.startup_timeout_seconds,
+        readiness_poll_seconds=database.readiness_poll_seconds,
+        alias=database.alias,
+        user=database.login,
+        container_user=database.container_user,
+        sqlcmd_path=database.sqlcmd_path,
+        max_database_name_length=database.max_database_name_length,
+        added_capabilities=database.added_capabilities,
     )
 
 

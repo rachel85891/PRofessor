@@ -305,6 +305,34 @@ def test_runner_defaults_load_from_the_repo_config(tmp_path: Path) -> None:
     assert runner.logs_root == Path("logs")
 
 
+def test_databases_are_off_in_the_repo_config(tmp_path: Path) -> None:
+    from hw_checker.config.settings import DEFAULT_CONFIG_PATH
+
+    database = load_settings(
+        config_path=DEFAULT_CONFIG_PATH, env_path=tmp_path / ".env"
+    ).runner.database
+
+    assert database.enabled is False
+    assert "@sha256:" in database.image
+    assert database.edition == "Developer"
+    assert database.accept_eula == "Y"
+    assert database.mssql_memory_limit_mb < database.memory_mb
+
+
+def test_sql_server_memory_cap_must_be_below_the_container_limit() -> None:
+    from hw_checker.config.settings import DatabaseSettings
+
+    with pytest.raises(ValueError, match="below memory_mb"):
+        DatabaseSettings(memory_mb=2048, mssql_memory_limit_mb=2048)
+
+
+def test_sql_server_image_must_be_pinned_by_digest() -> None:
+    from hw_checker.config.settings import DatabaseSettings
+
+    with pytest.raises(ValueError, match="pattern"):
+        DatabaseSettings(image="mcr.microsoft.com/mssql/server:2022-latest")
+
+
 def test_runner_defaults_apply_without_config(tmp_path: Path) -> None:
     runner = _load(tmp_path, "").runner
 

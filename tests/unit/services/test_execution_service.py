@@ -106,7 +106,33 @@ def test_prepare_sweeps_leftovers_before_checking_the_environment(tmp_path: Path
 
     service(runner, tmp_path).prepare()
 
-    assert runner.calls == ["sweep_leftovers", "check_environment"]
+    assert runner.calls == ["sweep_leftovers", "check_environment", "start_round"]
+
+
+def test_prepare_does_not_start_the_round_when_the_environment_is_not_ready(
+    tmp_path: Path,
+) -> None:
+    runner = FakeCodeRunner(environment_error=ExecutionEnvironmentError("image missing"))
+
+    with pytest.raises(ExecutionEnvironmentError):
+        service(runner, tmp_path).prepare()
+
+    assert "start_round" not in runner.calls
+
+
+def test_prepare_raises_when_the_round_cannot_start(tmp_path: Path) -> None:
+    runner = FakeCodeRunner(round_error=ExecutionEnvironmentError("not enough memory"))
+
+    with pytest.raises(ExecutionEnvironmentError, match="not enough memory"):
+        service(runner, tmp_path).prepare()
+
+
+def test_finish_asks_the_runner_to_remove_what_the_round_shares(tmp_path: Path) -> None:
+    runner = FakeCodeRunner()
+
+    service(runner, tmp_path).finish()
+
+    assert runner.calls == ["finish_round"]
 
 
 def test_prepare_raises_when_the_environment_is_not_ready(tmp_path: Path) -> None:
