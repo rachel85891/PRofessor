@@ -471,14 +471,18 @@ def test_remove_round_leftovers_does_nothing_with_databases_off(
     bootstrap.remove_round_leftovers(Settings())
 
 
-def test_remove_round_leftovers_sweeps_when_databases_are_on(
+def test_remove_round_leftovers_sweeps_only_the_sql_server_when_databases_are_on(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     swept: list[str] = []
 
     class Runner:
         def sweep_leftovers(self) -> int:
-            swept.append("swept")
+            swept.append("full sweep")
+            return 0
+
+        def sweep_database_leftovers(self) -> int:
+            swept.append("database sweep")
             return 0
 
     monkeypatch.setattr(bootstrap, "build_code_runner", lambda runner: Runner())
@@ -486,7 +490,7 @@ def test_remove_round_leftovers_sweeps_when_databases_are_on(
 
     bootstrap.remove_round_leftovers(settings)
 
-    assert swept == ["swept"]
+    assert swept == ["database sweep"]
 
 
 def test_remove_round_leftovers_logs_when_docker_cannot_be_reached(
