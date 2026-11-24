@@ -10,17 +10,33 @@ finding says so. A finding lists up to `MAX_EXAMPLES` examples and the total.
 """
 
 import re
-from collections import Counter
-from collections.abc import Iterable
-from dataclasses import dataclass
-from typing import Annotated, Literal, Self
+from typing import Literal
 
-from pydantic import AfterValidator, BaseModel, ConfigDict, Field, model_validator
+from pydantic import Field
 
 from hw_checker.checks.deterministic.findings import deterministic_finding
-from hw_checker.checks.deterministic.layers import Layers, Regex, Roles, layers, project_name
+from hw_checker.checks.deterministic.layer_support import (
+    NOTHING,
+    PUBLIC,
+    ClassesLeftOutParams,
+    LeftOut,
+    Problem,
+    Role,
+    RolesParams,
+    Types,
+    ambiguous_note,
+    code_text,
+    joined,
+    line_evidence,
+    make_finding,
+    read_evidence,
+    read_layers,
+    signals_of,
+    simple_name,
+    subject,
+)
+from hw_checker.checks.deterministic.layers import Layers, Regex, layers, project_name
 from hw_checker.checks.deterministic.messages import (
-    AMBIGUOUS_NAMES,
     CODE_OUTSIDE_LAYER,
     CONCRETE_CONSTRUCTION,
     CONSTRUCTOR_TAKES_CLASS,
@@ -33,7 +49,6 @@ from hw_checker.checks.deterministic.messages import (
     LAYER_REFERENCE_MISSING_ANY_PATH,
     LAYER_REFERENCES,
     LAYER_UNASSIGNED,
-    LOCATED_EXAMPLE,
     NO_INTERFACE,
     NOT_PUBLIC,
     NOT_PUBLIC_EXAMPLE,
@@ -41,13 +56,10 @@ from hw_checker.checks.deterministic.messages import (
     UNREGISTERED_EXAMPLE,
     UNTYPED_REGISTRATIONS,
     Localized,
-    MessageTemplate,
 )
 from hw_checker.checks.deterministic.repository import (
-    MAX_EXAMPLES,
     checked_files,
     code,
-    joined_examples,
     read_source,
 )
 from hw_checker.checks.deterministic.source_text import scan_source
@@ -58,9 +70,6 @@ from hw_checker.domain import (
     ArchitectureSignalKind,
     CheckInput,
     CheckPassed,
-    Evidence,
-    EvidenceCoverageStatus,
-    Finding,
     NotEvaluatedReason,
     ProjectReferenceStatus,
 )
@@ -68,10 +77,8 @@ from hw_checker.domain import (
 ANY_ROLE = "*"
 """In a forbidden reference pair: any other role."""
 SOURCE_SUFFIX = ".cs"
-NOTHING = Localized(he="", en="")
 NONE_FOUND = Localized(he="אין", en="none")
 _OR = Localized(he=" או ", en=" or ")
-_PUBLIC = "public"
 _INTERNAL = "internal"
 _NOT_READ = frozenset({"static", "private", "protected", "file"})
 """A static class cannot implement an interface; the others are nested or file-local
@@ -80,36 +87,10 @@ _REFERENCED = frozenset({ProjectReferenceStatus.MATCHED, ProjectReferenceStatus.
 """Reference statuses that name a project of the repo."""
 
 
-def _role_name(value: str) -> str:
-    if not re.fullmatch(r"[a-z][a-z0-9_]*", value):
-        raise ValueError("a role is a lowercase name such as services")
-    return value
-
-
-Role = Annotated[str, AfterValidator(_role_name)]
 RolePair = tuple[Role, Role]
 
 
-class _RolesParams(BaseModel):
-    """`roles` plus the roles the check names, each of which `roles` must define."""
-
-    model_config = ConfigDict(frozen=True, extra="forbid", populate_by_name=True)
-
-    roles: Roles
-
-    def named_roles(self) -> tuple[str, ...]:
-        """The roles the check's own params name."""
-        return ()
-
-    @model_validator(mode="after")
-    def _named_roles_are_defined(self) -> Self:
-        unknown = [role for role in self.named_roles() if role not in self.roles]
-        if unknown:
-            raise ValueError(f"roles not defined in roles: {', '.join(dict.fromkeys(unknown))}")
-        return self
-
-
-class LayerProjectsParams(_RolesParams):
+class LayerProjectsParams(RolesParams):
     """`required`: the roles that must each have a project."""
 
     required: tuple[Role, ...] = Field(min_length=1)
@@ -118,7 +99,7 @@ class LayerProjectsParams(_RolesParams):
         return self.required
 
 
-class LayerReferencesParams(_RolesParams):
+class LayerReferencesParams(RolesParams):
     """`required`: [source, target] role pairs some project of the source must reference
     a project of the target (with `transitive_required`, also through other projects);
     `forbidden`: pairs no project may reference directly (target `*`: any other role)."""
@@ -132,7 +113,7 @@ class LayerReferencesParams(_RolesParams):
         return tuple(role for pair in pairs for role in pair if role != ANY_ROLE)
 
 
-class CodeOnlyInLayerParams(_RolesParams):
+class CodeOnlyInLayerParams(RolesParams):
     """`patterns`: C# regular expressions, matched on code with comments and strings
     masked; `allowed`: the roles whose projects may hold such code."""
 
@@ -143,20 +124,7 @@ class CodeOnlyInLayerParams(_RolesParams):
         return self.allowed
 
 
-class _ClassesLeftOutParams(_RolesParams):
-    """`exclude`: class name patterns left out; `exclude_bases`: patterns on the simple
-    names in a class's base list (`IdentityDbContext<User>` is `IdentityDbContext`), a
-    class with a matching base left out. Both are searched, case-sensitive; empty leaves
-    nothing out. `exclude_db_entities`: the types named as `T` in a `DbSet<T>` property of
-    a class `exclude_bases` leaves out (a `DbContext`'s entities) are left out too. Which
-    classes are not layer classes is the assignment's data."""
-
-    exclude: tuple[Regex, ...] = ()
-    exclude_bases: tuple[Regex, ...] = ()
-    exclude_db_entities: bool = False
-
-
-class ImplementsInterfaceParams(_ClassesLeftOutParams):
+class ImplementsInterfaceParams(ClassesLeftOutParams):
     """`role`: the role whose public classes must implement an interface declared in the
     repo; `exclude` and `exclude_bases`: the classes left out."""
 
@@ -166,7 +134,7 @@ class ImplementsInterfaceParams(_ClassesLeftOutParams):
         return (self.role,)
 
 
-class ClassesPublicParams(_ClassesLeftOutParams):
+class ClassesPublicParams(ClassesLeftOutParams):
     """`role`: the role whose classes must be `public`; `exclude` and `exclude_bases`: the
     classes left out."""
 
@@ -176,7 +144,7 @@ class ClassesPublicParams(_ClassesLeftOutParams):
         return (self.role,)
 
 
-class ConstructorTakesInterfaceParams(_RolesParams):
+class ConstructorTakesInterfaceParams(RolesParams):
     """`consumer`: the role whose constructors are read; `dependency`: the role whose
     classes they must take by interface."""
 
@@ -187,7 +155,7 @@ class ConstructorTakesInterfaceParams(_RolesParams):
         return (self.consumer, self.dependency)
 
 
-class InterfacesRegisteredParams(_RolesParams):
+class InterfacesRegisteredParams(RolesParams):
     """`consumers`: the roles whose constructors' interfaces must be registered."""
 
     consumers: tuple[Role, ...] = Field(min_length=1)
@@ -196,7 +164,7 @@ class InterfacesRegisteredParams(_RolesParams):
         return self.consumers
 
 
-class NoConcreteConstructionParams(_ClassesLeftOutParams):
+class NoConcreteConstructionParams(ClassesLeftOutParams):
     """`in`: the roles whose classes must not create, with `new`, a class of the `of`
     roles; `exclude` and `exclude_bases`: the created classes not counted."""
 
@@ -205,24 +173,6 @@ class NoConcreteConstructionParams(_ClassesLeftOutParams):
 
     def named_roles(self) -> tuple[str, ...]:
         return (*self.in_, *self.of)
-
-
-@dataclass(frozen=True)
-class _Problem:
-    """One located example of a finding."""
-
-    text: Localized
-    file: str = ""
-    line: int = 0
-
-    @property
-    def fact(self) -> str:
-        return f"{self.file}:{self.line}:{self.text.en}"
-
-    def example(self) -> Localized:
-        if not self.file:
-            return self.text
-        return LOCATED_EXAMPLE.render(item=self.text, file=self.file, line=self.line)
 
 
 # ---------------------------------------------------------------- the checks
@@ -236,7 +186,7 @@ class _Problem:
 )
 def layer_projects(check_input: CheckInput, params: LayerProjectsParams) -> CheckResult:
     """One finding naming the roles with no project and the unassigned projects."""
-    evidence = _evidence(check_input, signals=False)
+    evidence = read_evidence(check_input, signals=False)
     if evidence is None:
         return NotEvaluatedReason.EVIDENCE_UNAVAILABLE
     found = layers(evidence, params.roles)
@@ -249,7 +199,7 @@ def layer_projects(check_input: CheckInput, params: LayerProjectsParams) -> Chec
         )
     projects = ", ".join(code(project_name(p)) for p in evidence.project_files)
     message = LAYER_PROJECTS_MISSING.render(
-        missing=_joined(missing),
+        missing=joined(missing),
         projects=projects or NONE_FOUND,
         unassigned=unassigned,
     )
@@ -268,12 +218,12 @@ def layer_references(check_input: CheckInput, params: LayerReferencesParams) -> 
     """One finding listing the missing required references and the forbidden ones. A
     forbidden one is located at its `<ProjectReference>` line in the source project, and
     the first located one is the finding's evidence: the note goes on that line."""
-    found = _layers(check_input, params, signals=False)
+    found = read_layers(check_input, params, signals=False)
     if not isinstance(found, tuple):
         return found
     evidence, roles = found
     edges = _reference_edges(evidence)
-    problems: list[_Problem] = []
+    problems: list[Problem] = []
     missing = (
         LAYER_REFERENCE_MISSING_ANY_PATH
         if params.transitive_required
@@ -287,7 +237,7 @@ def layer_references(check_input: CheckInput, params: LayerReferencesParams) -> 
             transitive=params.transitive_required,
         ):
             problems.append(
-                _Problem(
+                Problem(
                     missing.render(
                         source=_projects(roles.projects(source_role)),
                         target=_projects(roles.projects(target_role)),
@@ -307,7 +257,7 @@ def layer_references(check_input: CheckInput, params: LayerReferencesParams) -> 
             for forbidden_source, forbidden_target in params.forbidden
         ):
             problems.append(
-                _Problem(
+                Problem(
                     LAYER_REFERENCE_FORBIDDEN.render(
                         source=code(project_name(source)),
                         target=code(project_name(target)),
@@ -319,8 +269,8 @@ def layer_references(check_input: CheckInput, params: LayerReferencesParams) -> 
                 )
             )
     located = next((problem for problem in problems if problem.file), None)
-    quoted = _line_evidence(check_input, located) if located else None
-    return _finding(check_input, LAYER_REFERENCES, problems, quoted)
+    quoted = line_evidence(check_input, located) if located else None
+    return make_finding(check_input, LAYER_REFERENCES, problems, quoted)
 
 
 @check(
@@ -333,12 +283,12 @@ def layer_references(check_input: CheckInput, params: LayerReferencesParams) -> 
 def code_only_in_layer(check_input: CheckInput, params: CodeOnlyInLayerParams) -> CheckResult:
     """One finding locating each match in a project of another role. A file in no project,
     or in an unassigned one, is not judged."""
-    found = _layers(check_input, params, signals=True)
+    found = read_layers(check_input, params, signals=True)
     if not isinstance(found, tuple):
         return found
     _, roles = found
     patterns = [re.compile(pattern) for pattern in params.patterns]
-    problems: list[_Problem] = []
+    problems: list[Problem] = []
     for path in checked_files(check_input):
         if not path.lower().endswith(SOURCE_SUFFIX):
             continue
@@ -355,10 +305,10 @@ def code_only_in_layer(check_input: CheckInput, params: CodeOnlyInLayerParams) -
             for match in pattern.finditer(scan.masked)
         )
         problems += [
-            _Problem(Localized(he=code(matched), en=code(matched)), path, scan.line_of(start))
+            Problem(Localized(he=code(matched), en=code(matched)), path, scan.line_of(start))
             for start, matched in matches
         ]
-    return _finding(check_input, CODE_OUTSIDE_LAYER, problems, allowed=_joined(params.allowed))
+    return make_finding(check_input, CODE_OUTSIDE_LAYER, problems, allowed=joined(params.allowed))
 
 
 @check(
@@ -376,16 +326,16 @@ def implements_interface(check_input: CheckInput, params: ImplementsInterfacePar
     without `public` is read too (developer decision 2026-11-19); a static class (which
     cannot implement one), a record and a nested `private` or `protected` class are not
     read."""
-    found = _layers(check_input, params, signals=True)
+    found = read_layers(check_input, params, signals=True)
     if not isinstance(found, tuple):
         return found
     evidence, roles = found
-    types = _Types(evidence)
-    left_out = _LeftOut(params, types)
-    problems: list[_Problem] = []
+    types = Types(evidence)
+    left_out = LeftOut(params, types)
+    problems: list[Problem] = []
     ambiguous: list[str] = []
     for declaration in _layer_classes(types, roles, params.role):
-        name = _subject(declaration)
+        name = subject(declaration)
         if left_out(name):
             continue
         if types.interfaces_of(name):
@@ -393,9 +343,9 @@ def implements_interface(check_input: CheckInput, params: ImplementsInterfacePar
         if types.declared_more_than_once(name):
             ambiguous.append(name)
             continue
-        problems.append(_Problem(_code(name), declaration.file_path, declaration.line))
-    return _finding(
-        check_input, NO_INTERFACE, problems, ambiguous=_ambiguous(ambiguous), role=params.role
+        problems.append(Problem(code_text(name), declaration.file_path, declaration.line))
+    return make_finding(
+        check_input, NO_INTERFACE, problems, ambiguous=ambiguous_note(ambiguous), role=params.role
     )
 
 
@@ -411,22 +361,22 @@ def classes_public(check_input: CheckInput, params: ClassesPublicParams) -> Chec
     """One finding listing the classes of the role without `public`: "`UserService` isn't
     `public`; make it `public class UserService`". The classes read are the ones
     `implements_interface` reads; a partial class with a public part is public."""
-    found = _layers(check_input, params, signals=True)
+    found = read_layers(check_input, params, signals=True)
     if not isinstance(found, tuple):
         return found
     evidence, roles = found
-    types = _Types(evidence)
-    left_out = _LeftOut(params, types)
+    types = Types(evidence)
+    left_out = LeftOut(params, types)
     problems = [
-        _Problem(
-            NOT_PUBLIC_EXAMPLE.render(name=_code(name), declaration=_public(declaration, name)),
+        Problem(
+            NOT_PUBLIC_EXAMPLE.render(name=code_text(name), declaration=_public(declaration, name)),
             declaration.file_path,
             declaration.line,
         )
         for declaration in _layer_classes(types, roles, params.role)
-        if not types.public(name := _subject(declaration)) and not left_out(name)
+        if not types.public(name := subject(declaration)) and not left_out(name)
     ]
-    return _finding(check_input, NOT_PUBLIC, problems, role=params.role)
+    return make_finding(check_input, NOT_PUBLIC, problems, role=params.role)
 
 
 @check(
@@ -440,18 +390,18 @@ def constructor_takes_interface(
     check_input: CheckInput, params: ConstructorTakesInterfaceParams
 ) -> CheckResult:
     """One finding: "`UsersController` takes `UserService`; take `IUserService`"."""
-    found = _layers(check_input, params, signals=True)
+    found = read_layers(check_input, params, signals=True)
     if not isinstance(found, tuple):
         return found
     evidence, roles = found
-    types = _Types(evidence)
+    types = Types(evidence)
     dependencies = {
-        _subject(declaration) for declaration in types.classes_in(roles, (params.dependency,))
+        subject(declaration) for declaration in types.classes_in(roles, (params.dependency,))
     }
-    problems: list[_Problem] = []
+    problems: list[Problem] = []
     ambiguous: list[str] = []
-    for parameter in _signals(evidence, ArchitectureSignalKind.CONSTRUCTOR_PARAMETER):
-        taken = simple_name(_subject(parameter))
+    for parameter in signals_of(evidence, ArchitectureSignalKind.CONSTRUCTOR_PARAMETER):
+        taken = simple_name(subject(parameter))
         if roles.role_of(parameter.file_path) != params.consumer or taken not in dependencies:
             continue
         interfaces = types.interfaces_of(taken)
@@ -463,14 +413,14 @@ def constructor_takes_interface(
         text = TAKES_CLASS_EXAMPLE.render(
             consumer=code(parameter.related_subject or ""),
             taken=code(taken),
-            interface=_joined([code(name) for name in interfaces], _OR),
+            interface=joined([code(name) for name in interfaces], _OR),
         )
-        problems.append(_Problem(text, parameter.file_path, parameter.line))
-    return _finding(
+        problems.append(Problem(text, parameter.file_path, parameter.line))
+    return make_finding(
         check_input,
         CONSTRUCTOR_TAKES_CLASS,
         problems,
-        ambiguous=_ambiguous(ambiguous),
+        ambiguous=ambiguous_note(ambiguous),
         consumer=params.consumer,
         dependency=params.dependency,
     )
@@ -489,18 +439,18 @@ def interfaces_registered(
 ) -> CheckResult:
     """One finding listing each constructor's unregistered interface; it adds how many
     registrations name no type (a factory or a key), which may register one of them."""
-    found = _layers(check_input, params, signals=True)
+    found = read_layers(check_input, params, signals=True)
     if not isinstance(found, tuple):
         return found
     evidence, roles = found
-    types = _Types(evidence)
-    registrations = _signals(evidence, ArchitectureSignalKind.REGISTRATION_CANDIDATE)
+    types = Types(evidence)
+    registrations = signals_of(evidence, ArchitectureSignalKind.REGISTRATION_CANDIDATE)
     registered = {simple_name(signal.subject) for signal in registrations if signal.subject}
     untyped = sum(signal.subject is None for signal in registrations)
-    problems: list[_Problem] = []
+    problems: list[Problem] = []
     ambiguous: list[str] = []
-    for parameter in _signals(evidence, ArchitectureSignalKind.CONSTRUCTOR_INTERFACE_PARAMETER):
-        interface = simple_name(_subject(parameter))
+    for parameter in signals_of(evidence, ArchitectureSignalKind.CONSTRUCTOR_INTERFACE_PARAMETER):
+        interface = simple_name(subject(parameter))
         if roles.role_of(parameter.file_path) not in params.consumers or interface in registered:
             continue
         if types.interface_declarations[interface] > 1:
@@ -509,14 +459,14 @@ def interfaces_registered(
         text = UNREGISTERED_EXAMPLE.render(
             consumer=code(parameter.related_subject or ""), interface=code(interface)
         )
-        problems.append(_Problem(text, parameter.file_path, parameter.line))
+        problems.append(Problem(text, parameter.file_path, parameter.line))
     untyped_note = UNTYPED_REGISTRATIONS.render(count=untyped) if untyped else NOTHING
-    return _finding(
+    return make_finding(
         check_input,
         INTERFACES_UNREGISTERED,
         problems,
         untyped=untyped_note,
-        ambiguous=_ambiguous(ambiguous),
+        ambiguous=ambiguous_note(ambiguous),
     )
 
 
@@ -533,19 +483,19 @@ def no_concrete_construction(
     check_input: CheckInput, params: NoConcreteConstructionParams
 ) -> CheckResult:
     """One finding: "`UserService` creates `UserRepository`"."""
-    found = _layers(check_input, params, signals=True)
+    found = read_layers(check_input, params, signals=True)
     if not isinstance(found, tuple):
         return found
     evidence, roles = found
-    types = _Types(evidence)
-    left_out = _LeftOut(params, types)
+    types = Types(evidence)
+    left_out = LeftOut(params, types)
     created_classes = {
-        name for d in types.classes_in(roles, params.of) if not left_out(name := _subject(d))
+        name for d in types.classes_in(roles, params.of) if not left_out(name := subject(d))
     }
-    problems: list[_Problem] = []
+    problems: list[Problem] = []
     ambiguous: list[str] = []
-    for creation in _signals(evidence, ArchitectureSignalKind.OBJECT_CREATION):
-        created = simple_name(_subject(creation))
+    for creation in signals_of(evidence, ArchitectureSignalKind.OBJECT_CREATION):
+        created = simple_name(subject(creation))
         if creation.related_subject is None or created not in created_classes:
             continue
         if roles.role_of(creation.file_path) not in params.in_:
@@ -556,13 +506,13 @@ def no_concrete_construction(
         text = CREATION_EXAMPLE.render(
             creator=code(creation.related_subject), created=code(created)
         )
-        problems.append(_Problem(text, creation.file_path, creation.line))
-    return _finding(
+        problems.append(Problem(text, creation.file_path, creation.line))
+    return make_finding(
         check_input,
         CONCRETE_CONSTRUCTION,
         problems,
-        ambiguous=_ambiguous(ambiguous),
-        of=_joined(params.of, _OR),
+        ambiguous=ambiguous_note(ambiguous),
+        of=joined(params.of, _OR),
     )
 
 
@@ -581,105 +531,7 @@ LAYER_CHECKS = (
 # ---------------------------------------------------------------- helpers
 
 
-def simple_name(type_text: str) -> str:
-    """`Data.IRepository<User>?` as `IRepository`: no namespace, generic arguments,
-    nullable mark or array brackets."""
-    return type_text.split("<", 1)[0].rstrip("?[]").split(".")[-1]
-
-
-class _Types:
-    """The evidence's interfaces and classes by simple name."""
-
-    def __init__(self, evidence: ArchitectureEvidence) -> None:
-        self.interface_declarations = Counter(
-            simple_name(_subject(signal))
-            for signal in _signals(evidence, ArchitectureSignalKind.INTERFACE_DECLARATION)
-        )
-        self.declarations = _signals(evidence, ArchitectureSignalKind.TYPE_DECLARATION)
-        self.db_sets = tuple(
-            (_subject(signal), signal.related_subject)
-            for signal in _signals(evidence, ArchitectureSignalKind.DB_SET_PROPERTY)
-        )
-        """Each `DbSet<T>` property as (`T`'s simple name, the type that declares it)."""
-        self._by_name: dict[str, list[ArchitectureSignal]] = {}
-        for declaration in self.declarations:
-            self._by_name.setdefault(_subject(declaration), []).append(declaration)
-
-    def classes_in(self, roles: Layers, role_names: Iterable[str]) -> list[ArchitectureSignal]:
-        """The class declarations (not records) in the projects of `role_names`."""
-        wanted = set(role_names)
-        return [
-            declaration
-            for declaration in self.declarations
-            if "class" in declaration.keywords
-            and "record" not in declaration.keywords
-            and roles.role_of(declaration.file_path) in wanted
-        ]
-
-    def public(self, name: str) -> bool:
-        """Whether a declaration of the type `name` is `public` (one part of a partial
-        class is enough)."""
-        return any(_PUBLIC in declaration.keywords for declaration in self._by_name.get(name, []))
-
-    def declared_more_than_once(self, name: str) -> bool:
-        """A type name declared twice (the parts of one partial class count once), or
-        both as a type and as an interface."""
-        found = self._by_name.get(name, [])
-        whole = sum("partial" not in declaration.keywords for declaration in found)
-        partial = any("partial" in declaration.keywords for declaration in found)
-        return whole + partial + self.interface_declarations[name] > 1
-
-    def bases_of(self, name: str) -> tuple[str, ...]:
-        """The simple names in the base lists of the class `name`'s declarations."""
-        return tuple(
-            simple_name(base)
-            for declaration in self._by_name.get(name, [])
-            for base in declaration.related_subjects
-        )
-
-    def interfaces_of(self, name: str, seen: frozenset[str] = frozenset()) -> tuple[str, ...]:
-        """The interfaces declared in the repo that the class `name` implements, directly or
-        through a base class declared in the repo."""
-        found: list[str] = []
-        for declaration in self._by_name.get(name, []):
-            for base in declaration.related_subjects:
-                base_name = simple_name(base)
-                if self.interface_declarations[base_name]:
-                    found.append(base_name)
-                elif base_name in self._by_name and base_name not in seen | {name}:
-                    found += self.interfaces_of(base_name, seen | {name})
-        return tuple(dict.fromkeys(found))
-
-
-class _LeftOut:
-    """Whether a class is left out by the params' `exclude`, `exclude_bases` and
-    `exclude_db_entities`."""
-
-    def __init__(self, params: _ClassesLeftOutParams, types: _Types) -> None:
-        self._names = [re.compile(pattern) for pattern in params.exclude]
-        self._bases = [re.compile(pattern) for pattern in params.exclude_bases]
-        self._types = types
-        self._entities = (
-            frozenset(
-                entity
-                for entity, context in types.db_sets
-                if context is not None and self._by_base(context)
-            )
-            if params.exclude_db_entities
-            else frozenset()
-        )
-
-    def __call__(self, name: str) -> bool:
-        if any(pattern.search(name) for pattern in self._names):
-            return True
-        return self._by_base(name) or name in self._entities
-
-    def _by_base(self, name: str) -> bool:
-        bases = self._types.bases_of(name) if self._bases else ()
-        return any(pattern.search(base) for pattern in self._bases for base in bases)
-
-
-def _layer_classes(types: _Types, roles: Layers, role: str) -> list[ArchitectureSignal]:
+def _layer_classes(types: Types, roles: Layers, role: str) -> list[ArchitectureSignal]:
     """The classes of `role`'s projects that `implements_interface` and `classes_public`
     read: public or internal (written or by default), not static and not records."""
     return [
@@ -692,60 +544,7 @@ def _layer_classes(types: _Types, roles: Layers, role: str) -> list[Architecture
 def _public(declaration: ArchitectureSignal, name: str) -> str:
     """The declaration made `public`: `internal sealed class X` as `public sealed class X`."""
     keywords = [word for word in declaration.keywords if word != _INTERNAL]
-    return " ".join([_PUBLIC, *keywords, name])
-
-
-def _evidence(check_input: CheckInput, *, signals: bool) -> ArchitectureEvidence | None:
-    """The evidence when the coverage the check reads (inventory, and signals when
-    `signals`) is available; None otherwise."""
-    evidence = check_input.architecture
-    unavailable = EvidenceCoverageStatus.UNAVAILABLE
-    if evidence is None or evidence.inventory_coverage.status is unavailable:
-        return None
-    if signals and evidence.signal_coverage.status is unavailable:
-        return None
-    return evidence
-
-
-def _layers(
-    check_input: CheckInput, params: _RolesParams, *, signals: bool
-) -> tuple[ArchitectureEvidence, Layers] | NotEvaluatedReason:
-    """The evidence and its projects by role, or why the check is not evaluated."""
-    evidence = _evidence(check_input, signals=signals)
-    if evidence is None:
-        return NotEvaluatedReason.EVIDENCE_UNAVAILABLE
-    found = layers(evidence, params.roles)
-    if found.missing(params.named_roles()):
-        return NotEvaluatedReason.DEPENDENCY_FAILED
-    return evidence, found
-
-
-def _finding(
-    check_input: CheckInput,
-    template: MessageTemplate,
-    problems: list[_Problem],
-    evidence: Evidence | None = None,
-    **fields: str | int | Localized,
-) -> tuple[Finding, ...]:
-    if not problems:
-        return ()
-    examples = joined_examples(problem.example() for problem in problems[:MAX_EXAMPLES])
-    message = template.render(examples=examples, count=len(problems), **fields)
-    facts = [p.fact for p in problems]
-    return (deterministic_finding(check_input, message, facts, evidence),)
-
-
-def _line_evidence(check_input: CheckInput, problem: _Problem) -> Evidence | None:
-    """The problem's line as a finding's evidence, quoted from the repo; None when the
-    line cannot be read."""
-    text = read_source(check_input.repo_dir, problem.file)
-    lines = text.splitlines() if text is not None else []
-    quote = lines[problem.line - 1].strip() if 0 < problem.line <= len(lines) else ""
-    if not quote:
-        return None
-    return Evidence(
-        file_path=problem.file, line_start=problem.line, line_end=problem.line, quote=quote
-    )
+    return " ".join([PUBLIC, *keywords, name])
 
 
 def _references(
@@ -790,16 +589,6 @@ def _reference_edges(evidence: ArchitectureEvidence) -> list[tuple[str, str, int
     return edges
 
 
-def _signals(
-    evidence: ArchitectureEvidence, kind: ArchitectureSignalKind
-) -> list[ArchitectureSignal]:
-    return [signal for signal in evidence.signals if signal.kind is kind]
-
-
-def _subject(signal: ArchitectureSignal) -> str:
-    return signal.subject or ""
-
-
 def _other(target: str, source_role: str, target_role: str) -> bool:
     return target == ANY_ROLE and target_role != source_role
 
@@ -813,20 +602,3 @@ def _unassigned(found: Layers) -> Localized:
         return NOTHING
     projects = ", ".join(code(project_name(project)) for project in found.unassigned)
     return LAYER_UNASSIGNED.render(projects=projects)
-
-
-def _joined(items: Iterable[str], separator: Localized | None = None) -> Localized:
-    words = list(items)
-    if separator is None:
-        return Localized(he=", ".join(words), en=", ".join(words))
-    return Localized(he=separator.he.join(words), en=separator.en.join(words))
-
-
-def _code(name: str) -> Localized:
-    return Localized(he=code(name), en=code(name))
-
-
-def _ambiguous(names: list[str]) -> Localized:
-    if not names:
-        return NOTHING
-    return AMBIGUOUS_NAMES.render(names=", ".join(code(name) for name in dict.fromkeys(names)))
