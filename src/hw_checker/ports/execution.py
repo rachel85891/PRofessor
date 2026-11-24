@@ -1,7 +1,6 @@
 """Ports for building and running student code and for its database.
 
-`CodeRunner` follows ADR 0015. `DatabaseProvisioner` stays provisional until the course
-reaches a database.
+`CodeRunner` follows ADR 0015, `DatabaseProvisioner` ADR 0004.
 """
 
 from typing import Protocol
@@ -44,20 +43,38 @@ class CodeRunner(Protocol):
 
 
 class DatabaseProvisioner(Protocol):
-    """Creates and drops one database per repo in the shared SQL Server. Provisional."""
+    """One shared database server per round and an empty database per repo (ADR 0004)."""
 
-    def create_database(self, database_name: str) -> str:
-        """Create an empty database named `database_name` and return its connection string.
+    def start(self) -> None:
+        """Start the server and wait until it accepts connections; starting twice is fine.
 
         Raises:
-            ExecutionEnvironmentError: the database server is unavailable or refused the request.
+            ExecutionEnvironmentError: the server cannot start (memory, image, timeout).
         """
         ...
 
-    def drop_database(self, database_name: str) -> None:
-        """Drop the database named `database_name`; dropping a missing database is not an error.
+    def stop(self) -> None:
+        """Remove the server and everything it created; never raises."""
+        ...
+
+    def create_database(self, database_name: str, network: str) -> str:
+        """Make the server reachable on `network` and create an empty database there.
+
+        Returns the connection string from the app's point of view. It is a secret: never
+        log it or put it in a report or a message.
 
         Raises:
-            ExecutionEnvironmentError: the database server is unavailable or refused the request.
+            ValueError: `database_name` is not made only of letters, digits and `_`.
+            ExecutionEnvironmentError: the server is not running or refused the request.
+        """
+        ...
+
+    def drop_database(self, database_name: str, network: str) -> None:
+        """Drop the database (a missing one is fine) and make the server unreachable on
+        `network` again, even when the drop fails.
+
+        Raises:
+            ValueError: `database_name` is not made only of letters, digits and `_`.
+            ExecutionEnvironmentError: the server refused the request.
         """
         ...

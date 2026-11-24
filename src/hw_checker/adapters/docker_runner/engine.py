@@ -52,6 +52,8 @@ class ContainerSpec:
     working_dir: str = CONTAINER_WORKDIR
     network_aliases: tuple[str, ...] = ()
     """Extra DNS names of the container on `network`."""
+    added_capabilities: tuple[str, ...] = ()
+    """Linux capabilities given back after every capability is dropped."""
 
 
 @dataclass(frozen=True)
@@ -92,6 +94,8 @@ class DockerEngine(Protocol):
     def create_network(self, name: str, labels: Mapping[str, str], internal: bool) -> None: ...
     def remove_network(self, name: str) -> None: ...
     def create_container(self, spec: ContainerSpec) -> str: ...
+    def connect_network(self, container: str, network: str, aliases: tuple[str, ...]) -> None: ...
+    def disconnect_network(self, container: str, network: str) -> None: ...
     def put_archive(self, container: str, path: str, data: bytes) -> None: ...
     def start(self, container: str) -> None: ...
     def state(self, container: str) -> ContainerState: ...
@@ -210,12 +214,24 @@ class SdkDockerEngine:
                 nano_cpus=int(spec.cpus * 1_000_000_000),
                 pids_limit=spec.pids,
                 cap_drop=["ALL"],
+                cap_add=list(spec.added_capabilities),
                 security_opt=["no-new-privileges"],
                 privileged=False,
                 read_only=spec.read_only_root,
                 tmpfs=dict(spec.tmpfs),
             )
             return str(container.id)
+
+    def connect_network(self, container: str, network: str, aliases: tuple[str, ...]) -> None:
+        with _engine_errors(f"cannot connect {container} to network {network}"):
+            self._client.networks.get(network).connect(container, aliases=list(aliases))
+
+    def disconnect_network(self, container: str, network: str) -> None:
+        with _engine_errors(f"cannot disconnect {container} from network {network}"):
+            try:
+                self._client.networks.get(network).disconnect(container, force=True)
+            except NotFound:
+                return
 
     def put_archive(self, container: str, path: str, data: bytes) -> None:
         with _engine_errors(f"cannot copy files into {container}"):
