@@ -78,6 +78,11 @@ _DB_SET = re.compile(
     r"(?P<name>[A-Za-z_]\w*)\s*(?:\{|=>)"
 )
 """A `DbSet<T>` property: its type, its name, then `{` or `=>`."""
+_NAMESPACE_WORD = re.compile(r"\bnamespace\b")
+_NAMESPACE = re.compile(
+    r"\bnamespace\s+(?P<name>[A-Za-z_]\w*(?:\s*\.\s*[A-Za-z_]\w*)*)\s*(?P<end>[;{])"
+)
+"""A namespace declaration: its name, then `;` (file-scoped) or `{` (block)."""
 _SPACE = re.compile(r"\s+")
 _LEADING_SPACE = re.compile(r"\s*")
 _MODIFIERS_WINDOW: Final = 200
@@ -229,7 +234,17 @@ def _signals_in_file(
                 signals,
                 issues,
             )
-    bodies = _type_signals(masked, file_path, signals, issues)
+    namespaces = _namespace_spans(masked)
+    unreadable = _NAMESPACE_WORD.search(masked) if namespaces is None else None
+    if unreadable is not None:
+        issues.append(
+            EvidenceCoverageIssue(
+                kind=EvidenceIssueKind.AMBIGUOUS_SYNTAX,
+                file_path=file_path,
+                line=masked.count("\n", 0, unreadable.start()) + 1,
+            )
+        )
+    bodies = _type_signals(masked, file_path, namespaces, signals, issues)
     _creation_signals(masked, file_path, bodies, signals, issues)
     _db_set_signals(masked, file_path, bodies, signals)
     return signals, issues
@@ -238,11 +253,14 @@ def _signals_in_file(
 def _type_signals(
     masked: str,
     file_path: str,
+    namespaces: list[tuple[int, int, str]] | None,
     signals: list[ArchitectureSignal],
     issues: list[EvidenceCoverageIssue],
 ) -> list[tuple[int, int, str]]:
-    """A `type_declaration` per class and record, with its base list; returns every type
-    body as (opening, closing, name), for the enclosing type of an object creation."""
+    """A `type_declaration` per class and record, with its base list and namespace; returns
+    every type body as (opening, closing, name), for the enclosing type of an object
+    creation. When the file's namespaces cannot be read (`namespaces` is None) it gives no
+    declaration: a namespace is never guessed."""
     bodies: list[tuple[int, int, str]] = []
     for match in _ANY_TYPE.finditer(masked):
         name = match["name"]
@@ -258,6 +276,8 @@ def _type_signals(
                 bodies.append((header_end, closing, name))
         keyword = _SPACE.sub(" ", match["keyword"])
         if keyword not in _DECLARED_KEYWORDS:
+            continue
+        if namespaces is None:
             continue
         bases = _base_list(masked, match.end(), header_end)
         if bases is None or len(name) > MAX_IDENTIFIER_CHARS:
@@ -275,9 +295,43 @@ def _type_signals(
                 subject=name,
                 related_subjects=bases,
                 keywords=(*_modifiers_before(masked, match.start()), *keyword.split()),
+                namespace=_namespace_at(namespaces, match.start()),
             )
         )
     return bodies
+
+
+def _namespace_spans(masked: str) -> list[tuple[int, int, str]] | None:
+    """Each namespace declaration as (start, end, name) of the text it covers: a block
+    namespace its braces, a file-scoped one the rest of the file. None when they cannot be
+    read reliably: a `namespace` the pattern does not match, an unclosed block, two
+    file-scoped namespaces, or a file-scoped one beside a block one."""
+    found = list(_NAMESPACE.finditer(masked))
+    if len(found) != len(_NAMESPACE_WORD.findall(masked)):
+        return None
+    spans: list[tuple[int, int, str]] = []
+    for match in found:
+        name = _SPACE.sub("", match["name"])
+        if len(name) > MAX_IDENTIFIER_CHARS:
+            return None
+        if match["end"] == ";":
+            spans.append((match.end(), len(masked), name))
+            continue
+        closing = _matching_close(masked, match.end() - 1)
+        if closing is None:
+            return None
+        spans.append((match.end(), closing, name))
+    file_scoped = [span for span, match in zip(spans, found, strict=True) if match["end"] == ";"]
+    if len(file_scoped) > 1 or (file_scoped and len(spans) > 1):
+        return None
+    return spans
+
+
+def _namespace_at(spans: list[tuple[int, int, str]] | None, position: int) -> str | None:
+    """The namespace holding `position`, nested block namespaces joined by `.`; None for the
+    global namespace."""
+    names = [name for start, end, name in sorted(spans or []) if start <= position < end]
+    return ".".join(names) or None
 
 
 def _header_end(masked: str, position: int) -> int | None:

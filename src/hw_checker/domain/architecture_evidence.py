@@ -89,6 +89,9 @@ class ProjectEvidence(DomainModel):
 
     file_path: EvidencePath
     sdk_references: tuple[EvidenceIdentifier, ...] = ()
+    root_namespace: EvidenceIdentifier | None = None
+    """The literal `<RootNamespace>` the project file names; None when it has none (or an
+    MSBuild expression, which is not evaluated)."""
 
 
 class ArchitectureSignalKind(StrEnum):
@@ -100,7 +103,8 @@ class ArchitectureSignalKind(StrEnum):
     REGISTRATION_CANDIDATE = "registration_candidate"
     TYPE_DECLARATION = "type_declaration"
     """A class or record: `subject` its name, `related_subjects` its base list as written,
-    `keywords` its modifiers and `class` or `record`."""
+    `keywords` its modifiers and `class` or `record`, `namespace` the namespace that holds
+    it (None: the global namespace)."""
     CONSTRUCTOR_PARAMETER = "constructor_parameter"
     """Every constructor parameter: `subject` its type as written, `related_subject` the
     constructor's type."""
@@ -143,6 +147,9 @@ class ArchitectureSignal(DomainModel):
     """For a type declaration: its modifiers and `class` or `record`, as written."""
     name: EvidenceIdentifier | None = None
     """For a `DbSet<T>` property: the property's name (`Users` in `DbSet<User> Users`)."""
+    namespace: EvidenceIdentifier | None = None
+    """For a type declaration: its namespace (`Shop.Entities`), nested block namespaces joined
+    by `.`; None for the global namespace."""
 
     @model_validator(mode="after")
     def _fields_match_kind(self) -> Self:
@@ -162,6 +169,8 @@ class ArchitectureSignal(DomainModel):
             raise ValueError("only a type declaration has related subjects and keywords")
         if self.name is not None and self.kind is not ArchitectureSignalKind.DB_SET_PROPERTY:
             raise ValueError("only a db_set_property signal has a name")
+        if self.namespace is not None and not declaration:
+            raise ValueError("only a type declaration has a namespace")
         return self
 
 

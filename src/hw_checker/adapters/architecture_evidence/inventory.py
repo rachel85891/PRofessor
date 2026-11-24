@@ -29,6 +29,8 @@ MAX_PROJECT_FILE_BYTES: Final = 1_000_000
 MAX_RELATIVE_PATH_CHARS: Final = 1_024
 _DRIVE_PATH = re.compile(r"^[A-Za-z]:")
 _SAFE_SDK_REFERENCE = re.compile(r"^[A-Za-z0-9._/-]{1,256}$")
+_NAMESPACE_NAME = re.compile(r"^[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*$")
+MAX_NAMESPACE_CHARS: Final = 256
 _UNSUPPORTED_PATH = re.compile(r"[$*?\[\]{}]")
 _DOCTYPE = re.compile(r"<!\s*DOCTYPE\b", re.IGNORECASE)
 _XML_COMMENT = re.compile(r"<!--.*?-->", re.DOTALL)
@@ -174,13 +176,17 @@ def read_project(
         for value in raw_sdk_references
         if _SAFE_SDK_REFERENCE.fullmatch(value.strip())
     )
-    evidence = ProjectEvidence(file_path=relative, sdk_references=sdk_references)
+    root_namespace, root_namespace_issues = _root_namespace(xml_root, relative)
+    evidence = ProjectEvidence(
+        file_path=relative, sdk_references=sdk_references, root_namespace=root_namespace
+    )
     references: list[ProjectReferenceEvidence] = []
     issues: list[EvidenceCoverageIssue] = [
         EvidenceCoverageIssue(kind=EvidenceIssueKind.UNSUPPORTED_PROJECT, file_path=relative)
         for value in raw_sdk_references
         if not _SAFE_SDK_REFERENCE.fullmatch(value.strip())
     ]
+    issues.extend(root_namespace_issues)
     elements = [e for e in xml_root.iter() if _local_name(e.tag) == "ProjectReference"]
     lines = _reference_lines(project_text, len(elements))
     for element, line in zip(elements, lines, strict=True):
@@ -220,6 +226,27 @@ def read_project(
                 )
             )
     return evidence, tuple(references), tuple(issues)
+
+
+def _root_namespace(
+    xml_root: ElementTree.Element, relative: str
+) -> tuple[str | None, list[EvidenceCoverageIssue]]:
+    """The project's literal `<RootNamespace>`; None when it has none. A value that is not a
+    plain namespace (an MSBuild expression) or a second, different one is not guessed: None
+    and an `unsupported_project` issue."""
+    values = {
+        element.text.strip()
+        for element in xml_root.iter()
+        if _local_name(element.tag) == "RootNamespace" and element.text and element.text.strip()
+    }
+    if not values:
+        return None, []
+    if len(values) == 1:
+        (value,) = values
+        if _NAMESPACE_NAME.fullmatch(value) and len(value) <= MAX_NAMESPACE_CHARS:
+            return value, []
+    issue = EvidenceCoverageIssue(kind=EvidenceIssueKind.UNSUPPORTED_PROJECT, file_path=relative)
+    return None, [issue]
 
 
 def _reference_lines(project_text: str, count: int) -> list[int | None]:
