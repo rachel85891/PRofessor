@@ -506,6 +506,40 @@ AMBIGUOUS_NAMES = MessageTemplate(
     en=" Not checked, because the name is declared more than once: {names}.",
 )
 
+PATTERN_FOUND = MessageTemplate(
+    name="PATTERN_FOUND",
+    he="נמצא ב{where} של {scope} משהו שלא אמור להופיע שם: {examples}. סך הכול: {count}.",
+    en=(
+        "Found in the {where} of {scope} something that should not be there: {examples}. "
+        "Total: {count}."
+    ),
+)
+
+PATTERN_MISSING = MessageTemplate(
+    name="PATTERN_MISSING",
+    he="לא נמצא ב{where} של {scope} משהו שאמור להופיע שם.",
+    en="Nothing that should appear was found in the {where} of {scope}.",
+)
+
+PATTERN_SCOPE_FILES = MessageTemplate(
+    name="PATTERN_SCOPE_FILES",
+    he="כל הקבצים שנבדקו",
+    en="all the files searched",
+)
+
+PATTERN_SCOPE_ROLES = MessageTemplate(
+    name="PATTERN_SCOPE_ROLES",
+    he="הפרויקטים של {roles}",
+    en="the {roles} projects",
+)
+
+PATTERN_WHERE = {
+    "code": Localized(he="קוד", en="code"),
+    "strings": Localized(he="מחרוזות", en="string literals"),
+    "both": Localized(he="קוד או מחרוזות", en="code or string literals"),
+}
+"""What a pattern check searched, by its `where` param, for the two messages above."""
+
 # ---------------------------------------------------------------- not-evaluated details
 # Why an `environment_issue` (or a `body_mismatch`) happened, for the reviewer's report
 # (English only, like the report); the report template words the sentence around the detail.
@@ -592,4 +626,8 @@ ALL_TEMPLATES: tuple[MessageTemplate, ...] = (
     CONCRETE_CONSTRUCTION,
     CREATION_EXAMPLE,
     AMBIGUOUS_NAMES,
+    PATTERN_FOUND,
+    PATTERN_MISSING,
+    PATTERN_SCOPE_FILES,
+    PATTERN_SCOPE_ROLES,
 )

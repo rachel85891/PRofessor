@@ -75,7 +75,7 @@ _WHERE = re.compile(r"\bwhere\b")
 _CREATION = re.compile(r"\bnew\s+(?P<type>[A-Za-z_]\w*(?:\s*\.\s*[A-Za-z_]\w*)*)")
 _DB_SET = re.compile(
     r"\bDbSet\s*<\s*(?P<entity>[A-Za-z_]\w*(?:\s*\.\s*[A-Za-z_]\w*)*)\s*>\s*\??\s+"
-    r"[A-Za-z_]\w*\s*(?:\{|=>)"
+    r"(?P<name>[A-Za-z_]\w*)\s*(?:\{|=>)"
 )
 """A `DbSet<T>` property: its type, its name, then `{` or `=>`."""
 _SPACE = re.compile(r"\s+")
@@ -410,7 +410,8 @@ def _db_set_signals(
     for match in _DB_SET.finditer(masked):
         entity = _SPACE.sub("", match["entity"]).split(".")[-1]
         enclosing = [body for body in bodies if body[0] < match.start() < body[1]]
-        if not enclosing or len(entity) > MAX_IDENTIFIER_CHARS:
+        name = match["name"]
+        if not enclosing or max(len(entity), len(name)) > MAX_IDENTIFIER_CHARS:
             continue
         signals.append(
             ArchitectureSignal(
@@ -419,6 +420,7 @@ def _db_set_signals(
                 line=masked.count("\n", 0, match.start("entity")) + 1,
                 subject=entity,
                 related_subject=max(enclosing)[2],
+                name=name,
             )
         )
 

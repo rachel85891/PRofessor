@@ -112,6 +112,7 @@ def test_builtin_checks_are_registered() -> None:
         "file_exists",
         "folder_exists",
         "project_count",
+        "code_patterns",
         "pascal_case_types",
         "pascal_case_properties",
         "pascal_case_methods",

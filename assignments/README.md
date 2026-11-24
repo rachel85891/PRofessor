@@ -535,6 +535,42 @@ roles:
 | `constructor_takes_interface` | `consumer`, `dependency`: roles | A constructor in a consumer project takes a class of the dependency role that implements an interface: "`UsersController` takes `UserService`; take `IUserService`". A class with no interface is left to `implements_interface`. |
 | `interfaces_registered` | `consumers`: roles | An interface declared in the repo that a constructor in a consumer project takes has no registration (`AddScoped`, `AddTransient`, `AddSingleton`, either form) with it as the service type. A registration whose types are not written literally (a factory, a key) names no type; the finding then says how many there are, to check by hand. |
 | `no_concrete_construction` | `in`, `of`: roles; `exclude`, `exclude_bases`, `exclude_db_entities`: as for `implements_interface`, the created classes not counted | A class in an `in` project creates a class of an `of` role with `new`. Creating entities, DTOs and lists is fine, and so is `new` in top-level statements (`Program.cs`, where a factory registration may create a class). hw03 leaves out result and transfer objects (`…Result`, `…Dto`) and EF database contexts (a base ending in `DbContext`) here and in its two interface requirements, and with `exclude_db_entities: true` the contexts' entities too (EF is taught in HW05: developer decision 2026-11-22). |
+| `code_patterns` | `patterns`: C# regexes (`{dbset}` stands for the repo's `DbSet<T>` property names); `where`: `code` (default), `strings`, `both`; `must`: `absent` (default) or `present`; `roles` + `in`: search only those roles' projects; `suffixes`, `exclude_paths` | `absent`: a pattern matches (file, line, total). `present`: no match anywhere in the files searched (no location). Described below the table. |
+
+**`code_patterns`: a pattern that must appear nowhere, or at least once.** One generic check; which patterns, roles and wording a requirement uses is its params (nothing of any assignment is in the code).
+
+| Param | Meaning |
+| --- | --- |
+| `patterns` | One or more C# regular expressions (required). A bad regex, or an empty list, is refused when the file is read. |
+| `where` | `code` (default): comments and string contents masked, the same text `code_only_in_layer` matches. `strings`: the text inside string literals, escapes as written; an interpolated literal is matched on its fixed parts only (the `{…}` holes are not read). `both`: either. |
+| `must` | `absent` (default): a finding for the matches. `present`: a finding when there is no match at all in the files searched. |
+| `roles`, `in` | Optional, given together. `roles` defines roles as above; `in` lists the roles whose projects are searched. Without them every file is searched. With `in`, a file in no project, or in an unassigned one, is not judged; a role in `in` with no project makes the check "not evaluated" (`dependency_failed`). |
+| `suffixes` | File suffixes searched, default `[".cs"]`. |
+| `exclude_paths` | Globs of files left out (`**/Migrations/**`: `**/` is any number of folders, `*` stays in one segment; case-insensitive). |
+
+**`{dbset}`.** A pattern may hold `{dbset}`. Before matching it is replaced by the names of the `DbSet<T>` **properties** the repo's classes declare, regex-escaped and joined with `|` (`Users|Orders`), so `(?:\b(?:\w+\.)?(?:{dbset})\b)\s*\.\s*ToList\s*\(` speaks only about `_context.Users.ToList()`, not about `users.ToList()` on a list. Write the group around it yourself. A repo with no `DbSet` property: that pattern matches nothing and is skipped (no failure).
+
+Examples (as `params` of a requirement with `check: code_patterns`):
+
+```yaml
+# 1. No file access in code, and no old data-file name in the strings (must: absent)
+params: {where: both, patterns: ['\bFile\.\w+', '\bStreamReader\b', '\bFileStream\b', 'users\.json']}
+
+# 2. No `async void` anywhere except tests (code only)
+params: {patterns: ['\basync\s+void\b'], exclude_paths: ['**/*Tests/**']}
+
+# 3. No synchronous call on a DbSet (a list's ToList() is fine)
+params: {patterns: ['(?:\b(?:\w+\.)?(?:{dbset})\b)\s*\.\s*(?:ToList|FirstOrDefault|Count)\s*\(']}
+
+# 4. AddDbContext is registered in the API project (must: present)
+params:
+  must: present
+  patterns: ['\bAddDbContext\s*[<(]']
+  roles: {api: {sdk: Microsoft.NET.Sdk.Web}}
+  in: [api]
+```
+
+**Results.** `absent`: one finding with up to five `file:line` examples (the matched text in backticks), the total, and the first match's line, quoted from the repo, as evidence (the note can go on that line). `present` with no match: one finding that says nothing was found, in which projects or files, with no location. The message is generic ("Found in the code of the api projects something that should not be there: …" / "Nothing that should appear was found in …"): the requirement's own title says what the rule is. Not evaluated: `evidence_unavailable` when the architecture evidence is unavailable and the check needs it (`in`, or `{dbset}`); a check with neither runs from the files alone.
 
 **HW02 and HW03.** `hw02` has `skip_when` and `hw03` has `applies_when`, both `di_started` with `min_registrations: 0` and `min_interface_constructors: 1`: a repo is on the HW02 path until a constructor takes an interface declared in the repo, then on the HW03 path. HW03 repeats HW02's two layer checks. Every requirement is `major` (HW03's two `classes_public` requirements are `minor`: developer decision 2026-11-19) and `feedback: notes_only`, and every one but the layer projects `depends_on` it, so a repo still in one project gets one finding. The draft's two interface requirements of HW03 each have two conditions, so each is two requirements (`hw03-service-interfaces` and `hw03-service-interfaces-taken`, the same for repositories).
 
