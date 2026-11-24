@@ -174,7 +174,7 @@ def sa_query(engine: SdkDockerEngine, config: SqlServerConfig, query: str) -> st
         (
             config.sqlcmd_path,
             *("-C", "-S", "localhost", "-U", "sa", "-P", SA_PASSWORD),
-            *("-b", "-h", "-1", "-W", "-Q", query),
+            *("-b", "-h", "-1", "-W", "-Q", f"SET NOCOUNT ON; {query}"),
         ),
     )
     assert result.exit_code == 0, result.output
@@ -245,4 +245,5 @@ def test_teardown_removes_the_login_with_the_database(
         assert sa_query(engine, sql_config, f"SELECT DB_ID(N'{name}')") == "NULL"
         server.drop_database(name, network)  # a missing database and login are fine
     finally:
+        server.drop_database(name, network)
         engine.remove_network(network)
