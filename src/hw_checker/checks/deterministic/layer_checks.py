@@ -14,12 +14,12 @@ from typing import Literal
 
 from pydantic import Field
 
+from hw_checker.checks.deterministic.class_selection import LeftOut
 from hw_checker.checks.deterministic.findings import deterministic_finding
 from hw_checker.checks.deterministic.layer_support import (
     NOTHING,
     PUBLIC,
     ClassesLeftOutParams,
-    LeftOut,
     Problem,
     Role,
     RolesParams,

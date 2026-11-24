@@ -136,15 +136,21 @@ class Types:
         for declaration in self.declarations:
             self._by_name.setdefault(subject(declaration), []).append(declaration)
 
+    def all_classes(self) -> list[ArchitectureSignal]:
+        """The class declarations (not records) of every project."""
+        return [
+            declaration
+            for declaration in self.declarations
+            if "class" in declaration.keywords and "record" not in declaration.keywords
+        ]
+
     def classes_in(self, roles: Layers, role_names: Iterable[str]) -> list[ArchitectureSignal]:
         """The class declarations (not records) in the projects of `role_names`."""
         wanted = set(role_names)
         return [
             declaration
-            for declaration in self.declarations
-            if "class" in declaration.keywords
-            and "record" not in declaration.keywords
-            and roles.role_of(declaration.file_path) in wanted
+            for declaration in self.all_classes()
+            if roles.role_of(declaration.file_path) in wanted
         ]
 
     def public(self, name: str) -> bool:
@@ -180,34 +186,6 @@ class Types:
                 elif base_name in self._by_name and base_name not in seen | {name}:
                     found += self.interfaces_of(base_name, seen | {name})
         return tuple(dict.fromkeys(found))
-
-
-class LeftOut:
-    """Whether a class is left out by the params' `exclude`, `exclude_bases` and
-    `exclude_db_entities`."""
-
-    def __init__(self, params: ClassesLeftOutParams, types: Types) -> None:
-        self._names = [re.compile(pattern) for pattern in params.exclude]
-        self._bases = [re.compile(pattern) for pattern in params.exclude_bases]
-        self._types = types
-        self._entities = (
-            frozenset(
-                entity
-                for entity, context in types.db_sets
-                if context is not None and self._by_base(context)
-            )
-            if params.exclude_db_entities
-            else frozenset()
-        )
-
-    def __call__(self, name: str) -> bool:
-        if any(pattern.search(name) for pattern in self._names):
-            return True
-        return self._by_base(name) or name in self._entities
-
-    def _by_base(self, name: str) -> bool:
-        bases = self._types.bases_of(name) if self._bases else ()
-        return any(pattern.search(base) for pattern in self._bases for base in bases)
 
 
 def read_evidence(check_input: CheckInput, *, signals: bool) -> ArchitectureEvidence | None:
