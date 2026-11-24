@@ -3,6 +3,7 @@ import json
 import logging
 import posixpath
 import tarfile
+from collections.abc import Mapping
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -874,8 +875,10 @@ def test_body_cut_short_still_gives_the_status(repo: Path, tmp_path: Path) -> No
     engine = FakeEngine()
     original = engine.exec
 
-    def cut(container: str, command: tuple[str, ...]) -> ExecResult:
-        answer = original(container, command)
+    def cut(
+        container: str, command: tuple[str, ...], environment: Mapping[str, str] | None = None
+    ) -> ExecResult:
+        answer = original(container, command, environment)
         return ExecResult(23, answer.output + "partial \x00 binary")  # curl's write error
 
     engine.exec = cut  # type: ignore[method-assign]

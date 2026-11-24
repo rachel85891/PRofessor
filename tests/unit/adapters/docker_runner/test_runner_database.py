@@ -127,8 +127,8 @@ def test_each_run_creates_its_own_database_on_its_network_and_drops_it(
 
     code_runner.execute(request(repo, tmp_path))
 
-    assert sql_statements(engine)[-2:][0] == "CREATE DATABASE [hw_dana_api_run_1]"
-    assert "DROP DATABASE [hw_dana_api_run_1]" in sql_statements(engine)[-1]
+    assert sql_statements(engine)[-4] == "CREATE DATABASE [hw_dana_api_run_1]"
+    assert "DROP DATABASE [hw_dana_api_run_1]" in sql_statements(engine)[-2]
     (attachment,) = attached_during_the_run
     assert list(attachment.values()) == [("sqlserver",)]
     assert engine.connections and all(not v for v in engine.connections.values())
@@ -145,7 +145,7 @@ def test_the_database_exists_before_the_app_starts(repo: Path, tmp_path: Path) -
 
     started_app = engine.calls.index("start app")
     assert any(call.startswith("connect_network") for call in engine.calls[:started_app])
-    assert not any("DROP" in statement for statement in sql_statements(engine)[:-1])
+    assert not any("DROP" in statement for statement in sql_statements(engine)[:-2])
 
 
 def test_the_server_is_not_given_to_the_app_yet(repo: Path, tmp_path: Path) -> None:
@@ -226,7 +226,7 @@ def test_the_database_is_dropped_after_an_engine_failure_in_the_run(
 
     code_runner.execute(request(repo, tmp_path))
 
-    assert "DROP DATABASE [hw_dana_api_run_1]" in sql_statements(engine)[-1]
+    assert "DROP DATABASE [hw_dana_api_run_1]" in sql_statements(engine)[-2]
     assert only_the_server_is_left(engine)
 
 

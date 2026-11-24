@@ -68,6 +68,8 @@ class FakeEngine:
     connections: dict[str, dict[str, tuple[str, ...]]] = field(default_factory=dict)
     """Network name to {container id: aliases} for every attachment made after creation."""
     sql_commands: list[tuple[str, ...]] = field(default_factory=list)
+    sql_environments: list[dict[str, str]] = field(default_factory=list)
+    """The extra environment of each sqlcmd call, in step with `sql_commands`."""
     network_internal: dict[str, bool] = field(default_factory=dict)
     """Whether each network ever created was internal."""
     resolve_failures: int = 0
@@ -193,10 +195,15 @@ class FakeEngine:
         self._fail("logs", item.kind)
         return self.logs_by_kind.get(item.kind, f"{item.kind} log\n")
 
-    def exec(self, container: str, command: tuple[str, ...]) -> ExecResult:
+    def exec(
+        self,
+        container: str,
+        command: tuple[str, ...],
+        environment: Mapping[str, str] | None = None,
+    ) -> ExecResult:
         self._fail("exec")
         if command[0] == "sh" and command[3].endswith("sqlcmd"):
-            return self._exec_sql(command)
+            return self._exec_sql(command, dict(environment or {}))
         self.exec_commands.append(command)
         if len(self.exec_commands) <= self.resolve_failures:
             return ExecResult(6, "000")
@@ -211,9 +218,10 @@ class FakeEngine:
         header_lines = "".join(f"{name}: {value}\r\n" for name, value in headers.items())
         return ExecResult(0, f"HTTP/1.1 {status} Status\r\n{header_lines}\r\n{body}")
 
-    def _exec_sql(self, command: tuple[str, ...]) -> ExecResult:
+    def _exec_sql(self, command: tuple[str, ...], environment: dict[str, str]) -> ExecResult:
         self._fail("exec_sql")
         self.sql_commands.append(command)
+        self.sql_environments.append(environment)
         sql = command[-1]
         if sql == "SELECT 1" and self.sql_failures_before_ready > 0:
             self.sql_failures_before_ready -= 1
