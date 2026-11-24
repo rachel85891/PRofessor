@@ -138,6 +138,7 @@ def test_builtin_checks_are_registered() -> None:
         "classes_in_role",
         "namespace_matches_project",
         "methods_async",
+        "constructor_takes_class",
     }
 
 

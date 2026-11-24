@@ -10,11 +10,11 @@ finding says so. A finding lists up to `MAX_EXAMPLES` examples and the total.
 """
 
 import re
-from typing import Literal
+from typing import Literal, Self
 
-from pydantic import Field
+from pydantic import Field, model_validator
 
-from hw_checker.checks.deterministic.class_selection import LeftOut
+from hw_checker.checks.deterministic.class_selection import ClassSelector, LeftOut, select_classes
 from hw_checker.checks.deterministic.findings import deterministic_finding
 from hw_checker.checks.deterministic.layer_support import (
     NOTHING,
@@ -39,6 +39,7 @@ from hw_checker.checks.deterministic.layers import Layers, Regex, layers, projec
 from hw_checker.checks.deterministic.messages import (
     CODE_OUTSIDE_LAYER,
     CONCRETE_CONSTRUCTION,
+    CONCRETE_CONSTRUCTION_OF_SELECTED,
     CONSTRUCTOR_TAKES_CLASS,
     CREATION_EXAMPLE,
     INTERFACES_UNREGISTERED,
@@ -165,14 +166,24 @@ class InterfacesRegisteredParams(RolesParams):
 
 
 class NoConcreteConstructionParams(ClassesLeftOutParams):
-    """`in`: the roles whose classes must not create, with `new`, a class of the `of`
-    roles; `exclude` and `exclude_bases`: the created classes not counted."""
+    """`in`: the roles whose classes must not create, with `new`, a created class. The
+    created classes are the classes of the `of` roles (`exclude`, `exclude_bases` and
+    `exclude_db_entities`: the ones not counted) and the classes `of_selected` chooses,
+    wherever they are (the selector alone decides). At least one of `of` and `of_selected`
+    is required."""
 
     in_: tuple[Role, ...] = Field(min_length=1, alias="in")
-    of: tuple[Role, ...] = Field(min_length=1)
+    of: tuple[Role, ...] = ()
+    of_selected: ClassSelector | None = None
 
     def named_roles(self) -> tuple[str, ...]:
         return (*self.in_, *self.of)
+
+    @model_validator(mode="after")
+    def _names_created_classes(self) -> Self:
+        if not self.of and self.of_selected is None:
+            raise ValueError("give of (roles) or of_selected (a class selector)")
+        return self
 
 
 # ---------------------------------------------------------------- the checks
@@ -473,10 +484,13 @@ def interfaces_registered(
 @check(
     "no_concrete_construction",
     NoConcreteConstructionParams,
-    "No class in the `in` roles' projects creates a class of the `of` roles with new "
-    "(top-level statements, where registrations are written, are not read); exclude and "
-    "exclude_bases: created classes not counted, by name or by a name in their base list."
-    " exclude_db_entities: the entities of a left-out DbContext (DbSet<T>) are left out too.",
+    "No class in the `in` roles' projects creates with new a class of the `of` roles or a "
+    "class chosen by of_selected (names, bases, entities_of_bases: wherever it is, even in a "
+    "project of no role); top-level statements, where registrations are written, are not "
+    "read. exclude and exclude_bases: created classes of the `of` roles not counted, by name "
+    "or by a name in their base list. exclude_db_entities: the entities of a left-out "
+    "DbContext (DbSet<T>) are left out too. With of_selected and no class created-able: not "
+    "evaluated.",
     reads_architecture=True,
 )
 def no_concrete_construction(
@@ -492,27 +506,43 @@ def no_concrete_construction(
     created_classes = {
         name for d in types.classes_in(roles, params.of) if not left_out(name := subject(d))
     }
+    left_ambiguous: tuple[str, ...] = ()
+    if params.of_selected is not None:
+        selection = select_classes(types, params.of_selected)
+        created_classes |= {subject(declaration) for declaration in selection.classes}
+        left_ambiguous = selection.ambiguous
+        if not created_classes:
+            return NotEvaluatedReason.DEPENDENCY_FAILED
     problems: list[Problem] = []
     ambiguous: list[str] = []
     for creation in signals_of(evidence, ArchitectureSignalKind.OBJECT_CREATION):
         created = simple_name(subject(creation))
-        if creation.related_subject is None or created not in created_classes:
+        if creation.related_subject is None:
+            continue
+        if created not in created_classes and created not in left_ambiguous:
             continue
         if roles.role_of(creation.file_path) not in params.in_:
             continue
-        if types.declared_more_than_once(created):
+        if created in left_ambiguous or types.declared_more_than_once(created):
             ambiguous.append(created)
             continue
         text = CREATION_EXAMPLE.render(
             creator=code(creation.related_subject), created=code(created)
         )
         problems.append(Problem(text, creation.file_path, creation.line))
+    if params.of_selected is None:
+        return make_finding(
+            check_input,
+            CONCRETE_CONSTRUCTION,
+            problems,
+            ambiguous=ambiguous_note(ambiguous),
+            of=joined(params.of, _OR),
+        )
     return make_finding(
         check_input,
-        CONCRETE_CONSTRUCTION,
+        CONCRETE_CONSTRUCTION_OF_SELECTED,
         problems,
         ambiguous=ambiguous_note(ambiguous),
-        of=joined(params.of, _OR),
     )
 
 

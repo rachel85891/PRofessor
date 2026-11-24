@@ -534,13 +534,14 @@ roles:
 | `classes_public` | `role`; `exclude`, `exclude_bases`, `exclude_db_entities`: as for `implements_interface` | A class `implements_interface` reads is not `public` (a partial class with one public part is): "`UserService` isn't `public`; make it `public class UserService`", with its file and line. |
 | `constructor_takes_interface` | `consumer`, `dependency`: roles | A constructor in a consumer project takes a class of the dependency role that implements an interface: "`UsersController` takes `UserService`; take `IUserService`". A class with no interface is left to `implements_interface`. |
 | `interfaces_registered` | `consumers`: roles | An interface declared in the repo that a constructor in a consumer project takes has no registration (`AddScoped`, `AddTransient`, `AddSingleton`, either form) with it as the service type. A registration whose types are not written literally (a factory, a key) names no type; the finding then says how many there are, to check by hand. |
-| `no_concrete_construction` | `in`, `of`: roles; `exclude`, `exclude_bases`, `exclude_db_entities`: as for `implements_interface`, the created classes not counted | A class in an `in` project creates a class of an `of` role with `new`. Creating entities, DTOs and lists is fine, and so is `new` in top-level statements (`Program.cs`, where a factory registration may create a class). hw03 leaves out result and transfer objects (`…Result`, `…Dto`) and EF database contexts (a base ending in `DbContext`) here and in its two interface requirements, and with `exclude_db_entities: true` the contexts' entities too (EF is taught in HW05: developer decision 2026-11-22). |
+| `no_concrete_construction` | `in`: roles; `of`: roles; `of_selected`: a class selector (below); at least one of `of` and `of_selected`; `exclude`, `exclude_bases`, `exclude_db_entities`: as for `implements_interface`, the created classes of the `of` roles not counted | A class in an `in` project creates with `new` a class of an `of` role, or a class `of_selected` selects (the union), **wherever it is**, also in a project of no role (the `exclude` params do not apply to `of_selected`: the selector alone decides). With `of_selected` the message says the class must be received through the constructor, and no created-able class (the union is empty) is `dependency_failed`. Creating entities, DTOs and lists is fine, and so is `new` in top-level statements (`Program.cs`, where a factory registration may create a class). hw03 leaves out result and transfer objects (`…Result`, `…Dto`) and EF database contexts (a base ending in `DbContext`) here and in its two interface requirements, and with `exclude_db_entities: true` the contexts' entities too (EF is taught in HW05: developer decision 2026-11-22). |
 | `code_patterns` | `patterns`: C# regexes (`{dbset}` stands for the repo's `DbSet<T>` property names); `where`: `code` (default), `strings`, `both`; `must`: `absent` (default) or `present`; `roles` + `in`: search only those roles' projects; `suffixes`, `exclude_paths` | `absent`: a pattern matches (file, line, total). `present`: no match anywhere in the files searched (no location). Described below the table. |
 | `classes_in_role` | `role`: the role whose project(s) must hold the classes; `select`: a class selector (below) | A selected class is in a project of another role, in an unassigned project, or in no project. The finding lists each with its file, line and where it is ("`User` is in the project `Api` (api layer)"); a class in a project of `role` passes. No class selected: not evaluated (`dependency_failed`: the requirement that says the thing must exist reports that). |
+| `constructor_takes_class` | `consumer`: the role whose classes' constructors are read; `select`: a class selector (below) | **At least one** class of the consumer role takes a selected class as a constructor parameter (its simple name, `ShopContext` and `ShopContext?` alike, normal or primary constructor, one of several parameters); otherwise one finding naming the selected classes (up to five and the total) and the role, with no location (nothing to point at). A generic wrapper (`IOptions<ShopContext>`) does not count. No class selected: not evaluated (`dependency_failed`). The opposite of `constructor_takes_interface`, which says a constructor must take an interface. |
 | `namespace_matches_project` | `select`: a class selector; `role` (optional): only the selected classes in that role's projects | A selected class's namespace is not exactly its project's namespace: `<RootNamespace>` when the project file has one, else the project file's name without `.csproj`, with each character a namespace cannot hold (a space, `-`) replaced by `_` (.NET's default). A subfolder is fine when the namespace stays the project's (`Entities/Models/User.cs` with `namespace Entities;`); an extra or different segment, before (`MyApi.Entities`) or after (`Entities.Models`), or no namespace, is a finding with the class, its namespace and the expected one. A class in an unassigned project is judged by that project's namespace; a class in no project is not judged. No class in scope: not evaluated. |
 | `methods_async` | `in`: roles; `exclude`, `exclude_bases`, `exclude_db_entities`: as for `implements_interface`, the classes left out; `exclude_methods`: method-name patterns left out; `exclude_modifiers`: methods with one of these modifiers left out (`override`, `static`, ...); `require`: `returns_task`, `async_modifier` (default both) | A **public** method of a class, record, struct or interface in an `in` project breaks a required rule: `returns_task` = the return type is `Task`, `Task<T>`, `ValueTask` or `ValueTask<T>` (namespace-qualified too); `async_modifier` = a class method is marked `async`. An interface member, and an `abstract` or `extern` method (no body), are only asked for the return type. Only public methods are read: an interface member without a modifier is public, a class member without one is private. One finding lists each with its class, name, file and line and what it lacks (up to five and the total). Whether an `async` method contains `await` is not checked. No class or interface in the `in` roles' projects: not evaluated (`dependency_failed`). |
 
-**The class selector (`select`).** A params model shared by the class checks (a later constructor check uses it too): which classes a rule is about is the requirement's data. At least one field is required; the selection is the **union** of what is given. Patterns are regular expressions, searched and case-sensitive; a bad one is refused when the file is read.
+**The class selector (`select`).** A params model shared by the class checks (`constructor_takes_class` and `no_concrete_construction`'s `of_selected` use it too): which classes a rule is about is the requirement's data. At least one field is required; the selection is the **union** of what is given. Patterns are regular expressions, searched and case-sensitive; a bad one is refused when the file is read.
 
 | Field | Selects |
 | --- | --- |
@@ -550,7 +551,7 @@ roles:
 
 Only classes are selected (not records, structs or interfaces), in every project. A name declared more than once is never guessed: it is left out and the finding says so, as the layer checks do. A selected class's namespace is read from `namespace X.Y;` or `namespace X.Y { }` (nested block namespaces are joined by `.`); a file whose namespaces cannot be read reliably (two file-scoped namespaces, a file-scoped one beside a block one, an unclosed block) gives an `ambiguous_syntax` coverage issue and none of its classes, so no namespace is ever guessed.
 
-Examples (as `params` of a requirement with `check: classes_in_role` or `namespace_matches_project`; `roles` as for the layer checks, abbreviated here):
+Examples (as `params` of a requirement with `check: classes_in_role`, `namespace_matches_project`, `constructor_takes_class` or `no_concrete_construction`; `roles` as for the layer checks, abbreviated here):
 
 ```yaml
 # 1. The entities (the types of the DbContext's DbSet<T> properties) are in the entities project
@@ -571,6 +572,20 @@ params:
   roles: {entities: {name: entit|model}, repositories: {name: repositor|data}}
   role: entities
   select: {entities_of_bases: ['DbContext$']}
+
+# 4. A repository takes the DbContext in its constructor (at least one does)
+check: constructor_takes_class
+params:
+  roles: {entities: {name: entit|model}, repositories: {name: repositor|data}}
+  consumer: repositories
+  select: {bases: ['DbContext$']}
+
+# 5. No class creates the DbContext with new, wherever it is
+check: no_concrete_construction
+params:
+  roles: {entities: {name: entit|model}, repositories: {name: repositor|data}}
+  in: [repositories]
+  of_selected: {bases: ['DbContext$']}
 ```
 
 Results are as for the layer checks: up to five examples and the total, the first located one is the finding's evidence, and `evidence_unavailable` when the evidence cannot be read, `dependency_failed` when a role the check names has no project or no class is selected.
