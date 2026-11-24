@@ -8,18 +8,25 @@ constructor is matched, so a parameter matches an interface declared in another 
 import re
 from typing import Final
 
+from hw_checker.adapters.architecture_evidence.csharp_methods import (
+    MAX_IDENTIFIER_CHARS,
+    TypeBody,
+    matching_close,
+    method_signals,
+    top_level_member_headers,
+)
 from hw_checker.adapters.docker_runner.code_facts import CollectedFacts, facts_in_source
 from hw_checker.adapters.docker_runner.csharp_source import mask_source
 from hw_checker.domain import (
     ArchitectureSignal,
     ArchitectureSignalKind,
+    DeclaringKind,
     EvidenceCoverageIssue,
     EvidenceIssueKind,
     ServiceLifetime,
     TypeKind,
 )
 
-MAX_IDENTIFIER_CHARS: Final = 256
 _PRIMARY_CONSTRUCTOR = re.compile(
     r"\b(?:class|struct|record(?:\s+(?:class|struct))?)\s+(?P<name>[A-Za-z_]\w*)"
     r"(?:\s*<[^;{}()]*>)?\s*\("
@@ -176,7 +183,7 @@ def _signals_in_file(
 
     for primary in _PRIMARY_CONSTRUCTOR.finditer(masked):
         opening = primary.end() - 1
-        closing = _matching_close(masked, opening)
+        closing = matching_close(masked, opening)
         line = masked.count("\n", 0, primary.start("name")) + 1
         if closing is None or len(primary["name"]) > MAX_IDENTIFIER_CHARS:
             issues.append(
@@ -207,7 +214,7 @@ def _signals_in_file(
             )
             continue
         opening = declaration.end() - 1
-        closing = _matching_close(masked, opening)
+        closing = matching_close(masked, opening)
         if closing is None:
             issues.append(
                 EvidenceCoverageIssue(
@@ -218,7 +225,7 @@ def _signals_in_file(
             )
             continue
         body = masked[opening + 1 : closing]
-        for raw_header, raw_offset in _top_level_member_headers(body):
+        for raw_header, raw_offset in top_level_member_headers(body):
             header = _ATTRIBUTE_SECTIONS.sub("", raw_header, count=1)
             offset = raw_offset + len(raw_header) - len(header)
             constructor = _CONSTRUCTOR.fullmatch(header)
@@ -247,6 +254,10 @@ def _signals_in_file(
     bodies = _type_signals(masked, file_path, namespaces, signals, issues)
     _creation_signals(masked, file_path, bodies, signals, issues)
     _db_set_signals(masked, file_path, bodies, signals)
+    if namespaces is not None:
+        methods, method_issues = method_signals(masked, file_path, bodies)
+        signals.extend(methods)
+        issues.extend(method_issues)
     return signals, issues
 
 
@@ -256,12 +267,12 @@ def _type_signals(
     namespaces: list[tuple[int, int, str]] | None,
     signals: list[ArchitectureSignal],
     issues: list[EvidenceCoverageIssue],
-) -> list[tuple[int, int, str]]:
+) -> list[TypeBody]:
     """A `type_declaration` per class and record, with its base list and namespace; returns
     every type body as (opening, closing, name), for the enclosing type of an object
     creation. When the file's namespaces cannot be read (`namespaces` is None) it gives no
     declaration: a namespace is never guessed."""
-    bodies: list[tuple[int, int, str]] = []
+    bodies: list[TypeBody] = []
     for match in _ANY_TYPE.finditer(masked):
         name = match["name"]
         if name in _NOT_A_NAME:
@@ -271,9 +282,9 @@ def _type_signals(
         if header_end is None:
             continue  # not a declaration with a body or `;` (such as `where T : class`)
         if masked[header_end] == "{":
-            closing = _matching_close(masked, header_end)
+            closing = matching_close(masked, header_end)
             if closing is not None:
-                bodies.append((header_end, closing, name))
+                bodies.append(TypeBody(header_end, closing, name, _declaring_kind(match)))
         keyword = _SPACE.sub(" ", match["keyword"])
         if keyword not in _DECLARED_KEYWORDS:
             continue
@@ -301,6 +312,12 @@ def _type_signals(
     return bodies
 
 
+def _declaring_kind(match: re.Match[str]) -> DeclaringKind:
+    """What a type keyword declares; any `record` form is a record."""
+    keyword = match["keyword"]
+    return DeclaringKind.RECORD if keyword.startswith("record") else DeclaringKind(keyword)
+
+
 def _namespace_spans(masked: str) -> list[tuple[int, int, str]] | None:
     """Each namespace declaration as (start, end, name) of the text it covers: a block
     namespace its braces, a file-scoped one the rest of the file. None when they cannot be
@@ -317,7 +334,7 @@ def _namespace_spans(masked: str) -> list[tuple[int, int, str]] | None:
         if match["end"] == ";":
             spans.append((match.end(), len(masked), name))
             continue
-        closing = _matching_close(masked, match.end() - 1)
+        closing = matching_close(masked, match.end() - 1)
         if closing is None:
             return None
         spans.append((match.end(), closing, name))
@@ -343,7 +360,7 @@ def _header_end(masked: str, position: int) -> int | None:
         if character in "{;":
             return index
         if character == "(":
-            closing = _matching_close(masked, index)
+            closing = matching_close(masked, index)
             if closing is None:
                 return None
             index = closing + 1
@@ -366,7 +383,7 @@ def _base_list(masked: str, name_end: int, header_end: int) -> tuple[str, ...] |
         header = header[closing + 1 :]
     if header.lstrip().startswith("("):
         start = header.index("(")
-        closing = _matching_close(header, start)
+        closing = matching_close(header, start)
         if closing is None:
             return None
         header = header[closing + 1 :]
@@ -415,7 +432,7 @@ def _modifiers_before(masked: str, position: int) -> tuple[str, ...]:
 def _creation_signals(
     masked: str,
     file_path: str,
-    bodies: list[tuple[int, int, str]],
+    bodies: list[TypeBody],
     signals: list[ArchitectureSignal],
     issues: list[EvidenceCoverageIssue],
 ) -> None:
@@ -448,7 +465,7 @@ def _creation_signals(
                 file_path=file_path,
                 line=line,
                 subject=type_text,
-                related_subject=max(enclosing)[2] if enclosing else None,
+                related_subject=max(enclosing).name if enclosing else None,
             )
         )
 
@@ -456,7 +473,7 @@ def _creation_signals(
 def _db_set_signals(
     masked: str,
     file_path: str,
-    bodies: list[tuple[int, int, str]],
+    bodies: list[TypeBody],
     signals: list[ArchitectureSignal],
 ) -> None:
     """A `db_set_property` per `DbSet<T>` property of a type (`public virtual
@@ -473,7 +490,7 @@ def _db_set_signals(
                 file_path=file_path,
                 line=masked.count("\n", 0, match.start("entity")) + 1,
                 subject=entity,
-                related_subject=max(enclosing)[2],
+                related_subject=max(enclosing).name,
                 name=name,
             )
         )
@@ -611,41 +628,6 @@ def _parameter_types(parameters: str) -> tuple[str, ...] | None:
             return None
         result.append(match["type"])
     return tuple(result)
-
-
-def _top_level_member_headers(body: str) -> tuple[tuple[str, int], ...]:
-    headers: list[tuple[str, int]] = []
-    depth = 0
-    start = 0
-    for index, character in enumerate(body):
-        if character == "{" and depth == 0:
-            headers.append((body[start:index], start))
-            depth = 1
-        elif character == "{":
-            depth += 1
-        elif character == "}":
-            depth -= 1
-            if depth == 0:
-                start = index + 1
-        elif character == ";" and depth == 0:
-            headers.append((body[start:index], start))
-            start = index + 1
-    return tuple(headers)
-
-
-def _matching_close(source: str, opening: int) -> int | None:
-    """The index closing the `{` or `(` at `opening`."""
-    open_character = source[opening]
-    close_character = "}" if open_character == "{" else ")"
-    depth = 0
-    for index in range(opening, len(source)):
-        if source[index] == open_character:
-            depth += 1
-        elif source[index] == close_character:
-            depth -= 1
-            if depth == 0:
-                return index
-    return None
 
 
 def _balanced_csharp(source: str) -> bool:

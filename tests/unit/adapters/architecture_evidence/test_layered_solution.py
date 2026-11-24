@@ -50,6 +50,7 @@ def test_layered_solution_signals_are_exact_and_coverage_complete(tmp_path: Path
     assert [
         (signal.kind, signal.file_path, signal.line, signal.subject, signal.related_subject)
         for signal in evidence.signals
+        if signal.kind is not ArchitectureSignalKind.METHOD_DECLARATION
     ] == [
         (DECLARATION, "Api/Controllers/UsersController.cs", 9, "UsersController", None),
         (CONSTRUCTOR, "Api/Controllers/UsersController.cs", 13, "UsersController", None),
