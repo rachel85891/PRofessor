@@ -364,6 +364,29 @@ def test_the_login_is_still_dropped_when_the_database_drop_fails() -> None:
     assert engine.connections[NETWORK] == {}
 
 
+def test_when_both_drops_fail_the_first_error_is_raised_and_both_are_tried(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    engine = FakeEngine(
+        sql_results={
+            "DROP DATABASE": (1, "Msg 3702 cannot drop"),
+            "DROP LOGIN": (1, "Msg 15434 logged in"),
+        }
+    )
+    server, _ = started(engine)
+    server.create_database("hw_a", NETWORK)
+    engine.sql_commands.clear()
+
+    with pytest.raises(ExecutionEnvironmentError, match="could not drop the database: ") as raised:
+        server.drop_database("hw_a", NETWORK)
+
+    assert "Msg 3702" in str(raised.value)
+    assert len(engine.sql_commands) == 2
+    assert "DROP LOGIN [hw_a]" in engine.sql_commands[-1][-1]
+    assert engine.connections[NETWORK] == {}
+    assert "Also failed" in caplog.text
+
+
 def test_the_server_is_detached_when_the_login_drop_fails() -> None:
     engine = FakeEngine(sql_results={"DROP LOGIN": (1, "Msg 15434 logged in")})
     server, _ = started(engine)

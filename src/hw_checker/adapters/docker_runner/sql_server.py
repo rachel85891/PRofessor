@@ -284,24 +284,36 @@ class SqlServerProvisioner:
         )
 
     def _drop_pair(self, name: str) -> None:
-        """Drop the database, then the login, even when the first step fails."""
-        try:
-            self._run_sql(
+        """Drop the database, then the login, even when the first step fails.
+
+        When both steps fail the first error is the one raised; the second is logged.
+        """
+        first_error: ExecutionEnvironmentError | None = None
+        steps = (
+            (
                 f"IF DB_ID(N'{name}') IS NOT NULL BEGIN "
                 f"ALTER DATABASE [{name}] SET SINGLE_USER WITH ROLLBACK IMMEDIATE; "
                 f"DROP DATABASE [{name}]; END",
                 "drop the database",
-            )
-        finally:
+            ),
+            (
+                KILL_LOGIN_SESSIONS.format(login=name)
+                + f"IF EXISTS (SELECT 1 FROM sys.server_principals WHERE name = N'{name}') "
+                f"DROP LOGIN [{name}];",
+                "drop the database's login",
+            ),
+        )
+        for sql, purpose in steps:
             try:
-                self._run_sql(
-                    KILL_LOGIN_SESSIONS.format(login=name)
-                    + f"IF EXISTS (SELECT 1 FROM sys.server_principals WHERE name = N'{name}') "
-                    f"DROP LOGIN [{name}];",
-                    "drop the database's login",
-                )
-            finally:
-                self._login_passwords.pop(name, None)
+                self._run_sql(sql, purpose)
+            except ExecutionEnvironmentError as error:
+                if first_error is None:
+                    first_error = error
+                else:
+                    logger.warning("Also failed: %s", error)
+        self._login_passwords.pop(name, None)
+        if first_error is not None:
+            raise first_error
 
     def _undo_creation(self, name: str) -> None:
         """Remove a half-created database and login; a failure here is logged only."""
