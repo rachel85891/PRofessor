@@ -134,7 +134,7 @@ class SqlServerProvisioner:
                 self._start_container()
                 self._wait_until_ready()
             except EngineError as error:
-                reason = self._scrub(str(error))
+                reason = self.redact(str(error))
                 self._teardown()
                 raise ExecutionEnvironmentError(
                     f"cannot start the SQL Server container: {reason}"
@@ -169,7 +169,7 @@ class SqlServerProvisioner:
             self._engine.connect_network(container, network, (self._config.alias,))
         except EngineError as error:
             raise ExecutionEnvironmentError(
-                f"cannot attach the SQL Server to the repo's network: {self._scrub(str(error))}"
+                f"cannot attach the SQL Server to the repo's network: {self.redact(str(error))}"
             ) from error
         self._run_sql(f"CREATE DATABASE [{database_name}]", "create the database")
         password = self._login_password_factory()
@@ -263,7 +263,7 @@ class SqlServerProvisioner:
                 f"the SQL Server ran out of memory (container limit {self._config.memory_mb} MB): "
                 "free memory or lower the number of parallel repos"
             )
-        lines = self._scrub(self._engine.logs(container)).strip().splitlines()
+        lines = self.redact(self._engine.logs(container)).strip().splitlines()
         last = f": {lines[-1][:MAX_ERROR_CHARS]}" if lines else ""
         raise ExecutionEnvironmentError(
             f"the SQL Server container stopped with exit code {state.exit_code}{last}"
@@ -330,10 +330,10 @@ class SqlServerProvisioner:
             result = self._engine.exec(container, self._sqlcmd(sql), environment)
         except EngineError as error:
             raise ExecutionEnvironmentError(
-                f"cannot {purpose}: {self._scrub(str(error))}"
+                f"cannot {purpose}: {self.redact(str(error))}"
             ) from error
         if result.exit_code != 0:
-            detail = self._scrub(result.output.strip())[:MAX_ERROR_CHARS]
+            detail = self.redact(result.output.strip())[:MAX_ERROR_CHARS]
             logger.warning(
                 "sqlcmd failed to %s (exit code %d): %s", purpose, result.exit_code, detail
             )
@@ -367,7 +367,7 @@ class SqlServerProvisioner:
             raise ExecutionEnvironmentError("the SQL Server has not been started")
         return self._container
 
-    def _scrub(self, text: str) -> str:
+    def redact(self, text: str) -> str:
         """`text` without any password (the SA's or a login's), wherever it appears."""
         secrets_in_use = [*self._login_passwords.values()]
         if self._password is not None:

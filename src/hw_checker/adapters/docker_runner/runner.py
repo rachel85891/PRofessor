@@ -88,6 +88,8 @@ from hw_checker.adapters.docker_runner.windows_paths import windows_paths_in_log
 from hw_checker.config.logging_setup import log_context
 from hw_checker.domain import (
     BodyAdaptation,
+    DatabaseUse,
+    DatabaseUseStatus,
     ExecutionRequest,
     ExecutionResult,
     FailureKind,
@@ -124,6 +126,7 @@ APP_ALIAS = "app"
 DNS label limit (they include the run and repo ids), and then cannot be resolved; each repo
 has its own network, so a fixed short alias never collides."""
 CACHE_KIND = "cache"
+REDACTED = "***"
 CURL_RESOLVE_ERROR = 6
 CURL_ERRORS = {
     CURL_RESOLVE_ERROR: "could not resolve the app",
@@ -394,11 +397,12 @@ class _Execution:
             discovery.other_projects,
         )
         result = self._prepare_build_run(discovery, plan, choice, database)
-        # Every result after this point records the detected paths, the route table and the
-        # controller choice.
+        # Every result after this point records the detected paths, the database use, the
+        # route table and the controller choice.
         return result.model_copy(
             update={
                 "path_rewrites": plan.rewrites,
+                "database_use": _database_use(database),
                 "routes": self.routes,
                 "code_facts": code_facts,
                 "primary_controller": self.controllers.primary,
@@ -483,6 +487,7 @@ class _Execution:
             f"Web project: {discovery.path} ({discovery.framework})\n"
             + _describe_choice(choice)
             + _describe_paths(plan.rewrites)
+            + _describe_database(_database_use(database))
             + _describe_routes(self.routes)
             + _describe_controllers(self.routes, self.controllers),
         )
@@ -602,10 +607,11 @@ class _Execution:
                 if outcome.ready
                 else ()
             )
-            log = self.engine.logs(app)
+            log = self._redact(self.engine.logs(app))
         except EngineError as error:
-            outcome = StepOutcome(RunnerStep.RUN, engine_error=True, log_text=str(error))
-            probe_results, log = (), str(error)
+            log = self._redact(str(error))
+            outcome = StepOutcome(RunnerStep.RUN, engine_error=True, log_text=log)
+            probe_results = ()
         if outcome.unresolved_host:
             log += (
                 f"\n[runner] the probe sidecar could not resolve {APP_ALIAS!r} for more than "
@@ -702,7 +708,7 @@ class _Execution:
             controller=route.controller,
             sent_body=body,
             body_adaptation=adaptation,
-            response_excerpt="" if response is None else excerpt(response.body),
+            response_excerpt="" if response is None else self._redact(excerpt(response.body)),
             capture=captured,
             response_shape=shape,
             missing_values=absent,
@@ -766,11 +772,11 @@ class _Execution:
             container = self._create(spec)
             self.engine.start(container)
             exit_code, oom_killed, timed_out = self._wait_for_exit(container, started + timeout)
-            log = self.engine.logs(container)
+            log = self._redact(self.engine.logs(container))
             self._remove_container(container)
             outcome = StepOutcome(step, exit_code, timed_out, oom_killed, log_text=log)
         except EngineError as error:
-            log = str(error)
+            log = self._redact(str(error))
             outcome = StepOutcome(step, engine_error=True, log_text=log)
         self._log_step_end(step, started, outcome)
         self._write_log(step, log)
@@ -871,6 +877,7 @@ class _Execution:
     def _prepare_failed(
         self, message: str, *, project_found: bool = True, engine: bool = False
     ) -> ExecutionResult:
+        message = self._redact(message)
         outcome = StepOutcome(
             RunnerStep.PREPARE,
             exit_code=0 if engine else 1,
@@ -929,7 +936,16 @@ class _Execution:
 
     def _write_log(self, step: RunnerStep, text: str) -> None:
         path: Path = self.request.logs_dir / f"{step.value}.log"
-        path.write_bytes(text.encode("utf-8"))
+        path.write_bytes(self._redact(text).encode("utf-8"))
+
+    def _redact(self, text: str) -> str:
+        """`text` without the run's connection string or any password of the database
+        server: an app can print what it was given."""
+        if self.database is None:
+            return text
+        if self.connection is not None:
+            text = text.replace(self.connection, REDACTED)
+        return self.database.redact(text)
 
     def _log_step_end(self, step: RunnerStep, started: float, outcome: StepOutcome) -> None:
         kind = classify(outcome)
@@ -1054,6 +1070,28 @@ def _describe_paths(rewrites: tuple[PathRewrite, ...]) -> str:
             f"{rewrite.kind} path {rewrite.original!r} at {rewrite.file_path}:{rewrite.line}: "
             f"{outcome}\n"
         )
+    return "".join(lines)
+
+
+def _database_use(plan: DatabasePlan | None) -> DatabaseUse:
+    """What the run did about the repo's database; `off` when databases are off."""
+    return DatabaseUse(status=DatabaseUseStatus.OFF) if plan is None else plan.use()
+
+
+def _describe_database(use: DatabaseUse) -> str:
+    """The database use as prepare-log lines: names and places only, never a connection."""
+    if use.status is DatabaseUseStatus.OFF:
+        return ""
+    lines = [f"database: {use.status.value}\n"]
+    if use.connection_names:
+        lines.append(f"connection given by environment as: {', '.join(use.connection_names)}\n")
+    lines += [
+        f"connection string replaced at {place.file_path}:{place.line}\n"
+        for place in use.rewritten_literals
+    ]
+    lines += [
+        f"not given the connection: {item.reason.value} x{item.count}\n" for item in use.unresolved
+    ]
     return "".join(lines)
 
 
