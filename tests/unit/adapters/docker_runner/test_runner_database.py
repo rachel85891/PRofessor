@@ -17,6 +17,11 @@ from tests.unit.adapters.docker_runner.test_runner import WEB_PROJECT
 
 PREFIX = "hw-checker-test"
 PASSWORD = "Aa1_secret-password-for-tests"  # pragma: allowlist secret
+LOGIN_PASSWORD = "Aa1_login-password-for-tests"  # pragma: allowlist secret
+CONNECTION = (  # pragma: allowlist secret
+    "Server=sqlserver;Database=hw_dana_api_run_1;User Id=hw_dana_api_run_1;"
+    f"Password={LOGIN_PASSWORD};Encrypt=True;TrustServerCertificate=True"
+)
 
 
 CONTEXT = "class Context { void M(B b, string connection) { b.UseSqlServer(connection); } }"
@@ -28,7 +33,8 @@ def make_repo(tmp_path: Path, files: dict[str, str]) -> Path:
     (root / "Shop.Api.csproj").write_text(WEB_PROJECT, encoding="utf-8")
     (root / "Controllers" / "ProductsController.cs").write_text("class C {}", encoding="utf-8")
     for relative, text in files.items():
-        (root / relative).write_text(text, encoding="utf-8")
+        (root / relative).parent.mkdir(parents=True, exist_ok=True)
+        (root / relative).write_bytes(text.encode("utf-8"))
     return root
 
 
@@ -59,6 +65,7 @@ def runner(engine: FakeEngine, databases: bool = True) -> DockerCodeRunner:
             clock=clock,
             sleep=clock.sleep,
             password_factory=lambda: PASSWORD,
+            login_password_factory=lambda: LOGIN_PASSWORD,
         )
         if databases
         else None

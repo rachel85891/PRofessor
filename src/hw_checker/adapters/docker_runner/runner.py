@@ -31,7 +31,12 @@ from hw_checker.adapters.docker_runner.body_models import ProjectSources
 from hw_checker.adapters.docker_runner.classification import RunnerStep, StepOutcome, classify
 from hw_checker.adapters.docker_runner.code_facts import extract_code_facts
 from hw_checker.adapters.docker_runner.database_errors import unreachable_databases_in_log
-from hw_checker.adapters.docker_runner.database_plan import DatabasePlan, plan_database
+from hw_checker.adapters.docker_runner.database_plan import (
+    ENVIRONMENT_PREFIX,
+    DatabasePlan,
+    apply_connection,
+    plan_database,
+)
 from hw_checker.adapters.docker_runner.discovery import (
     DiscoveryFailure,
     ProjectFolder,
@@ -337,6 +342,10 @@ class _Execution:
     """The repo's internal network, once created (before the archives when the repo uses a
     database, in the run step otherwise)."""
     preflighted: bool = False
+    connection: str | None = field(default=None, repr=False)
+    """The run's connection string. A secret: never logged, recorded or put in a message."""
+    connection_environment: dict[str, str] = field(default_factory=dict, repr=False)
+    """`ConnectionStrings__<name>` for each name the app may read its connection by."""
     containers: list[str] = field(default_factory=list)
     networks: list[str] = field(default_factory=list)
     volumes: list[str] = field(default_factory=list)
@@ -438,16 +447,21 @@ class _Execution:
             self._provide_database(database)
         except EngineError as error:
             return self._prepare_failed(f"cannot create the repo's network: {error}", engine=True)
+        overrides = plan.overrides
+        if self.connection is not None and database is not None:
+            overrides = apply_connection(
+                database, self.request.working_copy, overrides, self.connection
+            )
         try:
             archive = build_work_archive(
-                self.request.working_copy, uid, gid, *limits, overrides=plan.overrides
+                self.request.working_copy, uid, gid, *limits, overrides=overrides
             )
             data_archive = build_repo_archive(
                 self.request.working_copy,
                 uid,
                 gid,
                 *limits,
-                overrides=plan.overrides,
+                overrides=overrides,
                 created=plan.created,
             )
         except ArchiveTooLargeError as error:
@@ -805,6 +819,9 @@ class _Execution:
         limits = self.config.run_limits
         environment = {
             **dict(self.request.environment),
+            # Set after the student's environment, so it cannot change the connection the run
+            # gives the app, and last for the port.
+            **self.connection_environment,
             # Set last, so the student's environment cannot move the app to another port.
             "ASPNETCORE_HTTP_PORTS": str(self.config.app_port),
         }
@@ -951,8 +968,15 @@ class _Execution:
         )
         # Recorded first: a failure inside `create_database` still has to be undone.
         self.databases.append((name, network))
-        self.database.create_database(name, network)
-        logger.info("Created an empty database for this run")
+        self.connection = self.database.create_database(name, network)
+        self.connection_environment = {
+            f"{ENVIRONMENT_PREFIX}{connection_name}": self.connection
+            for connection_name in plan.connection_names
+        }
+        logger.info(
+            "Created an empty database for this run",
+            extra={"connection_names": len(plan.connection_names)},
+        )
 
     def _drop_databases(self) -> None:
         if self.database is None:
