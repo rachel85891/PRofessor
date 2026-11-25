@@ -114,6 +114,22 @@ class ArchitectureSignalKind(StrEnum):
     DB_SET_PROPERTY = "db_set_property"
     """A `DbSet<T>` property: `subject` the simple name of `T` (`Models.User` is `User`),
     `related_subject` the type that declares the property, `name` the property's name."""
+    METHOD_DECLARATION = "method_declaration"
+    """A method declared directly in a class, record, struct or interface body (not a
+    constructor, operator, finalizer, accessor, local function or lambda): `subject` its name,
+    `related_subject` the declaring type, `keywords` its modifiers as written plus the
+    accessibility the language gives when none is written (`public` in an interface,
+    `private` in a class, record or struct; none for an explicit interface implementation),
+    `return_type` its return type as written, `declared_in` what declares it."""
+
+
+class DeclaringKind(StrEnum):
+    """What declares a method: a `class`, `record`, `struct` or `interface` body."""
+
+    CLASS = "class"
+    RECORD = "record"
+    STRUCT = "struct"
+    INTERFACE = "interface"
 
 
 class ServiceLifetime(StrEnum):
@@ -130,7 +146,8 @@ class ArchitectureSignal(DomainModel):
     For a registration, `subject` is the service type and `related_subject` the
     implementation type, both as written; `subject` is None when the call does not name
     them literally (a factory lambda, an instance, an extension method's argument). Only a
-    type declaration has `related_subjects` (its base list) and `keywords`.
+    type declaration has `related_subjects` (its base list); a type or method declaration
+    has `keywords`.
     """
 
     kind: ArchitectureSignalKind
@@ -150,6 +167,11 @@ class ArchitectureSignal(DomainModel):
     namespace: EvidenceIdentifier | None = None
     """For a type declaration: its namespace (`Shop.Entities`), nested block namespaces joined
     by `.`; None for the global namespace."""
+    return_type: EvidenceIdentifier | None = None
+    """For a method: its return type as written, whitespace collapsed (`Task<IActionResult>`)."""
+    declared_in: DeclaringKind | None = None
+    """For a method: what declares it, so an interface member (it has no `async` modifier)
+    can be told from a class method."""
 
     @model_validator(mode="after")
     def _fields_match_kind(self) -> Self:
@@ -165,8 +187,15 @@ class ArchitectureSignal(DomainModel):
         if self.subject is None and self.related_subject is not None:
             raise ValueError("a related subject needs a subject")
         declaration = self.kind is ArchitectureSignalKind.TYPE_DECLARATION
-        if not declaration and (self.related_subjects or self.keywords):
-            raise ValueError("only a type declaration has related subjects and keywords")
+        method = self.kind is ArchitectureSignalKind.METHOD_DECLARATION
+        if not declaration and self.related_subjects:
+            raise ValueError("only a type declaration has related subjects")
+        if not (declaration or method) and self.keywords:
+            raise ValueError("only a type or method declaration has keywords")
+        if not method and (self.return_type is not None or self.declared_in is not None):
+            raise ValueError("only a method declaration has a return type and declared_in")
+        if method and (self.return_type is None or self.declared_in is None):
+            raise ValueError("a method declaration needs its return type and declared_in")
         if self.name is not None and self.kind is not ArchitectureSignalKind.DB_SET_PROPERTY:
             raise ValueError("only a db_set_property signal has a name")
         if self.namespace is not None and not declaration:

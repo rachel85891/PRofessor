@@ -68,6 +68,24 @@ another. The second reads constructors and registrations:
   namespace and generic arguments, `related_subject` = the innermost enclosing class,
   record, struct or interface, or none in top-level statements). A target-typed `new()`,
   an anonymous `new { … }` and an array `new T[…]` name no class and give none.
+- a method declared directly in a class, record, struct or interface body gives
+  `method_declaration`: `subject` its name, `related_subject` the declaring type,
+  `declared_in` (`class`, `record`, `struct` or `interface`), `return_type` as written with
+  whitespace collapsed (`Task<IActionResult>`, `(int Id, string Name)`, `ref int`) and
+  `keywords` its modifiers as written (`public`, `private`, `protected`, `internal`,
+  `static`, `async`, `override`, `virtual`, `abstract`, `sealed`, `new`, `partial`,
+  `extern`, `unsafe`, `readonly`). The effective accessibility is part of `keywords`: when
+  none is written, an interface member gets `public` and a class, record or struct member
+  `private`; an explicit interface implementation (`Task IRepo.Get()`) gets none, so it is
+  not `public`. A method is a header of attributes, modifiers, a return type, a name
+  (generic parameters allowed), balanced parameters and then nothing, a `where` list or
+  `=>`; expression-bodied, abstract and interface methods count. Constructors, operators,
+  finalizers, properties, events, delegates, nested types, local functions, lambdas and
+  statements give none. A file whose braces or namespaces cannot be read gives no method
+  and the existing `ambiguous_syntax` issue; a method header whose parentheses cannot be
+  matched, or an identifier over 256 characters, gives an `ambiguous_syntax` issue for it.
+  The return type, `declared_in` and a method's keywords exist on this kind only. An
+  attribute section with unbalanced `[` `]` makes the method unreadable and unreported.
 
 Two limits are kept as they are:
 

@@ -618,6 +618,33 @@ CLASS_GLOBAL_NAMESPACE_EXAMPLE = MessageTemplate(
     en="{name} has no namespace, but the project {project} expects {expected}",
 )
 
+METHODS_NOT_ASYNC = MessageTemplate(
+    name="METHODS_NOT_ASYNC",
+    he="מתודות ציבוריות שאינן אסינכרוניות: {examples}. סך הכול: {count}.",
+    en="Public methods that aren't asynchronous: {examples}. Total: {count}.",
+)
+
+METHOD_EXAMPLE = MessageTemplate(
+    name="METHOD_EXAMPLE",
+    he="המתודה {owner}.{name} {lacks}",
+    en="method {owner}.{name} {lacks}",
+)
+
+METHOD_NOT_TASK = MessageTemplate(
+    name="METHOD_NOT_TASK",
+    he="מחזירה {return_type} ולא `Task`",
+    en="returns {return_type}, not a `Task`",
+)
+
+METHOD_NOT_MARKED_ASYNC = MessageTemplate(
+    name="METHOD_NOT_MARKED_ASYNC",
+    he="לא מסומנת `async`",
+    en="isn't marked `async`",
+)
+
+METHOD_LACKS_SEPARATOR = Localized(he=" וגם ", en=" and ")
+"""Joins what a method lacks when it lacks both the `Task` return type and `async`."""
+
 # ---------------------------------------------------------------- not-evaluated details
 # Why an `environment_issue` (or a `body_mismatch`) happened, for the reviewer's report
 # (English only, like the report); the report template words the sentence around the detail.
@@ -717,4 +744,8 @@ ALL_TEMPLATES: tuple[MessageTemplate, ...] = (
     NAMESPACE_NOT_PROJECT,
     CLASS_NAMESPACE_EXAMPLE,
     CLASS_GLOBAL_NAMESPACE_EXAMPLE,
+    METHODS_NOT_ASYNC,
+    METHOD_EXAMPLE,
+    METHOD_NOT_TASK,
+    METHOD_NOT_MARKED_ASYNC,
 )

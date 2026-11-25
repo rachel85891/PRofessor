@@ -9,6 +9,7 @@ from hw_checker.checks.deterministic.client import (
 )
 from hw_checker.checks.deterministic.data_files import data_files_in_repo
 from hw_checker.checks.deterministic.layer_checks import LAYER_CHECKS
+from hw_checker.checks.deterministic.method_checks import METHOD_CHECKS
 from hw_checker.checks.deterministic.naming import NAMING_CHECKS
 from hw_checker.checks.deterministic.pattern_checks import code_patterns
 from hw_checker.checks.deterministic.repository import (
@@ -39,6 +40,7 @@ ARCHITECTURE_CHECKS: tuple[CheckFunction, ...] = (
     *LAYER_CHECKS,
     code_patterns,
     *CLASS_CHECKS,
+    *METHOD_CHECKS,
 )
 
 
@@ -46,7 +48,7 @@ def builtin_checks() -> tuple[CheckFunction, ...]:
     """Every built-in registered check: the structure checks, the six naming checks, the
     repository checks (with the data files the run had to create), the client-file checks
     and the architecture-evidence checks (DI started, the layer and DI checks, the
-    code-pattern check, and the two class-placement checks)."""
+    code-pattern check, the two class-placement checks, and the methods-are-async check)."""
     return (
         file_exists,
         folder_exists,
