@@ -31,6 +31,7 @@ from hw_checker.adapters.docker_runner.body_models import ProjectSources
 from hw_checker.adapters.docker_runner.classification import RunnerStep, StepOutcome, classify
 from hw_checker.adapters.docker_runner.code_facts import extract_code_facts
 from hw_checker.adapters.docker_runner.database_errors import unreachable_databases_in_log
+from hw_checker.adapters.docker_runner.database_plan import DatabasePlan, plan_database
 from hw_checker.adapters.docker_runner.discovery import (
     DiscoveryFailure,
     ProjectFolder,
@@ -137,8 +138,9 @@ class DockerCodeRunner:
     several threads at once. Only the restore step is serialized (see `_restore_lock`).
 
     With a `database` provisioner (and `config.database`), the round shares one SQL Server
-    (`start_round`, `finish_round`) and each repo's run gets an empty database of its own,
-    dropped with the repo's containers. Without one, no database is touched.
+    (`start_round`, `finish_round`) and each repo's run that uses SQL Server gets an empty
+    database of its own, dropped with the repo's containers. A repo that uses none gets none.
+    Without a provisioner, no database is touched.
     """
 
     def __init__(
@@ -331,6 +333,10 @@ class _Execution:
     """The round's database server; None when databases are off."""
     databases: list[tuple[str, str]] = field(default_factory=list)
     """(database, network) of every database this execution created or tried to create."""
+    network: str | None = None
+    """The repo's internal network, once created (before the archives when the repo uses a
+    database, in the run step otherwise)."""
+    preflighted: bool = False
     containers: list[str] = field(default_factory=list)
     networks: list[str] = field(default_factory=list)
     volumes: list[str] = field(default_factory=list)
@@ -369,6 +375,7 @@ class _Execution:
         assert discovery.framework is not None  # framework_problem rejects a missing one
         self.framework_images = self.config.framework_images[discovery.framework]
         plan = plan_path_fixes(self.request.working_copy, discovery.folder)
+        database = plan_database(self.request.working_copy) if self.database is not None else None
         self.routes = extract_route_table(self.request.working_copy, discovery.folder)
         code_facts = extract_code_facts(self.request.working_copy, discovery.folder)
         self.controllers = choose_primary_controller(self.request.probes, self.routes)
@@ -377,7 +384,7 @@ class _Execution:
             ProjectFolder(discovery.folder, discovery.nullable),
             discovery.other_projects,
         )
-        result = self._prepare_build_run(discovery, plan, choice)
+        result = self._prepare_build_run(discovery, plan, choice, database)
         # Every result after this point records the detected paths, the route table and the
         # controller choice.
         return result.model_copy(
@@ -419,10 +426,18 @@ class _Execution:
         )
 
     def _prepare_build_run(
-        self, discovery: WebProject, plan: PathPlan, choice: WebProjectChoice
+        self,
+        discovery: WebProject,
+        plan: PathPlan,
+        choice: WebProjectChoice,
+        database: DatabasePlan | None,
     ) -> ExecutionResult:
         limits = (self.config.max_archive_bytes, self.config.max_file_bytes)
         uid, gid = self.config.app_uid, self.config.app_gid
+        try:
+            self._provide_database(database)
+        except EngineError as error:
+            return self._prepare_failed(f"cannot create the repo's network: {error}", engine=True)
         try:
             archive = build_work_archive(
                 self.request.working_copy, uid, gid, *limits, overrides=plan.overrides
@@ -511,6 +526,9 @@ class _Execution:
         return self._run_and_probe(work_volume, data_volume, discovery)
 
     def _preflight(self) -> None:
+        if self.preflighted:
+            return
+        self.preflighted = True
         try:
             self.engine.ping()
             missing = [image for image in self.config.images if not self.engine.image_exists(image)]
@@ -552,14 +570,11 @@ class _Execution:
     def _run_and_probe(
         self, work_volume: str, data_volume: str, discovery: WebProject
     ) -> ExecutionResult:
-        network = self._name("net")
         app_name = self._name("app")
         started = self.clock()
         logger.info("Step run started")
         try:
-            self.engine.create_network(network, self._labels("network"), internal=True)
-            self.networks.append(network)
-            self._create_database(network)
+            network = self.network or self._create_network()
             app = self._create(
                 self._app_spec(app_name, network, work_volume, data_volume, discovery)
             )
@@ -909,10 +924,28 @@ class _Execution:
             extra={"step": step.value, "outcome": "ok" if kind is None else kind.value},
         )
 
-    def _create_database(self, network: str) -> None:
-        """Give this run an empty database on its network (the app is not given it yet)."""
+    def _create_network(self) -> str:
+        """The repo's internal network: no route to the host or the internet."""
+        network = self._name("net")
+        self.engine.create_network(network, self._labels("network"), internal=True)
+        self.networks.append(network)
+        self.network = network
+        return network
+
+    def _provide_database(self, plan: DatabasePlan | None) -> None:
+        """Create the repo's network and an empty database on it when the repo uses SQL Server
+        and databases are on; otherwise do nothing. It runs before the archives are built.
+
+        Raises:
+            ExecutionEnvironmentError: the server is not running or refused the request.
+            EngineError: the network cannot be created.
+        """
         if self.database is None or self.config.database is None:
             return
+        if plan is None or not plan.uses_database:
+            return
+        self._preflight()
+        network = self._create_network()
         name = database_name(
             self.request.repo_id, self.request.run_id, self.config.database.max_database_name_length
         )

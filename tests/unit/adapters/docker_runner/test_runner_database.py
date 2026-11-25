@@ -19,13 +19,23 @@ PREFIX = "hw-checker-test"
 PASSWORD = "Aa1_secret-password-for-tests"  # pragma: allowlist secret
 
 
-@pytest.fixture
-def repo(tmp_path: Path) -> Path:
+CONTEXT = "class Context { void M(B b, string connection) { b.UseSqlServer(connection); } }"
+
+
+def make_repo(tmp_path: Path, files: dict[str, str]) -> Path:
     root = tmp_path / "repo"
     (root / "Controllers").mkdir(parents=True)
     (root / "Shop.Api.csproj").write_text(WEB_PROJECT, encoding="utf-8")
     (root / "Controllers" / "ProductsController.cs").write_text("class C {}", encoding="utf-8")
+    for relative, text in files.items():
+        (root / relative).write_text(text, encoding="utf-8")
     return root
+
+
+@pytest.fixture
+def repo(tmp_path: Path) -> Path:
+    """A repo that uses SQL Server (an EF context), without a connection string."""
+    return make_repo(tmp_path, {"Context.cs": CONTEXT})
 
 
 def request(repo: Path, tmp_path: Path) -> ExecutionRequest:
@@ -158,6 +168,77 @@ def test_the_server_is_not_given_to_the_app_yet(repo: Path, tmp_path: Path) -> N
     (app,) = engine.specs("app")
     assert not any("Connection" in key for key in app.environment)
     assert all(PASSWORD not in value for value in app.environment.values())
+
+
+def test_the_network_and_database_exist_before_the_archives_are_built(
+    repo: Path, tmp_path: Path
+) -> None:
+    engine = FakeEngine()
+    code_runner = runner(engine)
+    code_runner.start_round()
+    engine.calls.clear()
+
+    code_runner.execute(request(repo, tmp_path))
+
+    first_archive = next(i for i, call in enumerate(engine.calls) if call.startswith("put_archive"))
+    create_network = next(i for i, call in enumerate(engine.calls) if "create_network" in call)
+    attach = next(i for i, call in enumerate(engine.calls) if call.startswith("connect_network"))
+    assert create_network < attach < first_archive
+    assert sum("create_network" in call for call in engine.calls) == 1
+
+
+def test_a_repo_with_no_database_gets_none(repo: Path, tmp_path: Path) -> None:
+    plain = make_repo(tmp_path / "plain", {})
+    engine = FakeEngine()
+    code_runner = runner(engine)
+    code_runner.start_round()
+    engine.sql_commands.clear()
+
+    code_runner.execute(request(plain, tmp_path))
+
+    assert engine.sql_commands == []
+    assert engine.connections == {}
+    assert only_the_server_is_left(engine)
+    assert len(engine.network_internal) == 2  # the server's own and the repo's, as before
+
+
+def test_a_repo_with_only_another_provider_gets_no_database(tmp_path: Path) -> None:
+    other = make_repo(
+        tmp_path / "other", {"Context.cs": "class C { void M(B b) { b.UseSqlite(x); } }"}
+    )
+    engine = FakeEngine()
+    code_runner = runner(engine)
+    code_runner.start_round()
+    engine.sql_commands.clear()
+
+    code_runner.execute(request(other, tmp_path))
+
+    assert engine.sql_commands == []
+    assert engine.connections == {}
+    assert only_the_server_is_left(engine)
+
+
+def test_a_repo_too_large_to_copy_still_has_its_database_dropped(
+    repo: Path, tmp_path: Path
+) -> None:
+    engine = FakeEngine()
+    clock = FakeClock()
+    config = base_config(
+        max_archive_bytes=10, max_file_bytes=1_000_000, database=sql_server_config()
+    )
+    provisioner = SqlServerProvisioner(
+        sql_server_config(), engine, PREFIX, clock=clock, sleep=clock.sleep
+    )
+    code_runner = DockerCodeRunner(
+        config, engine, clock=clock, sleep=clock.sleep, database=provisioner
+    )
+    code_runner.start_round()
+
+    result = code_runner.execute(request(repo, tmp_path))
+
+    assert result.failure_kind is not None
+    assert "DROP DATABASE [hw_dana_api_run_1]" in sql_statements(engine)[-2]
+    assert only_the_server_is_left(engine)
 
 
 def test_every_network_stays_internal_so_nothing_reaches_the_host_or_the_internet(
