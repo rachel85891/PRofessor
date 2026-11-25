@@ -1,7 +1,7 @@
 """The app is given the run's database by every route, against a real SQL Server.
 
-Pulls and starts the pinned SQL Server image (about 2 GB of memory, 15-40 s to start) and
-restores `Microsoft.Data.SqlClient` for the two sample apps, so it needs network access.
+Pulls and starts the pinned SQL Server image (about 2 GB of memory, 15-40 s to start). The
+two sample apps need `Microsoft.Data.SqlClient` 6.1.7 in the runner's package cache.
 Each sample answers `GET /api/dbname` with `SELECT DB_NAME()`, so the answer is the name of
 the database the app is really connected to.
 """
@@ -53,7 +53,13 @@ def database_runner(engine: SdkDockerEngine) -> Iterator[DockerCodeRunner]:
         RunnerSettings(database=DatabaseSettings(enabled=True))
     ).database
     assert sql_config is not None
-    config = dataclasses.replace(runner_config(), database=sql_config)
+    # The samples' package is restored from the runner's real package cache (the test cache
+    # starts empty), so they restore without network access.
+    config = dataclasses.replace(
+        runner_config(),
+        database=sql_config,
+        nuget_cache_volume=RunnerSettings().nuget_cache_volume,
+    )
     provisioner = SqlServerProvisioner(sql_config, engine, PREFIX)
     code_runner = DockerCodeRunner(config, engine, database=provisioner)
     code_runner.sweep_leftovers()
@@ -140,11 +146,11 @@ def test_an_app_without_a_database_is_given_none(
     assert result.database_use.status is DatabaseUseStatus.NOT_USED_NO_DATABASE
 
 
-def test_nothing_is_left_in_docker_but_the_round_server(
+def test_nothing_is_left_in_docker_once_the_round_is_finished(
     database_runner: DockerCodeRunner, engine: SdkDockerEngine
 ) -> None:
-    kinds = sorted(resource.labels.get(f"{PREFIX}.kind", "") for resource in leftovers(engine))
+    assert any(resource.kind == "container" for resource in leftovers(engine))  # the server
 
-    assert kinds == ["database-network", "database-server"]
     database_runner.finish_round()
+
     assert leftovers(engine) == []
