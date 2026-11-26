@@ -81,6 +81,8 @@ class FakeEngine:
     exec_commands: list[tuple[str, ...]] = field(default_factory=list)
     pulled: list[str] = field(default_factory=list)
     archives: list[tuple[str, str, int]] = field(default_factory=list)
+    archive_data: list[bytes] = field(default_factory=list)
+    """The tar of each `put_archive`, in step with `archives`."""
     removed: list[str] = field(default_factory=list)
     created: list[FakeContainer] = field(default_factory=list)
     _next_id: int = 0
@@ -161,6 +163,7 @@ class FakeEngine:
     def put_archive(self, container: str, path: str, data: bytes) -> None:
         self._fail("put_archive")
         self.archives.append((container, path, len(data)))
+        self.archive_data.append(data)
         self._record("put_archive", path)
 
     def start(self, container: str) -> None:

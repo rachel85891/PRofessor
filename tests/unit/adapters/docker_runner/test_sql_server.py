@@ -509,3 +509,18 @@ def test_a_long_database_name_is_cut_to_the_limit_and_stays_distinct() -> None:
 
 def test_the_same_long_name_always_gets_the_same_result() -> None:
     assert database_name("r" * 200, "x", 64) == database_name("r" * 200, "x", 64)
+
+
+# ---------------------------------------------------------------------- redaction
+
+
+def test_redact_removes_the_server_and_login_passwords_wherever_they_are() -> None:
+    server, _ = started()
+    connection = server.create_database("hw_a", NETWORK)
+
+    text = f"first {connection}\nsecond {PASSWORD} third {LOGIN_PASSWORD}{LOGIN_PASSWORD}"
+    redacted = server.redact(text)
+
+    assert PASSWORD not in redacted and LOGIN_PASSWORD not in redacted
+    assert redacted.count("***") == 4
+    assert server.redact("nothing secret here") == "nothing secret here"

@@ -57,3 +57,49 @@ class FakeCodeRunner:
         self.calls.append("sweep_leftovers")
         swept, self._leftovers = self._leftovers, 0
         return swept
+
+
+FAKE_SECRET = "fake-secret"  # pragma: allowlist secret
+FAKE_CONNECTION = f"Server=fake;Database=fake;Password={FAKE_SECRET}"
+
+
+class FakeDatabaseProvisioner:
+    """In-memory `DatabaseProvisioner`: records every call and hands out a fixed string.
+
+    `connection` is what `create_database` returns and `secret` is what `redact` removes.
+    `create_error` makes `create_database` fail after recording the call.
+    """
+
+    def __init__(
+        self,
+        connection: str = FAKE_CONNECTION,
+        secret: str = FAKE_SECRET,
+        create_error: ExecutionEnvironmentError | None = None,
+    ) -> None:
+        self._connection = connection
+        self._secret = secret
+        self._create_error = create_error
+        self.created: list[tuple[str, str]] = []
+        self.dropped: list[tuple[str, str]] = []
+        self.calls: list[str] = []
+
+    def start(self) -> None:
+        self.calls.append("start")
+
+    def stop(self) -> None:
+        self.calls.append("stop")
+
+    def create_database(self, database_name: str, network: str) -> str:
+        self.calls.append("create_database")
+        self.created.append((database_name, network))
+        if self._create_error is not None:
+            raise self._create_error
+        return self._connection
+
+    def redact(self, text: str) -> str:
+        self.calls.append("redact")
+        return text.replace(self._secret, "***")
+
+    def drop_database(self, database_name: str, network: str) -> None:
+        self.calls.append("drop_database")
+        self.dropped.append((database_name, network))

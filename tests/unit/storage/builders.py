@@ -12,6 +12,10 @@ from hw_checker.domain import (
     CaptureFailure,
     CaptureResult,
     CodeFacts,
+    DatabaseLocation,
+    DatabaseUnresolvedReason,
+    DatabaseUse,
+    DatabaseUseStatus,
     DeclaredRoute,
     Evidence,
     ExecutionResult,
@@ -46,6 +50,7 @@ from hw_checker.domain import (
     Student,
     TypeFact,
     TypeKind,
+    UnresolvedDatabaseUse,
     UnsupportedRouting,
     Verdict,
 )
@@ -176,6 +181,14 @@ def successful_execution() -> ExecutionResult:
             ),
         ),
         primary_controller="ProductController",
+        database_use=DatabaseUse(
+            status=DatabaseUseStatus.USED,
+            connection_names=("DefaultConnection",),
+            rewritten_literals=(DatabaseLocation(file_path="Data/ShopContext.cs", line=12),),
+            unresolved=(
+                UnresolvedDatabaseUse(reason=DatabaseUnresolvedReason.BUILT_LITERAL, count=2),
+            ),
+        ),
         code_facts=CodeFacts(
             types=(
                 TypeFact(

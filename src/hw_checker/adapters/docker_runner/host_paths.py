@@ -38,6 +38,7 @@ from pathlib import Path
 
 from hw_checker.adapters.docker_runner.csharp_source import (
     StringLiteral,
+    escape_literal_text,
     source_files,
     string_literals,
     walk_files,
@@ -289,7 +290,9 @@ def fix_source(
             replacements.append((literal, outcome.literal(layout)))
     for literal, new_path in sorted(replacements, key=lambda item: -item[0].content_start):
         text = (
-            text[: literal.content_start] + _escape(new_path, literal) + text[literal.content_end :]
+            text[: literal.content_start]
+            + escape_literal_text(new_path, literal)
+            + text[literal.content_end :]
         )
     return found, text
 
@@ -429,14 +432,3 @@ def _record(
         rewritten=outcome.literal(layout),
         created_path=outcome.path if outcome.created else None,
     )
-
-
-def _escape(path: str, literal: StringLiteral) -> str:
-    """Write `path` (forward slashes) as the content of a literal of the same kind."""
-    if literal.interpolated:
-        path = path.replace("{", "{{").replace("}", "}}")
-    if literal.raw:
-        return path
-    if literal.verbatim:
-        return path.replace('"', '""')
-    return path.replace("\\", "\\\\").replace('"', '\\"')

@@ -31,6 +31,12 @@ from hw_checker.adapters.docker_runner.body_models import ProjectSources
 from hw_checker.adapters.docker_runner.classification import RunnerStep, StepOutcome, classify
 from hw_checker.adapters.docker_runner.code_facts import extract_code_facts
 from hw_checker.adapters.docker_runner.database_errors import unreachable_databases_in_log
+from hw_checker.adapters.docker_runner.database_plan import (
+    ENVIRONMENT_PREFIX,
+    DatabasePlan,
+    apply_connection,
+    plan_database,
+)
 from hw_checker.adapters.docker_runner.discovery import (
     DiscoveryFailure,
     ProjectFolder,
@@ -82,6 +88,8 @@ from hw_checker.adapters.docker_runner.windows_paths import windows_paths_in_log
 from hw_checker.config.logging_setup import log_context
 from hw_checker.domain import (
     BodyAdaptation,
+    DatabaseUse,
+    DatabaseUseStatus,
     ExecutionRequest,
     ExecutionResult,
     FailureKind,
@@ -118,6 +126,7 @@ APP_ALIAS = "app"
 DNS label limit (they include the run and repo ids), and then cannot be resolved; each repo
 has its own network, so a fixed short alias never collides."""
 CACHE_KIND = "cache"
+REDACTED = "***"
 CURL_RESOLVE_ERROR = 6
 CURL_ERRORS = {
     CURL_RESOLVE_ERROR: "could not resolve the app",
@@ -137,8 +146,9 @@ class DockerCodeRunner:
     several threads at once. Only the restore step is serialized (see `_restore_lock`).
 
     With a `database` provisioner (and `config.database`), the round shares one SQL Server
-    (`start_round`, `finish_round`) and each repo's run gets an empty database of its own,
-    dropped with the repo's containers. Without one, no database is touched.
+    (`start_round`, `finish_round`) and each repo's run that uses SQL Server gets an empty
+    database of its own, dropped with the repo's containers. A repo that uses none gets none.
+    Without a provisioner, no database is touched.
     """
 
     def __init__(
@@ -331,6 +341,14 @@ class _Execution:
     """The round's database server; None when databases are off."""
     databases: list[tuple[str, str]] = field(default_factory=list)
     """(database, network) of every database this execution created or tried to create."""
+    network: str | None = None
+    """The repo's internal network, once created (before the archives when the repo uses a
+    database, in the run step otherwise)."""
+    preflighted: bool = False
+    connection: str | None = field(default=None, repr=False)
+    """The run's connection string. A secret: never logged, recorded or put in a message."""
+    connection_environment: dict[str, str] = field(default_factory=dict, repr=False)
+    """`ConnectionStrings__<name>` for each name the app may read its connection by."""
     containers: list[str] = field(default_factory=list)
     networks: list[str] = field(default_factory=list)
     volumes: list[str] = field(default_factory=list)
@@ -369,6 +387,7 @@ class _Execution:
         assert discovery.framework is not None  # framework_problem rejects a missing one
         self.framework_images = self.config.framework_images[discovery.framework]
         plan = plan_path_fixes(self.request.working_copy, discovery.folder)
+        database = plan_database(self.request.working_copy) if self.database is not None else None
         self.routes = extract_route_table(self.request.working_copy, discovery.folder)
         code_facts = extract_code_facts(self.request.working_copy, discovery.folder)
         self.controllers = choose_primary_controller(self.request.probes, self.routes)
@@ -377,12 +396,13 @@ class _Execution:
             ProjectFolder(discovery.folder, discovery.nullable),
             discovery.other_projects,
         )
-        result = self._prepare_build_run(discovery, plan, choice)
-        # Every result after this point records the detected paths, the route table and the
-        # controller choice.
+        result = self._prepare_build_run(discovery, plan, choice, database)
+        # Every result after this point records the detected paths, the database use, the
+        # route table and the controller choice.
         return result.model_copy(
             update={
                 "path_rewrites": plan.rewrites,
+                "database_use": _database_use(database),
                 "routes": self.routes,
                 "code_facts": code_facts,
                 "primary_controller": self.controllers.primary,
@@ -419,20 +439,33 @@ class _Execution:
         )
 
     def _prepare_build_run(
-        self, discovery: WebProject, plan: PathPlan, choice: WebProjectChoice
+        self,
+        discovery: WebProject,
+        plan: PathPlan,
+        choice: WebProjectChoice,
+        database: DatabasePlan | None,
     ) -> ExecutionResult:
         limits = (self.config.max_archive_bytes, self.config.max_file_bytes)
         uid, gid = self.config.app_uid, self.config.app_gid
         try:
+            self._provide_database(database)
+        except EngineError as error:
+            return self._prepare_failed(f"cannot create the repo's network: {error}", engine=True)
+        overrides = plan.overrides
+        if self.connection is not None and database is not None:
+            overrides = apply_connection(
+                database, self.request.working_copy, overrides, self.connection
+            )
+        try:
             archive = build_work_archive(
-                self.request.working_copy, uid, gid, *limits, overrides=plan.overrides
+                self.request.working_copy, uid, gid, *limits, overrides=overrides
             )
             data_archive = build_repo_archive(
                 self.request.working_copy,
                 uid,
                 gid,
                 *limits,
-                overrides=plan.overrides,
+                overrides=overrides,
                 created=plan.created,
             )
         except ArchiveTooLargeError as error:
@@ -454,6 +487,7 @@ class _Execution:
             f"Web project: {discovery.path} ({discovery.framework})\n"
             + _describe_choice(choice)
             + _describe_paths(plan.rewrites)
+            + _describe_database(_database_use(database))
             + _describe_routes(self.routes)
             + _describe_controllers(self.routes, self.controllers),
         )
@@ -511,6 +545,9 @@ class _Execution:
         return self._run_and_probe(work_volume, data_volume, discovery)
 
     def _preflight(self) -> None:
+        if self.preflighted:
+            return
+        self.preflighted = True
         try:
             self.engine.ping()
             missing = [image for image in self.config.images if not self.engine.image_exists(image)]
@@ -552,14 +589,11 @@ class _Execution:
     def _run_and_probe(
         self, work_volume: str, data_volume: str, discovery: WebProject
     ) -> ExecutionResult:
-        network = self._name("net")
         app_name = self._name("app")
         started = self.clock()
         logger.info("Step run started")
         try:
-            self.engine.create_network(network, self._labels("network"), internal=True)
-            self.networks.append(network)
-            self._create_database(network)
+            network = self.network or self._create_network()
             app = self._create(
                 self._app_spec(app_name, network, work_volume, data_volume, discovery)
             )
@@ -573,10 +607,11 @@ class _Execution:
                 if outcome.ready
                 else ()
             )
-            log = self.engine.logs(app)
+            log = self._redact(self.engine.logs(app))
         except EngineError as error:
-            outcome = StepOutcome(RunnerStep.RUN, engine_error=True, log_text=str(error))
-            probe_results, log = (), str(error)
+            log = self._redact(str(error))
+            outcome = StepOutcome(RunnerStep.RUN, engine_error=True, log_text=log)
+            probe_results = ()
         if outcome.unresolved_host:
             log += (
                 f"\n[runner] the probe sidecar could not resolve {APP_ALIAS!r} for more than "
@@ -673,7 +708,7 @@ class _Execution:
             controller=route.controller,
             sent_body=body,
             body_adaptation=adaptation,
-            response_excerpt="" if response is None else excerpt(response.body),
+            response_excerpt="" if response is None else self._redact(excerpt(response.body)),
             capture=captured,
             response_shape=shape,
             missing_values=absent,
@@ -737,11 +772,11 @@ class _Execution:
             container = self._create(spec)
             self.engine.start(container)
             exit_code, oom_killed, timed_out = self._wait_for_exit(container, started + timeout)
-            log = self.engine.logs(container)
+            log = self._redact(self.engine.logs(container))
             self._remove_container(container)
             outcome = StepOutcome(step, exit_code, timed_out, oom_killed, log_text=log)
         except EngineError as error:
-            log = str(error)
+            log = self._redact(str(error))
             outcome = StepOutcome(step, engine_error=True, log_text=log)
         self._log_step_end(step, started, outcome)
         self._write_log(step, log)
@@ -790,6 +825,9 @@ class _Execution:
         limits = self.config.run_limits
         environment = {
             **dict(self.request.environment),
+            # Set after the student's environment, so it cannot change the connection the run
+            # gives the app, and last for the port.
+            **self.connection_environment,
             # Set last, so the student's environment cannot move the app to another port.
             "ASPNETCORE_HTTP_PORTS": str(self.config.app_port),
         }
@@ -839,6 +877,7 @@ class _Execution:
     def _prepare_failed(
         self, message: str, *, project_found: bool = True, engine: bool = False
     ) -> ExecutionResult:
+        message = self._redact(message)
         outcome = StepOutcome(
             RunnerStep.PREPARE,
             exit_code=0 if engine else 1,
@@ -897,7 +936,16 @@ class _Execution:
 
     def _write_log(self, step: RunnerStep, text: str) -> None:
         path: Path = self.request.logs_dir / f"{step.value}.log"
-        path.write_bytes(text.encode("utf-8"))
+        path.write_bytes(self._redact(text).encode("utf-8"))
+
+    def _redact(self, text: str) -> str:
+        """`text` without the run's connection string or any password of the database
+        server: an app can print what it was given."""
+        if self.database is None:
+            return text
+        if self.connection is not None:
+            text = text.replace(self.connection, REDACTED)
+        return self.database.redact(text)
 
     def _log_step_end(self, step: RunnerStep, started: float, outcome: StepOutcome) -> None:
         kind = classify(outcome)
@@ -909,17 +957,42 @@ class _Execution:
             extra={"step": step.value, "outcome": "ok" if kind is None else kind.value},
         )
 
-    def _create_database(self, network: str) -> None:
-        """Give this run an empty database on its network (the app is not given it yet)."""
+    def _create_network(self) -> str:
+        """The repo's internal network: no route to the host or the internet."""
+        network = self._name("net")
+        self.engine.create_network(network, self._labels("network"), internal=True)
+        self.networks.append(network)
+        self.network = network
+        return network
+
+    def _provide_database(self, plan: DatabasePlan | None) -> None:
+        """Create the repo's network and an empty database on it when the repo uses SQL Server
+        and databases are on; otherwise do nothing. It runs before the archives are built.
+
+        Raises:
+            ExecutionEnvironmentError: the server is not running or refused the request.
+            EngineError: the network cannot be created.
+        """
         if self.database is None or self.config.database is None:
             return
+        if plan is None or not plan.uses_database:
+            return
+        self._preflight()
+        network = self._create_network()
         name = database_name(
             self.request.repo_id, self.request.run_id, self.config.database.max_database_name_length
         )
         # Recorded first: a failure inside `create_database` still has to be undone.
         self.databases.append((name, network))
-        self.database.create_database(name, network)
-        logger.info("Created an empty database for this run")
+        self.connection = self.database.create_database(name, network)
+        self.connection_environment = {
+            f"{ENVIRONMENT_PREFIX}{connection_name}": self.connection
+            for connection_name in plan.connection_names
+        }
+        logger.info(
+            "Created an empty database for this run",
+            extra={"connection_names": len(plan.connection_names)},
+        )
 
     def _drop_databases(self) -> None:
         if self.database is None:
@@ -997,6 +1070,28 @@ def _describe_paths(rewrites: tuple[PathRewrite, ...]) -> str:
             f"{rewrite.kind} path {rewrite.original!r} at {rewrite.file_path}:{rewrite.line}: "
             f"{outcome}\n"
         )
+    return "".join(lines)
+
+
+def _database_use(plan: DatabasePlan | None) -> DatabaseUse:
+    """What the run did about the repo's database; `off` when databases are off."""
+    return DatabaseUse(status=DatabaseUseStatus.OFF) if plan is None else plan.use()
+
+
+def _describe_database(use: DatabaseUse) -> str:
+    """The database use as prepare-log lines: names and places only, never a connection."""
+    if use.status is DatabaseUseStatus.OFF:
+        return ""
+    lines = [f"database: {use.status.value}\n"]
+    if use.connection_names:
+        lines.append(f"connection given by environment as: {', '.join(use.connection_names)}\n")
+    lines += [
+        f"connection string replaced at {place.file_path}:{place.line}\n"
+        for place in use.rewritten_literals
+    ]
+    lines += [
+        f"not given the connection: {item.reason.value} x{item.count}\n" for item in use.unresolved
+    ]
     return "".join(lines)
 
 

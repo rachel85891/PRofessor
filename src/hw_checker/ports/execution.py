@@ -81,6 +81,14 @@ class DatabaseProvisioner(Protocol):
         """
         ...
 
+    def redact(self, text: str) -> str:
+        """`text` with every secret this provisioner handed out (a password, and so a
+        connection string's) replaced by `***`, wherever it appears. For text an app may
+        have printed. A secret is only known while its database exists, so redact before
+        the database is dropped.
+        """
+        ...
+
     def drop_database(self, database_name: str, network: str) -> None:
         """Drop the database (a missing one is fine) and make the server unreachable on
         `network` again, even when the drop fails.

@@ -49,6 +49,17 @@ class StringLiteral:
     has_holes: bool
 
 
+def escape_literal_text(text: str, literal: StringLiteral) -> str:
+    """Write `text` as the content of a literal of the same kind as `literal`."""
+    if literal.interpolated:
+        text = text.replace("{", "{{").replace("}", "}}")
+    if literal.raw:
+        return text
+    if literal.verbatim:
+        return text.replace('"', '""')
+    return text.replace("\\", "\\\\").replace('"', '\\"')
+
+
 def string_literals(text: str) -> list[StringLiteral]:
     """Every string literal of a C# source, skipping comments and character literals."""
     return list(_Scanner(text).literals())

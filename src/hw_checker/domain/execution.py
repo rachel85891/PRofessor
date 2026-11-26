@@ -339,6 +339,62 @@ class PathRewrite(DomainModel):
         return self
 
 
+class DatabaseUseStatus(StrEnum):
+    """Whether the runner gave the app a database, and if not, why (stage HW05-DB-2b)."""
+
+    USED = "used"
+    """The repo uses SQL Server: the run's database was created and given to the app."""
+    NOT_USED_NO_DATABASE = "not_used_no_database"
+    """Nothing in the repo uses a database, so none was created."""
+    NOT_USED_OTHER_PROVIDER = "not_used_other_provider"
+    """The repo uses another provider (SQLite, PostgreSQL, in-memory, MySQL), so no SQL Server
+    database was created."""
+    OFF = "off"
+    """Databases are switched off in the runner's settings."""
+
+
+class DatabaseUnresolvedReason(StrEnum):
+    """Why a place where the app may read its connection could not be given the run's."""
+
+    BUILT_LITERAL = "built_literal"
+    """A connection string that is interpolated or built by concatenation: no single literal
+    to replace."""
+    NAME_NOT_USABLE = "name_not_usable"
+    """A connection's name that cannot be an environment variable's name."""
+    NAME_NOT_READ = "name_not_read"
+    """`GetConnectionString` is given something other than a string literal, so the
+    connection's name is read from nowhere the runner can see."""
+
+
+class DatabaseLocation(DomainModel):
+    """A place in the student's code, without any of its text (it may hold a password)."""
+
+    file_path: NonBlankStr
+    line: int = Field(ge=1)
+
+
+class UnresolvedDatabaseUse(DomainModel):
+    """How many places of one kind the runner could not give the connection to."""
+
+    reason: DatabaseUnresolvedReason
+    count: int = Field(ge=1)
+
+
+class DatabaseUse(DomainModel):
+    """What the runner did about the repo's database, for the report; never a secret.
+
+    `connection_names` are the names the app was given the connection by, through the
+    environment (`ConnectionStrings__<name>`). `rewritten_literals` are the places of the
+    connection strings written in the code that were replaced in the runner's temporary copy.
+    Both are empty unless `status` is `used`.
+    """
+
+    status: DatabaseUseStatus
+    connection_names: tuple[Annotated[str, Field(min_length=1, max_length=100)], ...] = ()
+    rewritten_literals: tuple[DatabaseLocation, ...] = ()
+    unresolved: tuple[UnresolvedDatabaseUse, ...] = ()
+
+
 class DeclaredRoute(DomainModel):
     """One route a controller action declares in the student's code (attribute routing).
 
@@ -480,6 +536,8 @@ class ExecutionResult(DomainModel):
     probe_results: tuple[ProbeResult, ...] = ()
     path_rewrites: tuple[PathRewrite, ...] = ()
     """Paths in the student's code that were adapted (or could not be) to run in Docker."""
+    database_use: DatabaseUse | None = None
+    """What was done about the repo's database; None when the run never got that far."""
     web_project: WebProjectChoice | None = None
     """The Web project that was built, and why; None when none was chosen."""
     routes: RouteTable | None = None
