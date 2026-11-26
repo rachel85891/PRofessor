@@ -99,6 +99,8 @@ class DockerRunnerConfig:
     resolve_grace_seconds: float = 5.0
     """How long the sidecar may fail to resolve the app's name before it is an environment
     failure instead of a slow start."""
+    schema_timeout_seconds: float = 60.0
+    """How long to wait, after the app answers, for the marker line of the schema step."""
     database: SqlServerConfig | None = None
     """The shared SQL Server of a round; None when databases are off."""
     max_response_bytes: int = 65_536
@@ -115,6 +117,7 @@ class DockerRunnerConfig:
             self.readiness_poll_seconds,
             self.step_poll_seconds,
             self.resolve_grace_seconds,
+            self.schema_timeout_seconds,
         )
         if any(duration <= 0 for duration in durations):
             raise ValueError("runner timeouts and poll intervals must be positive")

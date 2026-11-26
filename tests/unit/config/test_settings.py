@@ -300,6 +300,7 @@ def test_runner_defaults_load_from_the_repo_config(tmp_path: Path) -> None:
     assert runner.readiness_timeout_seconds == 30
     assert runner.probe_timeout_seconds == 10
     assert runner.resolve_grace_seconds == 5
+    assert runner.schema_timeout_seconds == 60
     assert runner.max_response_kb == 64
     assert runner.app_port == 8080
     assert runner.logs_root == Path("logs")
@@ -394,6 +395,7 @@ LIMIT_CASES = [
     ("readiness_timeout_seconds: 0", r"runner\.readiness_timeout_seconds"),
     ("restore_timeout_seconds: -5", r"runner\.restore_timeout_seconds"),
     ("readiness_poll_seconds: 0", r"runner\.readiness_poll_seconds"),
+    ("schema_timeout_seconds: 0", r"runner\.schema_timeout_seconds"),
     ("app_port: 70000", r"runner\.app_port"),
 ]
 

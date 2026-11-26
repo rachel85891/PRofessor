@@ -192,6 +192,8 @@ class RunnerSettings(BaseModel):
     probe_timeout_seconds: int = Field(default=10, ge=1)
     readiness_poll_seconds: float = Field(default=0.5, gt=0)
     resolve_grace_seconds: float = Field(default=5, gt=0)
+    schema_timeout_seconds: float = Field(default=60, gt=0)
+    """How long to wait for the app's tables (the schema step) before the probes run anyway."""
     app_port: int = Field(default=8080, ge=1, le=65535)
     app_uid: int = Field(default=1654, ge=1)
     app_gid: int = Field(default=1654, ge=1)
