@@ -6,17 +6,14 @@ Each sample answers `GET /api/dbname` with `SELECT DB_NAME()`, so the answer is 
 the database the app is really connected to.
 """
 
-import dataclasses
-from collections.abc import Callable, Iterator
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
 
 from hw_checker.adapters.docker_runner.engine import SdkDockerEngine
 from hw_checker.adapters.docker_runner.runner import DockerCodeRunner
-from hw_checker.adapters.docker_runner.sql_server import SqlServerProvisioner, database_name
-from hw_checker.bootstrap import runner_config as settings_to_config
-from hw_checker.config.settings import DatabaseSettings, RunnerSettings
+from hw_checker.adapters.docker_runner.sql_server import database_name
 from hw_checker.domain import (
     DatabaseUseStatus,
     ExecutionResult,
@@ -27,11 +24,9 @@ from hw_checker.domain import (
 from tests.integration.docker_runner.conftest import (
     FIXTURES,
     OLDER_FRAMEWORK_FIXTURES,
-    PREFIX,
     leftovers,
     make_request,
     probe,
-    runner_config,
 )
 
 pytestmark = pytest.mark.integration
@@ -44,30 +39,6 @@ ITEMS_PROBES = (probe("hw05-r1", HttpMethod.GET, "/api/items", 200),)
 RUN_ID = "it-run"
 MAX_DATABASE_NAME_LENGTH = 128
 SampleCopy = Callable[..., Path]
-
-
-@pytest.fixture(scope="module")
-def database_runner(engine: SdkDockerEngine) -> Iterator[DockerCodeRunner]:
-    """A runner with databases on (switched on here, never in `config.yaml`) and a round."""
-    sql_config = settings_to_config(
-        RunnerSettings(database=DatabaseSettings(enabled=True))
-    ).database
-    assert sql_config is not None
-    # The samples' package is restored from the runner's real package cache (the test cache
-    # starts empty), so they restore without network access.
-    config = dataclasses.replace(
-        runner_config(),
-        database=sql_config,
-        nuget_cache_volume=RunnerSettings().nuget_cache_volume,
-    )
-    provisioner = SqlServerProvisioner(sql_config, engine, PREFIX)
-    code_runner = DockerCodeRunner(config, engine, database=provisioner)
-    code_runner.sweep_leftovers()
-    code_runner.check_environment()
-    code_runner.start_round()
-    yield code_runner
-    code_runner.finish_round()
-    code_runner.sweep_leftovers()
 
 
 def run(

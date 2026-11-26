@@ -78,6 +78,14 @@ from hw_checker.adapters.docker_runner.runner_config import (
     DockerRunnerConfig,
     FrameworkImages,
 )
+from hw_checker.adapters.docker_runner.schema_step import (
+    NO_MARKER,
+    SchemaResult,
+    parse_schema_marker,
+    startup_environment,
+    startup_file,
+    without_marker,
+)
 from hw_checker.adapters.docker_runner.sql_server import (
     NETWORK_KIND,
     SERVER_KIND,
@@ -99,6 +107,7 @@ from hw_checker.domain import (
     ResponseShape,
     RouteResolution,
     RouteTable,
+    SchemaOutcome,
     StepStatus,
     WebProjectChoice,
     WebProjectChoiceReason,
@@ -349,6 +358,10 @@ class _Execution:
     """The run's connection string. A secret: never logged, recorded or put in a message."""
     connection_environment: dict[str, str] = field(default_factory=dict, repr=False)
     """`ConnectionStrings__<name>` for each name the app may read its connection by."""
+    schema_environment: dict[str, str] = field(default_factory=dict)
+    """Set only when the schema step is added to the run's copy: the app then prints a marker."""
+    schema: SchemaResult | None = None
+    """The schema step's answer; None when the step was not added or the run never started."""
     containers: list[str] = field(default_factory=list)
     networks: list[str] = field(default_factory=list)
     volumes: list[str] = field(default_factory=list)
@@ -402,7 +415,7 @@ class _Execution:
         return result.model_copy(
             update={
                 "path_rewrites": plan.rewrites,
-                "database_use": _database_use(database),
+                "database_use": _database_use(database, self.schema),
                 "routes": self.routes,
                 "code_facts": code_facts,
                 "primary_controller": self.controllers.primary,
@@ -456,9 +469,10 @@ class _Execution:
             overrides = apply_connection(
                 database, self.request.working_copy, overrides, self.connection
             )
+        added = self._plan_schema_step(database, discovery)
         try:
             archive = build_work_archive(
-                self.request.working_copy, uid, gid, *limits, overrides=overrides
+                self.request.working_copy, uid, gid, *limits, overrides=overrides, added=added
             )
             data_archive = build_repo_archive(
                 self.request.working_copy,
@@ -487,7 +501,7 @@ class _Execution:
             f"Web project: {discovery.path} ({discovery.framework})\n"
             + _describe_choice(choice)
             + _describe_paths(plan.rewrites)
-            + _describe_database(_database_use(database))
+            + _describe_database(_database_use(database, None))
             + _describe_routes(self.routes)
             + _describe_controllers(self.routes, self.controllers),
         )
@@ -543,6 +557,22 @@ class _Execution:
         if (kind := classify(build.outcome)) is not None:
             return self._build_failed(kind, build.log)
         return self._run_and_probe(work_volume, data_volume, discovery)
+
+    def _plan_schema_step(
+        self, plan: DatabasePlan | None, discovery: WebProject
+    ) -> dict[str, bytes]:
+        """The file that creates the tables, to add to the run's copy; nothing when the repo
+        uses no SQL Server or no `DbContext`, databases are off, or the path is taken.
+
+        Also sets the environment that makes the app run it.
+        """
+        if self.connection is None or plan is None or not plan.has_context:
+            return {}
+        added = startup_file(discovery.folder)
+        if any((self.request.working_copy / relative).exists() for relative in added):
+            return {}
+        self.schema_environment = startup_environment(discovery.assembly_name)
+        return added
 
     def _preflight(self) -> None:
         if self.preflighted:
@@ -602,12 +632,15 @@ class _Execution:
             self.engine.start(app)
             base_url = f"http://{APP_ALIAS}:{self.config.app_port}"
             outcome = self._wait_until_ready(app, sidecar, base_url)
+            if outcome.ready and self.schema_environment:
+                self._wait_for_schema(app)
             probe_results = (
                 tuple(self._probe(sidecar, base_url, probe) for probe in self.request.probes)
                 if outcome.ready
                 else ()
             )
             log = self._redact(self.engine.logs(app))
+            log = self._read_schema_answer(log)
         except EngineError as error:
             log = self._redact(str(error))
             outcome = StepOutcome(RunnerStep.RUN, engine_error=True, log_text=log)
@@ -661,6 +694,34 @@ class _Execution:
             if self.clock() >= deadline:
                 return StepOutcome(RunnerStep.RUN, timed_out=True)
             self.sleep(self.config.readiness_poll_seconds)
+
+    def _wait_for_schema(self, app: str) -> None:
+        """Wait for the app's schema marker line, until it is not running or the time is up.
+
+        Without an answer the schema is unknown, and the probes run anyway.
+        """
+        started = self.clock()
+        deadline = started + self.config.schema_timeout_seconds
+        while True:
+            self.schema = parse_schema_marker(self._redact(self.engine.logs(app)))
+            if self.schema is not None:
+                logger.info(
+                    "Schema step answered in %.1f s: %s",
+                    self.clock() - started,
+                    self.schema.outcome.value,
+                    extra={"schema_outcome": self.schema.outcome.value},
+                )
+                return
+            if not self.engine.state(app).running or self.clock() >= deadline:
+                return
+            self.sleep(self.config.readiness_poll_seconds)
+
+    def _read_schema_answer(self, log: str) -> str:
+        """Record the schema step's answer from the final log (when the wait did not find it)
+        and return the log without the marker line: it is the runner's, not the app's."""
+        if self.schema_environment and self.schema is None:
+            self.schema = parse_schema_marker(log) or SchemaResult(SchemaOutcome.FAILED, NO_MARKER)
+        return without_marker(log)
 
     def _probe(self, sidecar: str, base_url: str, probe: HttpProbe) -> ProbeResult:
         missing = [name for name in probe.variables_used if name not in self.variables]
@@ -828,6 +889,7 @@ class _Execution:
             # Set after the student's environment, so it cannot change the connection the run
             # gives the app, and last for the port.
             **self.connection_environment,
+            **self.schema_environment,
             # Set last, so the student's environment cannot move the app to another port.
             "ASPNETCORE_HTTP_PORTS": str(self.config.app_port),
         }
@@ -1073,9 +1135,22 @@ def _describe_paths(rewrites: tuple[PathRewrite, ...]) -> str:
     return "".join(lines)
 
 
-def _database_use(plan: DatabasePlan | None) -> DatabaseUse:
-    """What the run did about the repo's database; `off` when databases are off."""
-    return DatabaseUse(status=DatabaseUseStatus.OFF) if plan is None else plan.use()
+def _database_use(plan: DatabasePlan | None, schema: SchemaResult | None) -> DatabaseUse:
+    """What the run did about the repo's database; `off` when databases are off.
+
+    A repo that uses SQL Server but has no `DbContext` is recorded as such; otherwise the
+    schema step's answer is added (none when the step was not added or never answered).
+    """
+    if plan is None:
+        return DatabaseUse(status=DatabaseUseStatus.OFF)
+    use = plan.use()
+    if plan.uses_database and not plan.has_context:
+        return use.model_copy(update={"schema_outcome": SchemaOutcome.NO_CONTEXT})
+    if schema is None:
+        return use
+    return use.model_copy(
+        update={"schema_outcome": schema.outcome, "schema_failure": schema.failure}
+    )
 
 
 def _describe_database(use: DatabaseUse) -> str:

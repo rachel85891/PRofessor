@@ -61,6 +61,8 @@ OTHER_PROVIDER_PACKAGES = (
     "npgsql",
 )
 SQL_SERVER_CALL = re.compile(r"\bUseSqlServer\s*\(")
+DB_CONTEXT_CLASS = re.compile(r"\bclass\s+\w+\s*(?:<[^>{]*>)?\s*:\s*[^{;]*?\b\w*DbContext\b")
+"""A class whose base list names a `DbContext` (`DbContext`, `IdentityDbContext<...>`, ...)."""
 OTHER_PROVIDER_CALL = re.compile(r"\b(?:UseSqlite|UseNpgsql|UseInMemoryDatabase|UseMySql)\s*\(")
 PROJECT_SUFFIX = ".csproj"
 ENVIRONMENT_PREFIX = f"{CONNECTION_STRINGS_SECTION}__"
@@ -88,6 +90,8 @@ class DatabasePlan:
     connection_names: tuple[str, ...] = ()
     literals: tuple[DatabaseLocation, ...] = ()
     unresolved: tuple[UnresolvedDatabaseUse, ...] = ()
+    has_context: bool = False
+    """True when a class in the repo derives from a `DbContext`: there is an EF model."""
 
     @property
     def uses_database(self) -> bool:
@@ -119,7 +123,7 @@ def plan_database(working_copy: Path) -> DatabasePlan:
     for key in _settings_names(working_copy):
         _add_name(key, names, unresolved)
     literals: list[DatabaseLocation] = []
-    sql_call = other_call = False
+    sql_call = other_call = has_context = False
     for source in source_files(working_copy):
         text = _read(source)
         if text is None:
@@ -128,6 +132,7 @@ def plan_database(working_copy: Path) -> DatabasePlan:
         relative = source.relative_to(working_copy).as_posix()
         sql_call = sql_call or SQL_SERVER_CALL.search(masked.text) is not None
         other_call = other_call or OTHER_PROVIDER_CALL.search(masked.text) is not None
+        has_context = has_context or DB_CONTEXT_CLASS.search(masked.text) is not None
         for found in _classify(text, masked):
             if found.complete:
                 literals.append(DatabaseLocation(file_path=relative, line=found.literal.line))
@@ -152,6 +157,7 @@ def plan_database(working_copy: Path) -> DatabasePlan:
             UnresolvedDatabaseUse(reason=reason, count=unresolved[reason])
             for reason in sorted(unresolved)
         ),
+        has_context,
     )
 
 

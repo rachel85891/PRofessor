@@ -103,6 +103,10 @@ runner:
   # The probe sidecar reaches the app by the network alias "app". If it cannot resolve that
   # name for longer than this, the run is an environment failure, not a slow start.
   resolve_grace_seconds: 5
+  # How long, after the app answers, to wait for its tables to be created from its EF model
+  # (the schema step, repos that use SQL Server only). No answer after this is "unknown":
+  # the probes still run.
+  schema_timeout_seconds: 60
   # Port the app listens on inside its container (ASPNETCORE_HTTP_PORTS).
   app_port: 8080
   # Non-root user of the official .NET images; owns the files copied into the container.

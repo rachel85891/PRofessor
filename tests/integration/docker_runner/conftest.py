@@ -1,5 +1,6 @@
 """Fixtures for DockerCodeRunner integration tests: real Docker, an isolated label prefix."""
 
+import dataclasses
 import json
 import shutil
 from collections.abc import Callable, Iterator
@@ -14,7 +15,9 @@ from hw_checker.adapters.docker_runner.runner_config import (
     DockerRunnerConfig,
     FrameworkImages,
 )
-from hw_checker.config.settings import RunnerSettings, StepLimits
+from hw_checker.adapters.docker_runner.sql_server import SqlServerProvisioner
+from hw_checker.bootstrap import runner_config as settings_to_config
+from hw_checker.config.settings import DatabaseSettings, RunnerSettings, StepLimits
 from hw_checker.domain import ExecutionRequest, HttpMethod, HttpProbe, ProbeCapture
 
 FIXTURES = Path(__file__).parents[2] / "fixtures"
@@ -65,6 +68,7 @@ def runner_config() -> DockerRunnerConfig:
         probe_timeout_seconds=settings.probe_timeout_seconds,
         readiness_poll_seconds=0.5,
         resolve_grace_seconds=settings.resolve_grace_seconds,
+        schema_timeout_seconds=15,
         app_port=settings.app_port,
         app_uid=settings.app_uid,
         app_gid=settings.app_gid,
@@ -145,6 +149,30 @@ def docker_runner(engine: SdkDockerEngine) -> Iterator[DockerCodeRunner]:
     yield runner
     runner.sweep_leftovers()
     engine.remove_volume(CACHE_VOLUME)
+
+
+@pytest.fixture(scope="module")
+def database_runner(engine: SdkDockerEngine) -> Iterator[DockerCodeRunner]:
+    """A runner with databases on (switched on here, never in `config.yaml`) and a round."""
+    sql_config = settings_to_config(
+        RunnerSettings(database=DatabaseSettings(enabled=True))
+    ).database
+    assert sql_config is not None
+    # The samples' packages are restored from the runner's real package cache (the test cache
+    # starts empty), so they restore without network access.
+    config = dataclasses.replace(
+        runner_config(),
+        database=sql_config,
+        nuget_cache_volume=RunnerSettings().nuget_cache_volume,
+    )
+    provisioner = SqlServerProvisioner(sql_config, engine, PREFIX)
+    code_runner = DockerCodeRunner(config, engine, database=provisioner)
+    code_runner.sweep_leftovers()
+    code_runner.check_environment()
+    code_runner.start_round()
+    yield code_runner
+    code_runner.finish_round()
+    code_runner.sweep_leftovers()
 
 
 def leftovers(engine: SdkDockerEngine) -> list[Resource]:

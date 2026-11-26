@@ -682,6 +682,7 @@ def runner_config(runner: RunnerSettings) -> DockerRunnerConfig:
         probe_timeout_seconds=runner.probe_timeout_seconds,
         readiness_poll_seconds=runner.readiness_poll_seconds,
         resolve_grace_seconds=runner.resolve_grace_seconds,
+        schema_timeout_seconds=runner.schema_timeout_seconds,
         app_port=runner.app_port,
         app_uid=runner.app_uid,
         app_gid=runner.app_gid,

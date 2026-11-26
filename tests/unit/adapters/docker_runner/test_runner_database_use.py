@@ -15,6 +15,7 @@ from hw_checker.domain import (
     ExecutionResult,
     HttpMethod,
     HttpProbe,
+    SchemaOutcome,
     UnresolvedDatabaseUse,
 )
 from hw_checker.domain.errors import ExecutionEnvironmentError
@@ -120,6 +121,7 @@ def test_a_repo_that_uses_a_database_records_names_places_and_what_was_left(
             UnresolvedDatabaseUse(reason=DatabaseUnresolvedReason.BUILT_LITERAL, count=1),
             UnresolvedDatabaseUse(reason=DatabaseUnresolvedReason.NAME_NOT_READ, count=1),
         ),
+        schema_outcome=SchemaOutcome.NO_CONTEXT,
     )
 
 
