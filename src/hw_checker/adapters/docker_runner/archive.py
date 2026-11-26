@@ -57,16 +57,20 @@ def build_work_archive(
     max_total_bytes: int | None = None,
     max_file_bytes: int | None = None,
     overrides: Mapping[str, bytes] | None = None,
+    added: Mapping[str, bytes] | None = None,
 ) -> WorkArchive:
     """Tar `working_copy` under `src/`, plus an empty `out/`, owned by `uid:gid`.
 
     `bin/`, `obj/` and `.git/` are left out. Symlinks, junctions and anything that resolves
     outside the working copy are skipped and listed. Modes are normalized and timestamps
     zeroed, so the same input always gives the same bytes. `overrides` replaces the content
-    of files (keyed by their path relative to `working_copy`) in the archive only.
+    of files (keyed by their path relative to `working_copy`) in the archive only, and `added`
+    puts new files (path relative to `working_copy`, with their bytes) in it: a path the
+    working copy already has is an error, so nothing of the repo is ever replaced by one.
 
     Raises:
         ArchiveTooLargeError: a file, or all files together, exceed the given limits.
+        ValueError: an added path is not new, or leaves the archive.
     """
     return _tree_archive(
         working_copy,
@@ -77,6 +81,7 @@ def build_work_archive(
         max_total_bytes,
         max_file_bytes,
         overrides or {},
+        added=added or {},
     )
 
 
@@ -125,6 +130,7 @@ def _tree_archive(
     max_file_bytes: int | None,
     overrides: Mapping[str, bytes],
     created: Collection[str] = (),
+    added: Mapping[str, bytes] | None = None,
 ) -> WorkArchive:
     root = tree.resolve()
     guard = _SizeGuard(max_total_bytes, max_file_bytes)
@@ -162,6 +168,8 @@ def _tree_archive(
                 _add_file(archive, data, _member_name(path, root, prefix), uid, gid)
         for relative in created:
             _add_empty_file(archive, f"{prefix}/{relative}", names, uid, gid)
+        for relative, data in (added or {}).items():
+            _add_new_file(archive, f"{prefix}/{relative}", data, names, uid, gid)
     return WorkArchive(buffer.getvalue(), tuple(sorted(skipped)))
 
 
@@ -169,6 +177,13 @@ def _add_empty_file(
     archive: tarfile.TarFile, name: str, names: set[str], uid: int, gid: int
 ) -> None:
     """Add an empty file `name`, and each of its folders the archive does not have yet."""
+    _add_new_file(archive, name, b"", names, uid, gid)
+
+
+def _add_new_file(
+    archive: tarfile.TarFile, name: str, data: bytes, names: set[str], uid: int, gid: int
+) -> None:
+    """Add the file `name` with `data`, and each of its folders the archive does not have yet."""
     parts = name.split("/")
     if any(part in ("", ".", "..") for part in parts) or name in names:
         raise ValueError(f"not a new path inside the archive: {name!r}")
@@ -178,7 +193,7 @@ def _add_empty_file(
             names.add(folder)
             _add_directory(archive, folder, uid, gid)
     names.add(name)
-    _add_file(archive, b"", name, uid, gid)
+    _add_file(archive, data, name, uid, gid)
 
 
 def _is_safe(path: Path, root: Path) -> bool:

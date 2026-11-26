@@ -29,6 +29,9 @@ MAX_PATH_TEXT_CHARS = 1000
 MAX_DATABASE_TEXT_CHARS = 200
 """Upper bound for what a run log says the app could not connect to (a database's name)."""
 
+SCHEMA_FAILURE_PATTERN = r"^[A-Za-z0-9_.`+<>,\[\]]{1,200}$"
+"""An exception type's name (generic and nested forms included): no space, so no message."""
+
 MAX_ROUTE_TEXT_CHARS = 500
 """Upper bound for a route template or a routing description recorded from student code."""
 
@@ -380,6 +383,22 @@ class UnresolvedDatabaseUse(DomainModel):
     count: int = Field(ge=1)
 
 
+class SchemaOutcome(StrEnum):
+    """What the runner's schema step did to the run's empty database (stage HW05-DB-3)."""
+
+    CREATED = "created"
+    """The tables were created from the EF model (`EnsureCreated`)."""
+    MIGRATED = "migrated"
+    """The context has migrations, and they were applied (`Migrate`)."""
+    NO_CONTEXT = "no_context"
+    """The repo uses SQL Server but has no `DbContext`, so no tables were created."""
+    FAILED = "failed"
+    """The tables could not be created or the step gave no answer; `schema_failure` says why.
+    Never a finding against the student."""
+    NOT_ATTEMPTED = "not_attempted"
+    """No schema step ran: no database, databases off, or the run stopped before the app."""
+
+
 class DatabaseUse(DomainModel):
     """What the runner did about the repo's database, for the report; never a secret.
 
@@ -393,6 +412,18 @@ class DatabaseUse(DomainModel):
     connection_names: tuple[Annotated[str, Field(min_length=1, max_length=100)], ...] = ()
     rewritten_literals: tuple[DatabaseLocation, ...] = ()
     unresolved: tuple[UnresolvedDatabaseUse, ...] = ()
+    schema_outcome: SchemaOutcome = SchemaOutcome.NOT_ATTEMPTED
+    """What the schema step did; `not_attempted` in a result stored before the step existed."""
+    schema_failure: str | None = Field(default=None, pattern=SCHEMA_FAILURE_PATTERN)
+    """Why the schema step failed: an exception type's name (never its message, which may
+    hold a connection string) or `no_marker`; only when `schema_outcome` is `failed`."""
+
+    @model_validator(mode="after")
+    def _failure_only_when_failed(self) -> Self:
+        failed = self.schema_outcome is SchemaOutcome.FAILED
+        if self.schema_failure is not None and not failed:
+            raise ValueError("schema_failure is only for a failed schema step")
+        return self
 
 
 class DeclaredRoute(DomainModel):

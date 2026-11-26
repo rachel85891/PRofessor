@@ -9,6 +9,8 @@ from hw_checker.domain import (
     BodyFieldOutcome,
     CaptureFailure,
     CaptureResult,
+    DatabaseUse,
+    DatabaseUseStatus,
     ExecutionRequest,
     ExecutionResult,
     FailureKind,
@@ -17,6 +19,7 @@ from hw_checker.domain import (
     PathRewrite,
     ProbeResult,
     RouteResolution,
+    SchemaOutcome,
     StepStatus,
 )
 from hw_checker.domain.execution import MAX_LOGS_EXCERPT_CHARS, MAX_PROBE_ERROR_CHARS
@@ -435,3 +438,71 @@ def test_probe_with_a_missing_dependency_was_never_sent() -> None:
             passed=True,
             route_resolution=RouteResolution.DEPENDENCY_MISSING,
         )
+
+
+def test_a_database_use_has_no_schema_step_unless_it_says_so() -> None:
+    use = DatabaseUse(status=DatabaseUseStatus.USED)
+
+    assert use.schema_outcome is SchemaOutcome.NOT_ATTEMPTED
+    assert use.schema_failure is None
+
+
+def test_the_schema_outcome_round_trips_through_storage() -> None:
+    use = DatabaseUse(
+        status=DatabaseUseStatus.USED,
+        schema_outcome=SchemaOutcome.FAILED,
+        schema_failure="Microsoft.Data.SqlClient.SqlException",
+    )
+    result = ExecutionResult(
+        build_status=StepStatus.SUCCEEDED, run_status=StepStatus.SUCCEEDED, database_use=use
+    )
+
+    stored = result.model_dump(mode="json")
+
+    assert stored["database_use"]["schema_outcome"] == "failed"
+    assert ExecutionResult.model_validate(stored) == result
+
+
+def test_a_result_stored_before_the_schema_step_existed_still_loads() -> None:
+    old = {
+        "build_status": "succeeded",
+        "run_status": "succeeded",
+        "database_use": {"status": "used", "connection_names": ["Main"]},
+    }
+
+    use = ExecutionResult.model_validate(old).database_use
+
+    assert use is not None
+    assert use.connection_names == ("Main",)
+    assert use.schema_outcome is SchemaOutcome.NOT_ATTEMPTED
+
+
+@pytest.mark.parametrize("outcome", [o for o in SchemaOutcome if o is not SchemaOutcome.FAILED])
+def test_a_failure_reason_is_only_for_a_failed_schema_step(outcome: SchemaOutcome) -> None:
+    with pytest.raises(ValidationError, match="only for a failed schema step"):
+        DatabaseUse(
+            status=DatabaseUseStatus.USED, schema_outcome=outcome, schema_failure="System.Exception"
+        )
+
+
+@pytest.mark.parametrize(
+    "reason",
+    ["has a space", "Server=x;Password=y", "line\nbreak", "", "x" * 201],
+)
+def test_a_failure_reason_must_look_like_a_type_name_never_like_a_message(reason: str) -> None:
+    with pytest.raises(ValidationError):
+        DatabaseUse(
+            status=DatabaseUseStatus.USED,
+            schema_outcome=SchemaOutcome.FAILED,
+            schema_failure=reason,
+        )
+
+
+def test_a_generic_exception_type_is_a_valid_reason() -> None:
+    use = DatabaseUse(
+        status=DatabaseUseStatus.USED,
+        schema_outcome=SchemaOutcome.FAILED,
+        schema_failure="Ns.Outer+Inner`1[System.String]",
+    )
+
+    assert use.schema_failure == "Ns.Outer+Inner`1[System.String]"
